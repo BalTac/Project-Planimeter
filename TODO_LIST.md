@@ -62,6 +62,7 @@ Proposte operative per i prossimi step del progetto Project Planimeter.
 
 ## Migliorie Documentazione
 
+- [x] Pulizia repository: rimosso asset di test non usato (`wms-test.png`) e aggiunta regola preventiva in [.gitignore](.gitignore).
 - [x] Aggiungere sezione "Known Issues" in [README.md](README.md).
 - [x] Aggiungere sezione "FAQ" (CORS, proxy, differenza ufficiale/sostitutivo).
 - [x] Aggiungere sezione "Riferimenti e attribuzioni" in [README.md](README.md) per pubblicazione GitHub.

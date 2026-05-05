@@ -2,6 +2,15 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [2026-05-05] — Pulizia struttura repository
+
+### Removed
+- Eliminato [wms-test.png](wms-test.png), file immagine di test non usato dall'applicazione.
+
+### Changed
+- Aggiornato [.gitignore](.gitignore) con regola esplicita `wms-test.png` per evitare reintroduzioni accidentali.
+- Aggiornato [TODO_LIST.md](TODO_LIST.md) per tracciare il completamento della pulizia.
+
 ## [2026-05-05] — Allineamento documentazione operativa
 
 ### Added
