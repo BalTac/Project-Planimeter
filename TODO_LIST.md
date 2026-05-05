@@ -17,6 +17,29 @@
 - [x] Aggiungere `<select id="lang-switcher">` e `<select id="unit-system">` in toolbar.
 - [x] Aggiungere attributi `data-i18n` su tutti i nodi statici HTML.
 - [x] Riscrivere README.md in inglese STEM/GIS professionale.
+- [x] Fix runtime bootstrap post-refactor:
+	- corretto `planimeter.html` (tag `body` duplicato e sezione `Riepilogo` con `dl` annidati in modo invalido),
+	- ripristinato caricamento overlay e aggiornamento live di lingua/unità.
+- [x] Fix risoluzione moduli browser senza bundler:
+	- aggiornato `importmap` OpenLayers in `planimeter.html` da jsDelivr package path a `https://esm.sh/ol@8.2.0/`,
+	- eliminato errore console `Failed to resolve module specifier "color-space/lchuv.js"` (bare specifier dipendenze transitive OL).
+- [x] Fix proxy WMS ufficiale Agenzia (test locale Cannara):
+	- normalizzazione automatica richieste `GetMap` in `server.py`:
+		- conversione `CRS=EPSG:3857` + `BBOX` WebMercator in `CRS=EPSG:6706` (axis order lat,lon per WMS 1.3.0),
+		- intercettazione risposte XML `ServiceException` restituite con HTTP 200.
+	- verifica riproducibile: stessa URL Cannara del log utente ora produce PNG valido con contenuto non trasparente.
+- [x] Fix allineamento overlay WMS ufficiale:
+	- rimosso ridimensionamento forzato `WIDTH/HEIGHT` lato proxy (causava patch rettangolare disallineata),
+	- impostato `hidpi: false` sul layer `ImageWMS` ufficiale in `src/map/layers.js` per evitare richieste oversized da display ad alto DPI.
+- [x] Stabilizzazione richieste oversized (`502`) su WMS ufficiale:
+	- in `server.py` aggiunto fallback robusto per `GetMap` oltre limiti upstream:
+		- richiesta upstream ridotta sotto `MaxWidth/MaxHeight` Agenzia,
+		- ri-campionamento PNG di ritorno alla dimensione originaria richiesta dal client,
+		- eliminazione errori intermittenti `502` + `EncodingError: The source image cannot be decoded` osservati in console.
+- [x] Hardening startup server locale (`server.py`):
+	- controllo istanze già attive con policy configurabile `--instance-policy reuse|replace`,
+	- in caso di porta occupata da servizio non Planimeter: fallback automatico su porta random libera,
+	- prevenzione listener multipli sulla stessa porta (`allow_reuse_address = False` + probe porta robusto).
 - [ ] Verificare compatibilità importmap cross-browser (Chrome 89+, Firefox 108+, Safari 16.4+).
 - [ ] Aggiungere test smoke E2E (Playwright) per: draw polygon, export GeoJSON, locale switch.
 Proposte operative per i prossimi step del progetto Project Planimeter.

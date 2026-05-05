@@ -5,3 +5,4 @@ __pycache__/
 .env
 .vscode/
 wms-test.png
+_debug_*

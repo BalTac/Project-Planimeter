@@ -131,12 +131,22 @@ Navigate to [http://localhost:8765/planimeter.html](http://localhost:8765/planim
 ## server.py CLI Options
 
 ```
-python server.py [--port PORT] [--host HOST]
+python server.py [--port PORT] [--host HOST] [--instance-policy reuse|replace]
 
 Options:
 	--port  PORT   Listening port (default: 8765)
 	--host  HOST   Bind address (default: 127.0.0.1)
+	--instance-policy  Startup behavior when requested port already has Planimeter:
+	                   reuse (default) uses existing instance;
+	                   replace terminates existing instance and starts a new one.
 ```
+
+Startup port policy summary:
+- If requested port is free: server starts normally.
+- If requested port is occupied by another Planimeter instance:
+  - `reuse`: exits successfully and keeps the existing instance.
+  - `replace`: terminates existing instance (best effort) and starts a new one.
+- If requested port is occupied by a non-Planimeter service: server auto-falls back to a random free port and prints the final URL.
 
 ---
 

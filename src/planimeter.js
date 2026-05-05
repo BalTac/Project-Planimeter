@@ -129,6 +129,8 @@ export default class Planimeter {
 
         this.map = new Map({
             target: 'map',
+            // Keep WMS requests within Agenzia max image size limits on HiDPI displays.
+            pixelRatio: 1,
             layers: [
                 this.layers.sat,
                 this.layers.osm,

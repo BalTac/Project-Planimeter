@@ -14,11 +14,12 @@
     <link rel="preconnect" href="https://server.arcgisonline.com">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v8.2.0/ol.css">
     <link rel="stylesheet" href="styles.css">
-    <!-- OpenLayers 8.2.0 — ES module importmap (no bundler required) -->
+    <!-- OpenLayers 8.2.0 — ES module importmap (no bundler required)
+         Use esm.sh so transitive deps are rewritten to browser-resolvable URLs. -->
     <script type="importmap">
     {
         "imports": {
-            "ol/": "https://cdn.jsdelivr.net/npm/ol@v8.2.0/"
+            "ol/": "https://esm.sh/ol@8.2.0/"
         }
     }
     </script>
@@ -128,15 +129,14 @@
                     <h2 id="summary-title" data-i18n="section.summary">Riepilogo</h2>
                     <span class="section-kicker" data-i18n="section.summary.kicker">Live</span>
                 </div>
+                <div class="unit-wrap">
+                    <label class="sr-only" for="unit-system">Sistema di misura</label>
+                    <select id="unit-system" class="compact-select full-width-select" aria-label="Sistema di misura">
+                        <option value="metric" data-i18n="unit.metric">Metrico (m, km, ha)</option>
+                        <option value="imperial" data-i18n="unit.imperial">Imperiale (ft, mi, ac)</option>
+                    </select>
+                </div>
                 <dl class="stats-grid">
-                                    <div class="unit-wrap">
-                                        <label class="sr-only" for="unit-system">Sistema di misura</label>
-                                        <select id="unit-system" class="compact-select full-width-select" aria-label="Sistema di misura">
-                                            <option value="metric" data-i18n="unit.metric">Metrico (m, km, ha)</option>
-                                            <option value="imperial" data-i18n="unit.imperial">Imperiale (ft, mi, ac)</option>
-                                        </select>
-                                    </div>
-                                    <dl class="stats-grid">
                     <div>
                         <dt data-i18n="stat.count">Aree</dt>
                         <dd id="stat-count">0</dd>
@@ -192,7 +192,6 @@
     <noscript>
         <div class="noscript-banner" data-i18n="noscript">Questa applicazione richiede JavaScript per inizializzare OpenLayers e gli strumenti di misurazione.</div>
     </noscript>
-</body>
     <script type="module" src="src/main.js"></script>
 </body>
 </html>

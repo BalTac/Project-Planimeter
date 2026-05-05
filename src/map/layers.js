@@ -32,6 +32,7 @@ export function buildLayers(vectorSource, featureStyleFn) {
     const catastoOfficial = new ImageLayer({
         source: new ImageWMS({
             url: '/wms-proxy',
+            hidpi: false,
             params: {
                 VERSION:    '1.3.0',
                 LAYERS:     'CP.CadastralParcel',
