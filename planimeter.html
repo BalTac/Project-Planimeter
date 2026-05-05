@@ -12,10 +12,16 @@
     <meta property="og:type" content="website">
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
     <link rel="preconnect" href="https://server.arcgisonline.com">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v8.2.0/ol.css" type="text/css">
-    <link rel="stylesheet" href="styles.css" type="text/css">
-    <script src="https://cdn.jsdelivr.net/npm/ol@v8.2.0/dist/ol.js" defer></script>
-    <script src="app.js" defer></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v8.2.0/ol.css">
+    <link rel="stylesheet" href="styles.css">
+    <!-- OpenLayers 8.2.0 — ES module importmap (no bundler required) -->
+    <script type="importmap">
+    {
+        "imports": {
+            "ol/": "https://cdn.jsdelivr.net/npm/ol@v8.2.0/"
+        }
+    }
+    </script>
 </head>
 <body>
     <a class="skip-link" href="#app-toolbar">Vai ai controlli</a>
@@ -24,150 +30,169 @@
 
         <aside id="app-toolbar" class="floating-toolbar" aria-label="Toolbar del planimetro">
             <header class="toolbar-header">
-                <p class="eyebrow">Geo Tools</p>
-                <h1>Planimeter Overlay</h1>
-                <p class="toolbar-copy">Misura, modifica, esporta e reimporta poligoni senza uscire dalla mappa.</p>
-                <p id="toolbar-status" class="toolbar-status" role="status" aria-live="polite">Modalita disegno attiva.</p>
+                <div class="toolbar-header-top">
+                    <p class="eyebrow" data-i18n="app.eyebrow">Geo Tools</p>
+                    <div class="switcher-row">
+                        <label class="sr-only" for="lang-switcher">Language / Lingua</label>
+                        <select id="lang-switcher" class="compact-select" aria-label="Language / Lingua">
+                            <option value="it">IT</option>
+                            <option value="en">EN</option>
+                        </select>
+                    </div>
+                </div>
+                <h1 data-i18n="app.title">Planimeter Overlay</h1>
+                <p class="toolbar-copy" data-i18n="app.tagline">Misura, modifica, esporta e reimporta poligoni senza uscire dalla mappa.</p>
+                <p id="toolbar-status" class="toolbar-status" role="status" aria-live="polite" data-i18n="app.statusInit">Modalità disegno attiva.</p>
             </header>
 
             <section class="toolbar-section" aria-labelledby="layers-title">
                 <div class="section-heading">
-                    <h2 id="layers-title">Layer</h2>
-                    <span class="section-kicker">Overlay</span>
+                    <h2 id="layers-title" data-i18n="section.layers">Layer</h2>
+                    <span class="section-kicker" data-i18n="section.layers.kicker">Overlay</span>
                 </div>
                 <div class="toggle-grid">
                     <label class="toggle-card" for="layer-sat">
                         <input type="checkbox" id="layer-sat" checked>
                         <span>
-                            <strong>Satellitare</strong>
-                            <small>ESRI World Imagery</small>
+                            <strong data-i18n="layer.sat">Satellitare</strong>
+                            <small data-i18n="layer.sat.sub">ESRI World Imagery</small>
                         </span>
                     </label>
                     <label class="toggle-card" for="layer-osm">
                         <input type="checkbox" id="layer-osm">
                         <span>
-                            <strong>Strade</strong>
-                            <small>OpenStreetMap</small>
+                            <strong data-i18n="layer.osm">Strade</strong>
+                            <small data-i18n="layer.osm.sub">OpenStreetMap</small>
                         </span>
                     </label>
                     <label class="toggle-card" for="layer-catasto">
                         <input type="checkbox" id="layer-catasto">
                         <span>
-                            <strong>Catasto</strong>
-                            <small>Overlay catastale</small>
+                            <strong data-i18n="layer.catasto">Catasto</strong>
+                            <small data-i18n="layer.catasto.sub">Overlay catastale</small>
                         </span>
                     </label>
                 </div>
                 <div class="layer-source-wrap">
-                    <label for="catasto-source">Sorgente layer catasto</label>
+                    <label for="catasto-source" data-i18n="layer.catasto.sourceLabel">Sorgente layer catasto</label>
                     <select id="catasto-source" class="layer-source-select" aria-label="Scegli la sorgente del layer catasto">
-                        <option value="official" selected>Ufficiale Agenzia Entrate</option>
-                        <option value="fallback">Sostitutivo confini amministrativi</option>
+                        <option value="official" selected data-i18n="layer.catasto.official">Ufficiale Agenzia Entrate</option>
+                        <option value="fallback" data-i18n="layer.catasto.fallback">Sostitutivo confini amministrativi</option>
                     </select>
-                    <p id="catasto-hint" class="section-help">La sorgente ufficiale usa il WMS dell'Agenzia delle Entrate.</p>
+                    <p id="catasto-hint" class="section-help" data-i18n="layer.catasto.hint.official">La sorgente ufficiale usa il WMS dell'Agenzia delle Entrate.</p>
                 </div>
             </section>
 
             <section class="toolbar-section" aria-labelledby="tools-title">
                 <div class="section-heading">
-                    <h2 id="tools-title">Strumenti</h2>
-                    <span class="section-kicker">Workflow</span>
+                    <h2 id="tools-title" data-i18n="section.tools">Strumenti</h2>
+                    <span class="section-kicker" data-i18n="section.tools.kicker">Workflow</span>
                 </div>
                 <div class="segmented-control" role="toolbar" aria-label="Modalita di lavoro">
-                    <button type="button" class="tool-button is-active" data-mode="draw" aria-pressed="true">Disegna</button>
-                    <button type="button" class="tool-button" data-mode="edit" aria-pressed="false">Modifica</button>
-                    <button type="button" class="tool-button" data-mode="delete" aria-pressed="false">Elimina</button>
-                    <button type="button" class="tool-button" data-mode="measure-straight" aria-pressed="false">Retta</button>
-                    <button type="button" class="tool-button" data-mode="measure-polyline" aria-pressed="false">Polyline</button>
+                    <button type="button" class="tool-button is-active" data-mode="draw" aria-pressed="true" data-i18n="tool.draw">Disegna</button>
+                    <button type="button" class="tool-button" data-mode="edit" aria-pressed="false" data-i18n="tool.edit">Modifica</button>
+                    <button type="button" class="tool-button" data-mode="delete" aria-pressed="false" data-i18n="tool.delete">Elimina</button>
+                    <button type="button" class="tool-button" data-mode="measure-straight" aria-pressed="false" data-i18n="tool.measureStraight">Retta</button>
+                    <button type="button" class="tool-button" data-mode="measure-polyline" aria-pressed="false" data-i18n="tool.measurePolyline">Polyline</button>
                 </div>
-                <p id="snap-status" class="section-help">Magnete: ON. Tieni premuto Ctrl per disattivarlo temporaneamente.</p>
-                <p class="section-help">Retta misura distanza tra due punti. Polyline misura percorso a vertici multipli (doppio clic per chiudere).</p>
+                <p id="snap-status" class="section-help" data-i18n="snap.on">Magnete: ON. Tieni premuto Ctrl per disattivarlo temporaneamente.</p>
+                <p class="section-help" data-i18n="snap.hint">Retta misura distanza tra due punti. Polyline misura percorso a vertici multipli (doppio clic per chiudere).</p>
             </section>
 
             <section class="toolbar-section" aria-labelledby="actions-title">
                 <div class="section-heading">
-                    <h2 id="actions-title">Azioni</h2>
-                    <span class="section-kicker">Dati</span>
+                    <h2 id="actions-title" data-i18n="section.actions">Azioni</h2>
+                    <span class="section-kicker" data-i18n="section.actions.kicker">Dati</span>
                 </div>
                 <div class="action-grid">
-                    <button type="button" id="btn-locate" class="action-button">Localizza</button>
-                    <button type="button" id="btn-export" class="action-button">Esporta</button>
-                    <button type="button" id="btn-import" class="action-button">Importa</button>
-                    <button type="button" id="btn-duplicate-selected" class="action-button">Duplica area</button>
-                    <button type="button" id="btn-delete-selected" class="action-button action-button-danger">Elimina selezione</button>
-                    <button type="button" id="btn-clear" class="action-button action-button-danger action-button-wide">Svuota tutte le aree</button>
+                    <button type="button" id="btn-locate" class="action-button" data-i18n="action.locate">Localizza</button>
+                    <button type="button" id="btn-export" class="action-button" data-i18n="action.export">Esporta</button>
+                    <button type="button" id="btn-import" class="action-button" data-i18n="action.import">Importa</button>
+                    <button type="button" id="btn-duplicate-selected" class="action-button" data-i18n="action.duplicate">Duplica area</button>
+                    <button type="button" id="btn-delete-selected" class="action-button action-button-danger" data-i18n="action.deleteSelected">Elimina selezione</button>
+                    <button type="button" id="btn-clear" class="action-button action-button-danger action-button-wide" data-i18n="action.clearAll">Svuota tutte le aree</button>
                 </div>
                 <div class="action-format-wrap">
-                    <label for="export-format">Formato export</label>
+                    <label for="export-format" data-i18n="action.exportFormat">Formato export</label>
                     <select id="export-format" class="layer-source-select" aria-label="Scegli il formato di esportazione">
                         <option value="geojson" selected>GeoJSON</option>
                         <option value="kml">KML</option>
                     </select>
-                    <p class="section-help">Import automatico da GeoJSON e KML. GeoJSON resta il formato consigliato per interoperabilita web/GIS leggera.</p>
+                    <p class="section-help" data-i18n="action.importHint">Import automatico da GeoJSON e KML. GeoJSON resta il formato consigliato.</p>
                 </div>
                 <input type="file" id="file-import" accept=".geojson,.json,.kml,application/json,application/geo+json,application/vnd.google-earth.kml+xml,application/xml,text/xml" hidden>
             </section>
 
             <section class="toolbar-section" aria-labelledby="summary-title">
                 <div class="section-heading">
-                    <h2 id="summary-title">Riepilogo</h2>
-                    <span class="section-kicker">Live</span>
+                    <h2 id="summary-title" data-i18n="section.summary">Riepilogo</h2>
+                    <span class="section-kicker" data-i18n="section.summary.kicker">Live</span>
                 </div>
                 <dl class="stats-grid">
+                                    <div class="unit-wrap">
+                                        <label class="sr-only" for="unit-system">Sistema di misura</label>
+                                        <select id="unit-system" class="compact-select full-width-select" aria-label="Sistema di misura">
+                                            <option value="metric" data-i18n="unit.metric">Metrico (m, km, ha)</option>
+                                            <option value="imperial" data-i18n="unit.imperial">Imperiale (ft, mi, ac)</option>
+                                        </select>
+                                    </div>
+                                    <dl class="stats-grid">
                     <div>
-                        <dt>Aree</dt>
+                        <dt data-i18n="stat.count">Aree</dt>
                         <dd id="stat-count">0</dd>
                     </div>
                     <div>
-                        <dt>Totale</dt>
+                        <dt data-i18n="stat.total">Totale</dt>
                         <dd id="stat-total-area">0.0000 ha</dd>
                     </div>
                     <div>
-                        <dt>Perimetro</dt>
+                        <dt data-i18n="stat.perimeter">Perimetro</dt>
                         <dd id="stat-total-perimeter">0.00 m</dd>
                     </div>
                     <div>
-                        <dt>Selezione</dt>
-                        <dd id="stat-selected-area">Nessuna</dd>
+                        <dt data-i18n="stat.selection">Selezione</dt>
+                        <dd id="stat-selected-area" data-i18n="stat.selection.none">Nessuna</dd>
                     </div>
                     <div>
-                        <dt>Zoom</dt>
+                        <dt data-i18n="stat.zoom">Zoom</dt>
                         <dd id="stat-zoom">6.0</dd>
                     </div>
                     <div>
-                        <dt>Catasto</dt>
-                        <dd id="stat-catasto-source">Ufficiale</dd>
+                        <dt data-i18n="stat.catasto">Catasto</dt>
+                        <dd id="stat-catasto-source" data-i18n="stat.catasto.official">Ufficiale</dd>
                     </div>
                     <div>
-                        <dt>Proxy WMS</dt>
-                        <dd id="stat-proxy-health" class="status-checking">Verifica...</dd>
+                        <dt data-i18n="stat.proxy">Proxy WMS</dt>
+                        <dd id="stat-proxy-health" class="status-checking" data-i18n="proxy.checking">Verifica...</dd>
                     </div>
                 </dl>
-                <p id="proxy-health-detail" class="section-help">Stato proxy in attesa di verifica.</p>
+                <p id="proxy-health-detail" class="section-help proxy-detail" data-i18n="stat.proxyInit">Stato proxy in attesa di verifica.</p>
             </section>
 
             <section class="toolbar-section" aria-labelledby="instructions-title">
                 <div class="section-heading">
-                    <h2 id="instructions-title">Istruzioni</h2>
-                    <span class="section-kicker">UX</span>
+                    <h2 id="instructions-title" data-i18n="section.instructions">Istruzioni</h2>
+                    <span class="section-kicker" data-i18n="section.instructions.kicker">UX</span>
                 </div>
                 <ul class="instruction-list">
-                    <li>Clic sulla mappa per aggiungere vertici.</li>
-                    <li>Doppio clic per chiudere poligono o misura polyline.</li>
-                    <li>Usa export e import per scambiare GeoJSON o KML.</li>
-                    <li>Attiva modifica o elimina per operare su singole aree.</li>
+                    <li data-i18n="instruction.1">Clic sulla mappa per aggiungere vertici.</li>
+                    <li data-i18n="instruction.2">Doppio clic per chiudere poligono o misura polyline.</li>
+                    <li data-i18n="instruction.3">Usa export e import per scambiare GeoJSON o KML.</li>
+                    <li data-i18n="instruction.4">Attiva modifica o elimina per operare su singole aree.</li>
                 </ul>
             </section>
         </aside>
         <nav id="map-context-menu" class="map-context-menu" hidden aria-label="Menu contestuale mappa">
             <ul class="context-menu-list">
-                <li><button type="button" id="ctx-cancel-draw" class="context-menu-item">Annulla tracciamento</button></li>
+                <li><button type="button" id="ctx-cancel-draw" class="context-menu-item" data-i18n="ctx.cancelDraw">Annulla tracciamento</button></li>
             </ul>
         </nav>
     </main>
 
     <noscript>
-        <div class="noscript-banner">Questa applicazione richiede JavaScript per inizializzare OpenLayers e gli strumenti di misurazione.</div>
+        <div class="noscript-banner" data-i18n="noscript">Questa applicazione richiede JavaScript per inizializzare OpenLayers e gli strumenti di misurazione.</div>
     </noscript>
+</body>
+    <script type="module" src="src/main.js"></script>
 </body>
 </html>

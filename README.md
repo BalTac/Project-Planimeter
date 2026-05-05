@@ -1,5 +1,175 @@
 # Project Planimeter by BalTac
+# Project Planimeter
 
+> A lightweight, browser-based web planimeter for geodetic area measurement, polygon editing, and GIS interoperability — no backend persistence, no build step, no framework.
+
+---
+
+## Abstract
+
+**Project Planimeter** lets you draw and measure polygons directly on top of satellite imagery, OpenStreetMap, and an Italian cadastral WMS overlay. Features include real-time geodesic area and perimeter computation (EPSG:3857 / WGS 84 sphere), multi-vertex polyline distance measurement, GeoJSON and KML export/import, localStorage persistence, and snap-to-vertex editing. The interface is fully internationalised (IT / EN) with runtime locale switching and a metric/imperial unit system selector.
+
+The application runs entirely in the browser; the only server-side component is a small Python reverse proxy (`server.py`) required to bypass CORS restrictions on the Agenzia delle Entrate WMS endpoint.
+
+---
+
+## Architecture
+
+```
+planimeter.html          ← entry point; importmap + <script type="module">
+src/
+	main.js               ← DOMContentLoaded bootstrap
+	planimeter.js         ← orchestrator class (map, interactions, UI binding)
+	core/
+		constants.js        ← shared compile-time constants
+		state.js            ← createInitialState() factory
+	i18n/
+		i18n.js             ← t(), setLocale(), detectLocale()
+		it.js               ← Italian string catalogue (~130 keys)
+		en.js               ← English string catalogue
+	units/
+		units.js            ← UnitSystem class (metric / imperial)
+	geometry/
+		calculations.js     ← geodesic area, perimeter, length (ol/sphere)
+		style.js            ← OL style function (labels + fill + stroke)
+		decorate.js         ← feature ID / name assignment
+	map/
+		layers.js           ← TileLayer / ImageWMS / VectorLayer factories
+		interactions.js     ← Select / Modify / Draw / Snap factories
+	io/
+		persistence.js      ← localStorage save / restore
+		export.js           ← GeoJSON & KML export helpers
+		import.js           ← GeoJSON & KML import + format detection
+	ui/
+		proxy-health.js     ← ProxyHealthMonitor class
+		context-menu.js     ← right-click context menu
+styles.css
+server.py               ← Python WMS reverse proxy (Flask / http.server)
+```
+
+OpenLayers 8.2.0 is loaded via **importmap** from jsDelivr CDN — no bundler, no `node_modules`.
+
+---
+
+## Feature Set
+
+| Feature | Notes |
+|---|---|
+| Polygon draw | Click to add vertices, double-click to close |
+| Straight-line measurement | Two-point distance tool |
+| Polyline measurement | Multi-vertex path; double-click to close |
+| Vertex editing | Drag-to-reshape in Edit mode |
+| Delete | Per-feature or clear-all |
+| Snap | Snap-to-vertex / snap-to-edge; Ctrl to disable temporarily |
+| Area + perimeter | Geodesic (ol/sphere), live labels on map |
+| GeoJSON export/import | RFC 7946, EPSG:4326, 6 decimal places |
+| KML export/import | Polygon and MultiPolygon features |
+| localStorage persistence | Auto-save with 250 ms debounce |
+| Cadastral overlay | Agenzia delle Entrate WMS (official) or administrative boundaries (substitute) |
+| Geolocation | browser `navigator.geolocation` with high-accuracy flag |
+| i18n | Italian / English runtime switching |
+| Unit system | Metric (m, km, ha) / Imperial (ft, mi, ac) |
+| Right-click context menu | Cancel active drawing |
+
+---
+
+## GIS Interoperability
+
+### Supported import/export formats
+
+| Format | Extension | CRS on export | Notes |
+|---|---|---|---|
+| GeoJSON | `.geojson` | EPSG:4326 (WGS 84) | Recommended for web/GIS interop |
+| KML | `.kml` | WGS 84 geographic | Compatible with Google Earth, QGIS |
+
+Shapefile import is intentionally **not** supported — the binary format requires a dedicated parser library that would add significant weight for a use case already covered by GeoJSON/KML round-trips through QGIS or ogr2ogr.
+
+### Geometry types
+
+Only `Polygon` and `MultiPolygon` features are imported as areas; `LineString` and `MultiLineString` features are imported as distance measurements. Other geometry types are silently filtered.
+
+### Projection
+
+Map tiles and vector features are stored in **EPSG:3857** (Web Mercator) at runtime. All geodesic computations use the `ol/sphere` module with the view's native projection. Export always reprojects to **EPSG:4326**.
+
+---
+
+## Stack
+
+| Component | Version / Source |
+|---|---|
+| OpenLayers | 8.2.0 (jsDelivr CDN, ES modules via importmap) |
+| HTML5 / CSS3 | Vanilla, no framework |
+| JavaScript | ES2022, native ES modules, no transpiler |
+| Python proxy | Python 3.8+, stdlib `http.server` + `urllib` |
+| Tile sources | ESRI World Imagery, OpenStreetMap, Agenzia delle Entrate WMS |
+
+---
+
+## Quick Start
+
+### 1 — Start the Python proxy
+
+```bash
+python server.py
+# Default: http://localhost:8765
+```
+
+The proxy exposes:
+- `GET /wms-proxy?...` — transparent WMS relay to Agenzia delle Entrate
+- `GET /proxy-health` — JSON health check (`{"ok": true, "durationMs": N}`)
+- All other requests — static file server rooted at the project directory
+
+### 2 — Open the application
+
+Navigate to [http://localhost:8765/planimeter.html](http://localhost:8765/planimeter.html).
+
+> **Note**: Opening `planimeter.html` directly as a `file://` URL will work for basic drawing and measurement, but the official cadastral WMS overlay requires the proxy to be running.
+
+---
+
+## server.py CLI Options
+
+```
+python server.py [--port PORT] [--host HOST]
+
+Options:
+	--port  PORT   Listening port (default: 8765)
+	--host  HOST   Bind address (default: 127.0.0.1)
+```
+
+---
+
+## Browser Requirements
+
+| Feature | Minimum version |
+|---|---|
+| ES modules + `import` | Chrome 61, Firefox 60, Safari 10.1 |
+| `<script type="importmap">` | Chrome 89, Firefox 108, Safari 16.4 |
+| `navigator.geolocation` | All modern browsers |
+| `localStorage` | All modern browsers |
+
+Internet Explorer and legacy Edge (EdgeHTML) are not supported.
+
+---
+
+## Known Limitations
+
+- **Mobile / touch**: Snap interaction and small polygon vertices are difficult to hit accurately on touch screens.
+- **WMS latency**: The Agenzia delle Entrate WMS can be slow or unavailable during peak hours. Use the substitute source if tiles do not load.
+- **Cadastral rendering**: The official WMS renders cadastral parcels only at zoom ≥ 14.
+- **No cloud persistence**: Features are stored in browser `localStorage` only. Clearing browser data removes all drawings.
+- **Single-user**: No collaboration or multi-tab sync.
+
+---
+
+## Attribution
+
+- **OpenLayers** — [openlayers.org](https://openlayers.org) — BSD 2-Clause
+- **ESRI World Imagery** — [Esri](https://www.esri.com) — [terms](https://www.esri.com/en-us/legal/terms/full-master-agreement)
+- **OpenStreetMap** — [openstreetmap.org](https://www.openstreetmap.org) — ODbL
+- **Agenzia delle Entrate WMS** — [geoportale.cartografia.agenziaentrate.gov.it](https://geoportale.cartografia.agenziaentrate.gov.it) — public service
+- **Project Planimeter** — [BalTac](https://github.com/BalTac) — MIT
 Applicazione web standalone per misurare superfici direttamente su mappa, usando OpenLayers e una struttura front-end separata in HTML, CSS e JavaScript.
 
 ## Overview

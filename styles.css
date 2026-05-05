@@ -431,3 +431,68 @@ input[type="checkbox"] {
     }
 
 }
+/* ── Lang / unit switchers & new layout helpers ─────────────────────────── */
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.toolbar-header-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.switcher-row {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.compact-select {
+    appearance: none;
+    padding: 3px 8px 3px 6px;
+    border: 1px solid var(--stroke);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.07);
+    color: var(--text-main);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.compact-select:hover,
+.compact-select:focus {
+    border-color: var(--accent);
+    background: rgba(115, 240, 191, 0.1);
+    outline: none;
+}
+
+.full-width-select {
+    width: 100%;
+    padding: 6px 10px;
+    font-size: 0.78rem;
+}
+
+.unit-wrap {
+    margin-bottom: 10px;
+}
+
+.proxy-detail {
+    margin-top: 4px;
+    font-size: 0.72rem;
+    line-height: 1.4;
+    word-break: break-word;
+}

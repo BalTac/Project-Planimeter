@@ -1,5 +1,24 @@
 # TODO LIST
+- [ ] Mantenere [CHANGELOG.md](CHANGELOG.md) aggiornato a ogni milestone.
 
+## Refactoring ES Modules + i18n + Unità di Misura
+
+- [x] Ristrutturare codebase in ES modules con importmap OL 8.2.0 (no bundler):
+	- `src/core/constants.js`, `src/core/state.js`
+	- `src/i18n/it.js`, `src/i18n/en.js`, `src/i18n/i18n.js`
+	- `src/units/units.js` (UnitSystem metric/imperial, autoDetect da navigator.language)
+	- `src/geometry/calculations.js`, `src/geometry/style.js`, `src/geometry/decorate.js`
+	- `src/io/persistence.js`, `src/io/export.js`, `src/io/import.js`
+	- `src/map/layers.js`, `src/map/interactions.js`
+	- `src/ui/proxy-health.js`, `src/ui/context-menu.js`
+	- `src/planimeter.js` (orchestratore), `src/main.js` (entry point)
+- [x] Aggiungere internazionalizzazione IT/EN con runtime switching (`t()`, `setLocale()`, `detectLocale()`).
+- [x] Aggiungere sistema di misura metrico/imperiale con autodetect da locale del browser.
+- [x] Aggiungere `<select id="lang-switcher">` e `<select id="unit-system">` in toolbar.
+- [x] Aggiungere attributi `data-i18n` su tutti i nodi statici HTML.
+- [x] Riscrivere README.md in inglese STEM/GIS professionale.
+- [ ] Verificare compatibilità importmap cross-browser (Chrome 89+, Firefox 108+, Safari 16.4+).
+- [ ] Aggiungere test smoke E2E (Playwright) per: draw polygon, export GeoJSON, locale switch.
 Proposte operative per i prossimi step del progetto Project Planimeter.
 
 ## Priorita Alta

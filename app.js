@@ -3,7 +3,16 @@ const LOCAL_STORAGE_SCHEMA_VERSION = 1;
 const PERSISTENCE_SAVE_DELAY_MS = 250;
 const SUPPORTED_GEOMETRY_TYPES = new Set(['Polygon', 'MultiPolygon', 'LineString', 'MultiLineString']);
 const SUPPORTED_IMPORT_EXTENSIONS = new Set(['geojson', 'json', 'kml']);
+/**
+ * app.js — LEGACY ENTRY POINT (retained for reference)
+ *
+ * The application now loads via ES modules:
+ *   planimeter.html → <script type="importmap"> + <script type="module" src="src/main.js">
+ *
+ * This file is no longer loaded by planimeter.html.
+ */
 
+const LOCAL_STORAGE_KEY = 'planimeter.features.v1';
 class Planimeter {
     constructor() {
         this.layers = {};
