@@ -46,7 +46,7 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_OPTIONS(self) -> None:
-        if self.path.startswith("/wms-proxy"):
+        if self.path.startswith("/wms-proxy") or self.path.startswith("/wms-proxy/"):
             self.send_response(HTTPStatus.NO_CONTENT)
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
@@ -58,10 +58,10 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path == "/proxy-health":
+        if parsed.path in {"/proxy-health", "/proxy-health/"}:
             self.handle_proxy_health()
             return
-        if parsed.path == "/wms-proxy":
+        if parsed.path in {"/wms-proxy", "/wms-proxy/"}:
             self.handle_wms_proxy(parsed.query)
             return
         super().do_GET()

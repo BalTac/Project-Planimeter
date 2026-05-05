@@ -143,6 +143,7 @@ python server.py --port 8010
 ```
 
 e aprire la stessa pagina sulla nuova porta.
+5. Se compare `Health check HTTP 404`, la pagina e probabilmente servita da un server statico diverso da [server.py](server.py): aprire l'app da `http://127.0.0.1:8000/planimeter.html` avviando il server locale del progetto.
 
 ## Note architetturali
 

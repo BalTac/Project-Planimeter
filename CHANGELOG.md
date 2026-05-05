@@ -2,6 +2,19 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [2026-05-05] — Fix health check proxy e layout strumenti
+
+### Fixed
+- [app.js](app.js) esegue monitoraggio `Proxy WMS` solo quando il layer `Catasto` ufficiale e attivo, evitando richieste inutili e rumore in console quando non serve.
+- [app.js](app.js) usa URL assoluto basato su `window.location.origin` per `proxy-health`.
+- [server.py](server.py) accetta anche gli endpoint con slash finale (`/proxy-health/`, `/wms-proxy/`) per maggiore robustezza.
+- [styles.css](styles.css) riordina la riga `Strumenti` con wrapping responsive dei pulsanti su larghezze ridotte.
+
+### Validation
+- Verificato runtime locale: `GET /proxy-health` -> HTTP 200.
+- Verificato runtime locale: `GET /proxy-health/` -> HTTP 200.
+- Verificato runtime locale: `GET /planimeter.html` -> HTTP 200.
+
 ## [2026-05-05] — Pulizia struttura repository
 
 ### Removed

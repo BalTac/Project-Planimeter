@@ -228,8 +228,8 @@ input[type="checkbox"] {
 }
 
 .segmented-control {
-    display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    display: flex;
+    flex-wrap: wrap;
     gap: 8px;
 }
 
@@ -258,6 +258,14 @@ input[type="checkbox"] {
     background: linear-gradient(135deg, rgba(115, 240, 191, 0.24), rgba(30, 207, 137, 0.14));
     border-color: rgba(115, 240, 191, 0.6);
     color: #ffffff;
+}
+
+.tool-button {
+    flex: 1 1 calc(33.333% - 8px);
+    min-width: 96px;
+    padding: 10px 8px;
+    white-space: nowrap;
+    font-size: 0.94rem;
 }
 
 .section-help {
@@ -408,9 +416,18 @@ input[type="checkbox"] {
         padding: 16px;
     }
 
-    .segmented-control,
     .action-grid,
     .stats-grid {
         grid-template-columns: 1fr;
     }
+
+    .segmented-control {
+        gap: 6px;
+    }
+
+    .tool-button {
+        flex-basis: calc(50% - 6px);
+        min-width: 0;
+    }
+
 }

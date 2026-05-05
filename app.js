@@ -19,7 +19,7 @@ class Planimeter {
             isCtrlPressed: false,
             isDrawing: false,
             proxyHealthStatus: 'checking',
-            proxyHealthMessage: 'Verifica iniziale in corso.',
+            proxyHealthMessage: 'Attiva il layer Catasto ufficiale per eseguire il check proxy.',
             proxyHealthRequestPending: false,
             proxyHealthIntervalId: null,
             persistenceSaveTimeoutId: null,
@@ -340,9 +340,7 @@ class Planimeter {
         this.bindLayerToggle(this.elements.layerOsm, 'osm');
         this.elements.layerCatasto.addEventListener('change', () => {
             this.updateCatastoVisibility();
-            if (this.elements.layerCatasto.checked && this.state.catastoSource === 'official') {
-                this.checkProxyHealth();
-            }
+            this.updateProxyHealthMonitoringState();
         });
         this.elements.catastoSource.addEventListener('change', (event) => {
             this.setCatastoSource(event.target.value);
@@ -417,10 +415,34 @@ class Planimeter {
 
     initProxyHealthMonitoring() {
         this.renderProxyHealth();
+        this.updateProxyHealthMonitoringState();
+    }
+
+    shouldMonitorProxyHealth() {
+        return this.elements.layerCatasto.checked && this.state.catastoSource === 'official';
+    }
+
+    updateProxyHealthMonitoringState() {
+        const shouldMonitor = this.shouldMonitorProxyHealth();
+
+        if (!shouldMonitor) {
+            if (this.state.proxyHealthIntervalId) {
+                window.clearInterval(this.state.proxyHealthIntervalId);
+                this.state.proxyHealthIntervalId = null;
+            }
+
+            this.state.proxyHealthRequestPending = false;
+            this.setProxyHealth('checking', 'Monitoraggio proxy in attesa: abilita Catasto ufficiale.');
+            return;
+        }
+
+        if (!this.state.proxyHealthIntervalId) {
+            this.state.proxyHealthIntervalId = window.setInterval(() => {
+                this.checkProxyHealth({ silent: true });
+            }, 45000);
+        }
+
         this.checkProxyHealth();
-        this.state.proxyHealthIntervalId = window.setInterval(() => {
-            this.checkProxyHealth({ silent: true });
-        }, 45000);
     }
 
     async checkProxyHealth(options = {}) {
@@ -437,7 +459,7 @@ class Planimeter {
         }
 
         try {
-            const response = await fetch('/proxy-health', {
+            const response = await fetch(new URL('/proxy-health', window.location.origin), {
                 cache: 'no-store',
                 headers: {
                     Accept: 'application/json',
@@ -499,12 +521,13 @@ class Planimeter {
         if (sourceKey === 'official') {
             this.elements.catastoHint.textContent = 'Sorgente ufficiale WMS Agenzia Entrate. Potrebbe risultare non visibile in alcune zone/scale.';
             this.elements.statCatastoSource.textContent = 'Ufficiale';
-            this.checkProxyHealth();
+            this.updateProxyHealthMonitoringState();
             return;
         }
 
         this.elements.catastoHint.textContent = 'Sorgente sostitutiva non catastale: confini amministrativi per supporto visuale.';
         this.elements.statCatastoSource.textContent = 'Sostitutivo';
+        this.updateProxyHealthMonitoringState();
     }
 
     updateCatastoVisibility() {

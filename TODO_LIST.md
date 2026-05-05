@@ -26,6 +26,8 @@ Proposte operative per i prossimi step del progetto Project Planimeter.
 - Misura polyline (tracciato multi-vertice).
 - [x] Aggiungere misura perimetro (m) oltre all'area (ha).
 - [x] Aggiungere comando `Duplica area selezionata`.
+- [x] Correggere monitoraggio `Proxy WMS` per evitare `Health check HTTP 404` quando il layer ufficiale non e attivo.
+- [x] Riordinare layout riga strumenti su viewport stretti (wrapping responsive pulsanti).
 - [ ] Migliorare UX mobile:
 - Toggle dedicato per disattivare snapping (in assenza di Ctrl).
 
