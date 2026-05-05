@@ -2,6 +2,17 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [2026-05-05] — Allineamento documentazione operativa
+
+### Added
+- [README.md](README.md) include ora una sezione `Runbook essenziale` con start, stop e troubleshooting rapido.
+- [README.md](README.md) include ora sezione `Known Issues` esplicita.
+- [README.md](README.md) include ora sezione `FAQ` (CORS/proxy, differenza ufficiale/sostitutivo, scelta formati GIS).
+
+### Changed
+- [README.md](README.md) aggiorna la sezione `Possibili evoluzioni` con soli punti realmente futuri.
+- [TODO_LIST.md](TODO_LIST.md) marca come completati i task documentali appena implementati.
+
 ## [2026-05-05] — Perimetro poligoni e duplicazione area
 
 ### Added

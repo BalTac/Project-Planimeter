@@ -55,14 +55,14 @@ Proposte operative per i prossimi step del progetto Project Planimeter.
 - route `/wms-proxy` verso backend Python,
 - caching breve tile/image.
 - [ ] Aggiungere file `.env.example` per host/porta/timeouts.
-- [ ] Documentare runbook essenziale in [README.md](README.md):
+- [x] Documentare runbook essenziale in [README.md](README.md):
 - start,
 - stop,
 - troubleshooting.
 
 ## Migliorie Documentazione
 
-- [ ] Aggiungere sezione "Known Issues" in [README.md](README.md).
-- [ ] Aggiungere sezione "FAQ" (CORS, proxy, differenza ufficiale/sostitutivo).
+- [x] Aggiungere sezione "Known Issues" in [README.md](README.md).
+- [x] Aggiungere sezione "FAQ" (CORS, proxy, differenza ufficiale/sostitutivo).
 - [x] Aggiungere sezione "Riferimenti e attribuzioni" in [README.md](README.md) per pubblicazione GitHub.
 - [ ] Mantenere [CHANGELOG.md](CHANGELOG.md) aggiornato a ogni milestone.

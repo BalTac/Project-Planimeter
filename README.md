@@ -104,6 +104,46 @@ Alternativa Windows one-click:
 12. Per il layer catasto scegliere manualmente la sorgente tra `Ufficiale Agenzia Entrate` e `Sostitutivo`.
 13. Tenere premuto `Ctrl` mentre si disegna/modifica/misura per disattivare temporaneamente l'effetto magnete.
 
+## Runbook essenziale
+
+### Start
+
+1. Avviare il backend locale:
+
+```powershell
+python server.py
+```
+
+2. Aprire la web app:
+
+```text
+http://127.0.0.1:8000/planimeter.html
+```
+
+Alternativa rapida su Windows:
+
+```powershell
+./start-planimeter.bat
+```
+
+### Stop
+
+1. Tornare al terminale dove e in esecuzione `server.py`.
+2. Interrompere con `Ctrl+C`.
+
+### Troubleshooting rapido
+
+1. Se il layer catastale ufficiale non compare, verificare l'indicatore `Proxy WMS` in toolbar.
+2. Se `Proxy WMS` e `KO`, riavviare `server.py` e ritentare.
+3. Se il servizio upstream non risponde, usare temporaneamente il layer `Sostitutivo`.
+4. Se la porta e occupata, avviare su porta diversa:
+
+```powershell
+python server.py --port 8010
+```
+
+e aprire la stessa pagina sulla nuova porta.
+
 ## Note architetturali
 
 - Il progetto non richiede build, transpiler o dipendenze locali.
@@ -125,12 +165,34 @@ Alternativa Windows one-click:
 - La geolocalizzazione dipende dai permessi del browser e dal contesto di esecuzione.
 - Non sono supportati in-app `Shapefile`, `GeoPackage`, `KMZ` o raster: richiederebbero parsing multi-file o dipendenze piu pesanti.
 
+## Known Issues
+
+- Il WMS catastale ufficiale puo avere latenza elevata o indisponibilita temporanee indipendenti dall'app.
+- In aree con georeferenziazione complessa, il rendering catastale puo risultare parziale a certi livelli di zoom.
+- Su mobile, il toggle rapido dello snapping non e ancora disponibile come controllo dedicato (attualmente l'override e pensato per `Ctrl` su desktop).
+
+## FAQ
+
+### Perche devo avviare `server.py`?
+
+Il browser blocca richieste dirette cross-origin verso alcuni servizi WMS (CORS). Il proxy locale `/wms-proxy` evita questo blocco.
+
+### Qual e la differenza tra layer `Ufficiale` e `Sostitutivo`?
+
+- `Ufficiale`: WMS dell'Agenzia delle Entrate, usato come riferimento catastale.
+- `Sostitutivo`: confini amministrativi Esri, utile come fallback visuale ma non equivalente al dato catastale.
+
+### Perche import/export solo `GeoJSON` e `KML`?
+
+Sono formati aperti e leggeri, adatti a una web app standalone. Formati piu pesanti (es. Shapefile/GeoPackage) richiedono parsing avanzato o gestione multi-file.
+
 ## Possibili evoluzioni
 
-- Separare CSS e JavaScript in file dedicati.
-- Aggiungere misura perimetro oltre all'area.
-- Aggiungere validazioni topologiche piu avanzate.
-- Aggiungere una legenda o uno stato attivo dei layer piu esplicito.
+- Migliorare UX mobile con toggle dedicato per attivare/disattivare snapping.
+- Aggiungere i18n minimale IT/EN per i testi toolbar.
+- Introdurre tema chiaro opzionale.
+- Aggiungere mini guida interattiva al primo avvio.
+- Valutare validazioni topologiche piu avanzate durante editing/import.
 
 ## Continuita Operativa
 
