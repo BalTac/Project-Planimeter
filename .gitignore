@@ -6,3 +6,9 @@ __pycache__/
 .vscode/
 wms-test.png
 _debug_*
+AGENTS.md
+wiki/
+raw/
+logs/
+_tile_cache/
+*.db

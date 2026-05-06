@@ -14,6 +14,9 @@ import socket
 import subprocess
 import time
 import urllib.error
+import hashlib
+import sqlite3
+import threading
 import urllib.parse
 import urllib.request
 from http import HTTPStatus
@@ -37,6 +40,64 @@ TRANSIENT_UPSTREAM_STATUS = {
 }
 
 
+TILE_CACHE_TTL_DAYS_DEFAULT = 30
+
+
+class TileCache:
+    """Thread-safe SQLite tile cache for WMS GetMap responses."""
+
+    def __init__(self, cache_dir: pathlib.Path, ttl_days: int = TILE_CACHE_TTL_DAYS_DEFAULT) -> None:
+        self._ttl = ttl_days * 86400
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        self._db_path = str(cache_dir / "tiles.db")
+        self._lock = threading.Lock()
+        with self._connect() as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS tiles "
+                "(key TEXT PRIMARY KEY, ctype TEXT NOT NULL, data BLOB NOT NULL, ts REAL NOT NULL)"
+            )
+            conn.execute("PRAGMA journal_mode=WAL")
+
+    def _connect(self) -> sqlite3.Connection:
+        return sqlite3.connect(self._db_path)
+
+    def get(self, key: str) -> tuple[str, bytes] | None:
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT ctype, data, ts FROM tiles WHERE key = ?", (key,)
+                ).fetchone()
+        if row is None:
+            return None
+        ctype, data, ts = row
+        if time.time() - ts > self._ttl:
+            with self._lock:
+                with self._connect() as conn:
+                    conn.execute("DELETE FROM tiles WHERE key = ?", (key,))
+            return None
+        return ctype, bytes(data)
+
+    def put(self, key: str, ctype: str, data: bytes) -> None:
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO tiles (key, ctype, data, ts) VALUES (?, ?, ?, ?)",
+                    (key, ctype, sqlite3.Binary(data), time.time()),
+                )
+
+    def clear_all(self) -> int:
+        with self._lock:
+            with self._connect() as conn:
+                cur = conn.execute("DELETE FROM tiles")
+                return cur.rowcount
+
+    def stats(self) -> dict[str, int]:
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute("SELECT COUNT(*), SUM(LENGTH(data)) FROM tiles").fetchone()
+        return {"count": row[0] or 0, "size_bytes": row[1] or 0}
+
+
 class UpstreamHTTPError(Exception):
     def __init__(self, status_code: int, headers, body: bytes):
         super().__init__(f"Upstream HTTP {status_code}")
@@ -54,7 +115,8 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_OPTIONS(self) -> None:
-        if self.path.startswith("/wms-proxy") or self.path.startswith("/wms-proxy/"):
+        if (self.path.startswith("/wms-proxy") or self.path.startswith("/wms-tile")
+            or self.path.startswith("/cache-clear")):
             self.send_response(HTTPStatus.NO_CONTENT)
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
@@ -72,7 +134,21 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         if parsed.path in {"/wms-proxy", "/wms-proxy/"}:
             self.handle_wms_proxy(parsed.query)
             return
+        if parsed.path in {"/wms-tile", "/wms-tile/"}:
+            self.handle_wms_tile(parsed.query)
+            return
+        if parsed.path in {"/cache-stats", "/cache-stats/"}:
+            self.handle_cache_stats()
+            return
         super().do_GET()
+
+    def do_POST(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path in {"/cache-clear", "/cache-clear/"}:
+            self.handle_cache_clear()
+            return
+        self.send_response(HTTPStatus.METHOD_NOT_ALLOWED)
+        self.end_headers()
 
     def send_json(self, status: HTTPStatus, payload: dict[str, object]) -> None:
         body = json.dumps(payload).encode("utf-8")
@@ -340,6 +416,128 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         ctype = (content_type or "").lower()
         return "xml" in ctype or "text/plain" in ctype or "application/vnd.ogc.se_xml" in ctype
 
+    def handle_wms_tile(self, query_string: str) -> None:
+        """WMS proxy with SQLite tile cache for CP.CadastralParcel GetMap requests."""
+        query = urllib.parse.parse_qs(query_string, keep_blank_values=True)
+        if not query:
+            self.send_error(HTTPStatus.BAD_REQUEST, "Query string mancante")
+            return
+
+        query.setdefault("SERVICE", ["WMS"])
+        query.setdefault("REQUEST", ["GetMap"])
+        query.setdefault("VERSION", ["1.3.0"])
+        query.setdefault("TRANSPARENT", ["true"])
+        query.setdefault("FORMAT", ["image/png"])
+
+        self._normalize_getmap_query(query)
+
+        tile_cache: TileCache | None = getattr(self.server, "tile_cache", None)
+        request_type = (query.get("REQUEST", [""])[0] or "").upper()
+        layers = (query.get("LAYERS", [""])[0] or "").strip()
+        use_cache = (
+            tile_cache is not None
+            and request_type == "GETMAP"
+            and layers == "CP.CadastralParcel"
+        )
+
+        cache_key: str | None = None
+        if use_cache:
+            cache_key = self._tile_cache_key(query)
+            cached = tile_cache.get(cache_key)  # type: ignore[union-attr]
+            if cached:
+                content_type, data = cached
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("X-Tile-Cache", "HIT")
+                self.end_headers()
+                self.wfile.write(data)
+                return
+
+        resize_plan = self._compute_resize_plan(query)
+        upstream_query = {k: list(v) for k, v in query.items()}
+        if resize_plan:
+            upstream_query["WIDTH"] = [str(resize_plan["upstream_width"])]
+            upstream_query["HEIGHT"] = [str(resize_plan["upstream_height"])]
+
+        safe_query = urllib.parse.urlencode(upstream_query, doseq=True)
+        upstream_url = f"{UPSTREAM_WMS}?language=ita&{safe_query}"
+        req = urllib.request.Request(
+            upstream_url,
+            headers={
+                "User-Agent": "Planimeter-Local-Proxy/1.0",
+                "Accept": "image/png,image/*;q=0.9,*/*;q=0.8",
+            },
+        )
+
+        try:
+            with self.fetch_upstream(
+                req,
+                timeout=self.get_upstream_timeout(),
+                retries=self.get_upstream_retries(),
+            ) as response:
+                payload = response.read()
+                content_type = response.headers.get("Content-Type", "application/octet-stream")
+
+                if self._looks_like_wms_xml_exception(payload, content_type):
+                    self.send_response(HTTPStatus.BAD_GATEWAY)
+                    self.send_header("Content-Type", "application/xml; charset=utf-8")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    return
+
+                if resize_plan and "png" in content_type.lower():
+                    payload = self._resize_png_payload(
+                        payload,
+                        resize_plan["requested_width"],
+                        resize_plan["requested_height"],
+                    )
+
+                if use_cache and cache_key and "png" in content_type.lower():
+                    tile_cache.put(cache_key, content_type, payload)  # type: ignore[union-attr]
+
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(payload)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("X-Tile-Cache", "MISS")
+                self.end_headers()
+                self.wfile.write(payload)
+        except UpstreamHTTPError as exc:
+            self.send_response(exc.status_code)
+            self.send_header("Content-Type", exc.headers.get("Content-Type", "text/plain; charset=utf-8"))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(exc.body)
+        except urllib.error.URLError as exc:
+            self.send_error(HTTPStatus.BAD_GATEWAY, f"Errore upstream WMS: {exc.reason}")
+
+    def handle_cache_stats(self) -> None:
+        cache: TileCache | None = getattr(self.server, "tile_cache", None)
+        if cache is None:
+            self.send_json(HTTPStatus.OK, {"count": 0, "size_bytes": 0, "enabled": False})
+            return
+        stats = cache.stats()
+        stats["enabled"] = True  # type: ignore[assignment]
+        self.send_json(HTTPStatus.OK, stats)
+
+    def handle_cache_clear(self) -> None:
+        cache: TileCache | None = getattr(self.server, "tile_cache", None)
+        if cache is None:
+            self.send_json(HTTPStatus.OK, {"deleted": 0, "enabled": False})
+            return
+        deleted = cache.clear_all()
+        self.send_json(HTTPStatus.OK, {"deleted": deleted, "enabled": True})
+
+    @staticmethod
+    def _tile_cache_key(query: dict[str, list[str]]) -> str:
+        """MD5 of the normalized canonical GetMap parameters."""
+        keys = ("LAYERS", "CRS", "BBOX", "WIDTH", "HEIGHT", "FORMAT")
+        parts = [f"{k}={query[k][0]}" for k in keys if k in query and query[k]]
+        return hashlib.md5("&".join(parts).encode("utf-8")).hexdigest()
+
 
 class PlanimeterServer(ThreadingHTTPServer):
     # Avoid multiple listeners on the same port (especially on Windows).
@@ -370,6 +568,18 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=int(os.environ.get("PLANIMETER_WMS_RETRIES", "1")),
         help="Numero retry brevi su errori transitori upstream",
+    )
+    parser.add_argument(
+        "--tile-cache-ttl",
+        type=int,
+        default=int(os.environ.get("PLANIMETER_TILE_CACHE_TTL_DAYS", str(TILE_CACHE_TTL_DAYS_DEFAULT))),
+        help=f"TTL in giorni per le tile WMS in cache (default: {TILE_CACHE_TTL_DAYS_DEFAULT})",
+    )
+    parser.add_argument(
+        "--tile-cache-dir",
+        type=pathlib.Path,
+        default=None,
+        help="Directory per il database SQLite delle tile (default: <workspace>/_tile_cache)",
     )
     return parser.parse_args()
 
@@ -509,7 +719,10 @@ def main() -> None:
     server = PlanimeterServer((args.host, effective_port), factory)
     server.upstream_timeout = max(args.upstream_timeout, 1.0)
     server.upstream_retries = max(args.upstream_retries, 0)
+    cache_dir = args.tile_cache_dir if args.tile_cache_dir else (workspace / "_tile_cache")
+    server.tile_cache = TileCache(cache_dir, ttl_days=max(args.tile_cache_ttl, 1))
     print(f"Project Planimeter server attivo su http://{args.host}:{effective_port}/planimeter.html")
+    print(f"Tile cache WMS: {cache_dir / 'tiles.db'} (TTL: {args.tile_cache_ttl} giorni)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

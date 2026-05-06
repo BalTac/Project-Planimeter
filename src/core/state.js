@@ -16,5 +16,13 @@ export function createInitialState() {
         persistenceMuted: false,
         locale: 'it',
         unitSystem: 'metric',
+        toolbarPanel: 'operate',
+        catastoOpacity: 0.9,
+        catastoWmsLayers: ['CP.CadastralParcel'],
+        parcelInfoEnabled: false,
+        exportImageQuality: 'standard',
+        parcelInfoLoading: false,
+        parcelInfo: null,
+        parcelInfoStatusKey: 'parcelInfo.disabled',
     };
 }

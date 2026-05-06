@@ -47,7 +47,7 @@ styles.css
 server.py               ← Python WMS reverse proxy (Flask / http.server)
 ```
 
-OpenLayers 8.2.0 is loaded via **importmap** from jsDelivr CDN — no bundler, no `node_modules`.
+OpenLayers 8.2.0 is loaded via **importmap** from esm.sh — no bundler, no `node_modules`.
 
 ---
 
@@ -66,9 +66,11 @@ OpenLayers 8.2.0 is loaded via **importmap** from jsDelivr CDN — no bundler, n
 | KML export/import | Polygon and MultiPolygon features |
 | localStorage persistence | Auto-save with 250 ms debounce |
 | Cadastral overlay | Agenzia delle Entrate WMS (official) or administrative boundaries (substitute) |
+| Cadastral parcel info | Optional `GetFeatureInfo` lookup with parcel metadata on map click |
 | Geolocation | browser `navigator.geolocation` with high-accuracy flag |
 | i18n | Italian / English runtime switching |
 | Unit system | Metric (m, km, ha) / Imperial (ft, mi, ac) |
+| Settings tab | Persistent UI preferences for layers, locale, units and overlay opacity |
 | Right-click context menu | Cancel active drawing |
 
 ---
@@ -98,7 +100,7 @@ Map tiles and vector features are stored in **EPSG:3857** (Web Mercator) at runt
 
 | Component | Version / Source |
 |---|---|
-| OpenLayers | 8.2.0 (jsDelivr CDN, ES modules via importmap) |
+| OpenLayers | 8.2.0 (esm.sh, ES modules via importmap) |
 | HTML5 / CSS3 | Vanilla, no framework |
 | JavaScript | ES2022, native ES modules, no transpiler |
 | Python proxy | Python 3.8+, stdlib `http.server` + `urllib` |

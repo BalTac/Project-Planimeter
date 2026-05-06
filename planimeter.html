@@ -46,146 +46,293 @@
                 <p id="toolbar-status" class="toolbar-status" role="status" aria-live="polite" data-i18n="app.statusInit">Modalità disegno attiva.</p>
             </header>
 
-            <section class="toolbar-section" aria-labelledby="layers-title">
-                <div class="section-heading">
-                    <h2 id="layers-title" data-i18n="section.layers">Layer</h2>
-                    <span class="section-kicker" data-i18n="section.layers.kicker">Overlay</span>
-                </div>
-                <div class="toggle-grid">
-                    <label class="toggle-card" for="layer-sat">
-                        <input type="checkbox" id="layer-sat" checked>
-                        <span>
-                            <strong data-i18n="layer.sat">Satellitare</strong>
-                            <small data-i18n="layer.sat.sub">ESRI World Imagery</small>
-                        </span>
-                    </label>
-                    <label class="toggle-card" for="layer-osm">
-                        <input type="checkbox" id="layer-osm">
-                        <span>
-                            <strong data-i18n="layer.osm">Strade</strong>
-                            <small data-i18n="layer.osm.sub">OpenStreetMap</small>
-                        </span>
-                    </label>
-                    <label class="toggle-card" for="layer-catasto">
-                        <input type="checkbox" id="layer-catasto">
-                        <span>
-                            <strong data-i18n="layer.catasto">Catasto</strong>
-                            <small data-i18n="layer.catasto.sub">Overlay catastale</small>
-                        </span>
-                    </label>
-                </div>
-                <div class="layer-source-wrap">
-                    <label for="catasto-source" data-i18n="layer.catasto.sourceLabel">Sorgente layer catasto</label>
-                    <select id="catasto-source" class="layer-source-select" aria-label="Scegli la sorgente del layer catasto">
-                        <option value="official" selected data-i18n="layer.catasto.official">Ufficiale Agenzia Entrate</option>
-                        <option value="fallback" data-i18n="layer.catasto.fallback">Sostitutivo confini amministrativi</option>
-                    </select>
-                    <p id="catasto-hint" class="section-help" data-i18n="layer.catasto.hint.official">La sorgente ufficiale usa il WMS dell'Agenzia delle Entrate.</p>
-                </div>
-            </section>
+            <div class="toolbar-tabs" role="tablist" aria-label="Toolbar panels">
+                <button type="button" id="tab-operate" class="toolbar-tab is-active" data-panel="operate" data-i18n="tab.operate" aria-selected="true">Operativo</button>
+                <button type="button" id="tab-settings" class="toolbar-tab" data-panel="settings" data-i18n="tab.settings" aria-selected="false">Settings</button>
+            </div>
 
-            <section class="toolbar-section" aria-labelledby="tools-title">
-                <div class="section-heading">
-                    <h2 id="tools-title" data-i18n="section.tools">Strumenti</h2>
-                    <span class="section-kicker" data-i18n="section.tools.kicker">Workflow</span>
-                </div>
-                <div class="segmented-control" role="toolbar" aria-label="Modalita di lavoro">
-                    <button type="button" class="tool-button is-active" data-mode="draw" aria-pressed="true" data-i18n="tool.draw">Disegna</button>
-                    <button type="button" class="tool-button" data-mode="edit" aria-pressed="false" data-i18n="tool.edit">Modifica</button>
-                    <button type="button" class="tool-button" data-mode="delete" aria-pressed="false" data-i18n="tool.delete">Elimina</button>
-                    <button type="button" class="tool-button" data-mode="measure-straight" aria-pressed="false" data-i18n="tool.measureStraight">Retta</button>
-                    <button type="button" class="tool-button" data-mode="measure-polyline" aria-pressed="false" data-i18n="tool.measurePolyline">Polyline</button>
-                </div>
-                <p id="snap-status" class="section-help" data-i18n="snap.on">Magnete: ON. Tieni premuto Ctrl per disattivarlo temporaneamente.</p>
-                <p class="section-help" data-i18n="snap.hint">Retta misura distanza tra due punti. Polyline misura percorso a vertici multipli (doppio clic per chiudere).</p>
-            </section>
+            <div id="panel-operate" class="toolbar-panel is-active" data-panel="operate">
+                <section class="toolbar-section" aria-labelledby="layers-title">
+                    <div class="section-heading">
+                        <h2 id="layers-title" data-i18n="section.layers">Layer</h2>
+                        <span class="section-kicker" data-i18n="section.layers.kicker">Overlay</span>
+                    </div>
+                    <p class="section-help" data-i18n="layer.baseHint">Seleziona un layer base (mutuamente esclusivi).</p>
+                    <div class="toggle-grid">
+                        <label class="toggle-card" for="layer-sat">
+                            <input type="checkbox" id="layer-sat" checked data-base-layer>
+                            <span>
+                                <strong data-i18n="layer.sat">Satellitare</strong>
+                                <small data-i18n="layer.sat.sub">ESRI World Imagery</small>
+                            </span>
+                        </label>
+                        <label class="toggle-card" for="layer-open-topo">
+                            <input type="checkbox" id="layer-open-topo" data-base-layer>
+                            <span>
+                                <strong data-i18n="layer.openTopo">Topografico</strong>
+                                <small data-i18n="layer.openTopo.sub">OpenTopoMap</small>
+                            </span>
+                        </label>
+                        <label class="toggle-card" for="layer-esri-topo">
+                            <input type="checkbox" id="layer-esri-topo" data-base-layer>
+                            <span>
+                                <strong data-i18n="layer.esriTopo">Topo ESRI</strong>
+                                <small data-i18n="layer.esriTopo.sub">ESRI World Topo Map</small>
+                            </span>
+                        </label>
+                        <label class="toggle-card" for="layer-esri-relief">
+                            <input type="checkbox" id="layer-esri-relief" data-base-layer>
+                            <span>
+                                <strong data-i18n="layer.esriRelief">Rilievo</strong>
+                                <small data-i18n="layer.esriRelief.sub">ESRI Shaded Relief</small>
+                            </span>
+                        </label>
+                        <label class="toggle-card" for="layer-osm">
+                            <input type="checkbox" id="layer-osm">
+                            <span>
+                                <strong data-i18n="layer.osm">Strade</strong>
+                                <small data-i18n="layer.osm.sub">OpenStreetMap</small>
+                            </span>
+                        </label>
+                        <label class="toggle-card" for="layer-catasto">
+                            <input type="checkbox" id="layer-catasto">
+                            <span>
+                                <strong data-i18n="layer.catasto">Catasto</strong>
+                                <small data-i18n="layer.catasto.sub">Overlay catastale</small>
+                            </span>
+                        </label>
+                    </div>
+                    <div class="layer-source-wrap">
+                        <label for="catasto-source" data-i18n="layer.catasto.sourceLabel">Sorgente layer catasto</label>
+                        <select id="catasto-source" class="layer-source-select" aria-label="Scegli la sorgente del layer catasto">
+                            <option value="official" selected data-i18n="layer.catasto.official">Ufficiale Agenzia Entrate</option>
+                            <option value="fallback" data-i18n="layer.catasto.fallback">Sostitutivo confini amministrativi</option>
+                        </select>
+                        <p id="catasto-hint" class="section-help" data-i18n="layer.catasto.hint.official">La sorgente ufficiale usa il WMS dell'Agenzia delle Entrate.</p>
+                    </div>
+                </section>
 
-            <section class="toolbar-section" aria-labelledby="actions-title">
-                <div class="section-heading">
-                    <h2 id="actions-title" data-i18n="section.actions">Azioni</h2>
-                    <span class="section-kicker" data-i18n="section.actions.kicker">Dati</span>
-                </div>
-                <div class="action-grid">
-                    <button type="button" id="btn-locate" class="action-button" data-i18n="action.locate">Localizza</button>
-                    <button type="button" id="btn-export" class="action-button" data-i18n="action.export">Esporta</button>
-                    <button type="button" id="btn-import" class="action-button" data-i18n="action.import">Importa</button>
-                    <button type="button" id="btn-duplicate-selected" class="action-button" data-i18n="action.duplicate">Duplica area</button>
-                    <button type="button" id="btn-delete-selected" class="action-button action-button-danger" data-i18n="action.deleteSelected">Elimina selezione</button>
-                    <button type="button" id="btn-clear" class="action-button action-button-danger action-button-wide" data-i18n="action.clearAll">Svuota tutte le aree</button>
-                </div>
-                <div class="action-format-wrap">
-                    <label for="export-format" data-i18n="action.exportFormat">Formato export</label>
-                    <select id="export-format" class="layer-source-select" aria-label="Scegli il formato di esportazione">
-                        <option value="geojson" selected>GeoJSON</option>
-                        <option value="kml">KML</option>
-                    </select>
-                    <p class="section-help" data-i18n="action.importHint">Import automatico da GeoJSON e KML. GeoJSON resta il formato consigliato.</p>
-                </div>
-                <input type="file" id="file-import" accept=".geojson,.json,.kml,application/json,application/geo+json,application/vnd.google-earth.kml+xml,application/xml,text/xml" hidden>
-            </section>
+                <section class="toolbar-section" aria-labelledby="tools-title">
+                    <div class="section-heading">
+                        <h2 id="tools-title" data-i18n="section.tools">Strumenti</h2>
+                        <span class="section-kicker" data-i18n="section.tools.kicker">Workflow</span>
+                    </div>
+                    <div class="segmented-control" role="toolbar" aria-label="Modalita di lavoro">
+                        <button type="button" class="tool-button icon-button is-active" data-mode="navigate" aria-pressed="true" data-i18n="tool.navigate" data-i18n-title="hint.tool.navigate" data-icon="🧭">Naviga</button>
+                        <button type="button" class="tool-button icon-button" data-mode="draw" aria-pressed="false" data-i18n="tool.draw" data-i18n-title="hint.tool.draw" data-icon="✏">Disegna</button>
+                        <button type="button" class="tool-button icon-button" data-mode="edit" aria-pressed="false" data-i18n="tool.edit" data-i18n-title="hint.tool.edit" data-icon="🛠">Modifica</button>
+                        <button type="button" class="tool-button icon-button" data-mode="delete" aria-pressed="false" data-i18n="tool.delete" data-i18n-title="hint.tool.delete" data-icon="🗑">Elimina</button>
+                        <button type="button" class="tool-button icon-button" data-mode="measure-straight" aria-pressed="false" data-i18n="tool.measureStraight" data-i18n-title="hint.tool.measureStraight" data-icon="📏">Retta</button>
+                        <button type="button" class="tool-button icon-button" data-mode="measure-polyline" aria-pressed="false" data-i18n="tool.measurePolyline" data-i18n-title="hint.tool.measurePolyline" data-icon="📐">Polyline</button>
+                    </div>
+                    <p id="snap-status" class="section-help" data-i18n="snap.on">Magnete: ON. Tieni premuto Ctrl per disattivarlo temporaneamente.</p>
+                    <p class="section-help" data-i18n="snap.hint">Retta misura distanza tra due punti. Polyline misura percorso a vertici multipli (doppio clic per chiudere).</p>
+                </section>
 
-            <section class="toolbar-section" aria-labelledby="summary-title">
-                <div class="section-heading">
-                    <h2 id="summary-title" data-i18n="section.summary">Riepilogo</h2>
-                    <span class="section-kicker" data-i18n="section.summary.kicker">Live</span>
-                </div>
-                <div class="unit-wrap">
-                    <label class="sr-only" for="unit-system">Sistema di misura</label>
-                    <select id="unit-system" class="compact-select full-width-select" aria-label="Sistema di misura">
-                        <option value="metric" data-i18n="unit.metric">Metrico (m, km, ha)</option>
-                        <option value="imperial" data-i18n="unit.imperial">Imperiale (ft, mi, ac)</option>
-                    </select>
-                </div>
-                <dl class="stats-grid">
-                    <div>
-                        <dt data-i18n="stat.count">Aree</dt>
-                        <dd id="stat-count">0</dd>
+                <section class="toolbar-section" aria-labelledby="actions-title">
+                    <div class="section-heading">
+                        <h2 id="actions-title" data-i18n="section.actions">Azioni</h2>
+                        <span class="section-kicker" data-i18n="section.actions.kicker">Dati</span>
                     </div>
-                    <div>
-                        <dt data-i18n="stat.total">Totale</dt>
-                        <dd id="stat-total-area">0.0000 ha</dd>
+                    <div class="action-grid">
+                        <button type="button" id="btn-locate" class="action-button icon-button" data-i18n="action.locate" data-i18n-title="hint.action.locate" data-icon="📍">Localizza</button>
+                        <button type="button" id="btn-export" class="action-button icon-button" data-i18n="action.export" data-i18n-title="hint.action.export" data-icon="⬆">Esporta</button>
+                        <button type="button" id="btn-import" class="action-button icon-button" data-i18n="action.import" data-i18n-title="hint.action.import" data-icon="⬇">Importa</button>
+                        <button type="button" id="btn-duplicate-selected" class="action-button icon-button" data-i18n="action.duplicate" data-i18n-title="hint.action.duplicate" data-icon="⧉">Duplica area</button>
+                        <button type="button" id="btn-delete-selected" class="action-button action-button-danger icon-button" data-i18n="action.deleteSelected" data-i18n-title="hint.action.deleteSelected" data-icon="✖">Elimina selezione</button>
+                        <button type="button" id="btn-clear" class="action-button action-button-danger action-button-wide icon-button" data-i18n="action.clearAll" data-i18n-title="hint.action.clearAll" data-icon="🧹">Svuota tutte le aree</button>
                     </div>
-                    <div>
-                        <dt data-i18n="stat.perimeter">Perimetro</dt>
-                        <dd id="stat-total-perimeter">0.00 m</dd>
+                    <div class="action-format-wrap">
+                        <label for="export-format" data-i18n="action.exportFormat">Formato export</label>
+                        <select id="export-format" class="layer-source-select" aria-label="Scegli il formato di esportazione">
+                            <option value="geojson" selected>GeoJSON</option>
+                            <option value="kml">KML</option>
+                        </select>
+                        <p class="section-help" data-i18n="action.importHint">Import automatico da GeoJSON e KML. GeoJSON resta il formato consigliato.</p>
                     </div>
-                    <div>
-                        <dt data-i18n="stat.selection">Selezione</dt>
-                        <dd id="stat-selected-area" data-i18n="stat.selection.none">Nessuna</dd>
-                    </div>
-                    <div>
-                        <dt data-i18n="stat.zoom">Zoom</dt>
-                        <dd id="stat-zoom">6.0</dd>
-                    </div>
-                    <div>
-                        <dt data-i18n="stat.catasto">Catasto</dt>
-                        <dd id="stat-catasto-source" data-i18n="stat.catasto.official">Ufficiale</dd>
-                    </div>
-                    <div>
-                        <dt data-i18n="stat.proxy">Proxy WMS</dt>
-                        <dd id="stat-proxy-health" class="status-checking" data-i18n="proxy.checking">Verifica...</dd>
-                    </div>
-                </dl>
-                <p id="proxy-health-detail" class="section-help proxy-detail" data-i18n="stat.proxyInit">Stato proxy in attesa di verifica.</p>
-            </section>
+                    <input type="file" id="file-import" accept=".geojson,.json,.kml,application/json,application/geo+json,application/vnd.google-earth.kml+xml,application/xml,text/xml" hidden>
+                </section>
 
-            <section class="toolbar-section" aria-labelledby="instructions-title">
-                <div class="section-heading">
-                    <h2 id="instructions-title" data-i18n="section.instructions">Istruzioni</h2>
-                    <span class="section-kicker" data-i18n="section.instructions.kicker">UX</span>
-                </div>
-                <ul class="instruction-list">
-                    <li data-i18n="instruction.1">Clic sulla mappa per aggiungere vertici.</li>
-                    <li data-i18n="instruction.2">Doppio clic per chiudere poligono o misura polyline.</li>
-                    <li data-i18n="instruction.3">Usa export e import per scambiare GeoJSON o KML.</li>
-                    <li data-i18n="instruction.4">Attiva modifica o elimina per operare su singole aree.</li>
-                </ul>
-            </section>
+                <section class="toolbar-section" aria-labelledby="summary-title">
+                    <div class="section-heading">
+                        <h2 id="summary-title" data-i18n="section.summary">Riepilogo</h2>
+                        <span class="section-kicker" data-i18n="section.summary.kicker">Live</span>
+                    </div>
+                    <dl class="stats-grid">
+                        <div>
+                            <dt data-i18n="stat.count">Aree</dt>
+                            <dd id="stat-count">0</dd>
+                        </div>
+                        <div>
+                            <dt data-i18n="stat.total">Totale</dt>
+                            <dd id="stat-total-area">0.0000 ha</dd>
+                        </div>
+                        <div>
+                            <dt data-i18n="stat.perimeter">Perimetro</dt>
+                            <dd id="stat-total-perimeter">0.00 m</dd>
+                        </div>
+                        <div>
+                            <dt data-i18n="stat.selection">Selezione</dt>
+                            <dd id="stat-selected-area" data-i18n="stat.selection.none">Nessuna</dd>
+                        </div>
+                        <div>
+                            <dt data-i18n="stat.zoom">Zoom</dt>
+                            <dd id="stat-zoom">6.0</dd>
+                        </div>
+                        <div>
+                            <dt data-i18n="stat.catasto">Catasto</dt>
+                            <dd id="stat-catasto-source" data-i18n="stat.catasto.official">Ufficiale</dd>
+                        </div>
+                        <div>
+                            <dt data-i18n="stat.proxy">Proxy WMS</dt>
+                            <dd id="stat-proxy-health" class="status-checking" data-i18n="proxy.checking">Verifica...</dd>
+                        </div>
+                    </dl>
+                    <p id="proxy-health-detail" class="section-help proxy-detail" data-i18n="stat.proxyInit">Stato proxy in attesa di verifica.</p>
+                </section>
+
+                <section class="toolbar-section" aria-labelledby="cadastral-info-title">
+                    <div class="section-heading">
+                        <h2 id="cadastral-info-title" data-i18n="section.parcelInfo">Info catastali</h2>
+                        <span class="section-kicker" data-i18n="section.parcelInfo.kicker">Query</span>
+                    </div>
+                    <div id="parcel-info-card" class="info-card">
+                        <p id="parcel-info-status" class="section-help info-card-status" data-i18n="parcelInfo.disabled">Abilita l'interrogazione particelle in Settings.</p>
+                        <dl id="parcel-info-grid" class="info-grid" hidden>
+                            <div>
+                                <dt data-i18n="parcelInfo.label">Particella</dt>
+                                <dd id="parcel-info-label">-</dd>
+                            </div>
+                            <div>
+                                <dt data-i18n="parcelInfo.reference">Riferimento</dt>
+                                <dd id="parcel-info-reference">-</dd>
+                            </div>
+                            <div>
+                                <dt data-i18n="parcelInfo.localId">Local ID</dt>
+                                <dd id="parcel-info-local-id">-</dd>
+                            </div>
+                            <div>
+                                <dt data-i18n="parcelInfo.namespace">Namespace</dt>
+                                <dd id="parcel-info-namespace">-</dd>
+                            </div>
+                        </dl>
+                    </div>
+                </section>
+
+                <section class="toolbar-section" aria-labelledby="instructions-title">
+                    <div class="section-heading">
+                        <h2 id="instructions-title" data-i18n="section.instructions">Istruzioni</h2>
+                        <span class="section-kicker" data-i18n="section.instructions.kicker">UX</span>
+                    </div>
+                    <ul class="instruction-list">
+                        <li data-i18n="instruction.1">Clic sulla mappa per aggiungere vertici.</li>
+                        <li data-i18n="instruction.2">Doppio clic per chiudere poligono o misura polyline.</li>
+                        <li data-i18n="instruction.3">Usa export e import per scambiare GeoJSON o KML.</li>
+                        <li data-i18n="instruction.4">Attiva modifica o elimina per operare su singole aree.</li>
+                    </ul>
+                </section>
+            </div>
+
+            <div id="panel-settings" class="toolbar-panel" data-panel="settings" hidden>
+                <section class="toolbar-section" aria-labelledby="settings-display-title">
+                    <div class="section-heading">
+                        <h2 id="settings-display-title" data-i18n="section.settings.display">Display</h2>
+                        <span class="section-kicker" data-i18n="section.settings.display.kicker">Locale</span>
+                    </div>
+                    <div class="settings-grid">
+                        <label class="settings-field">
+                            <span data-i18n="settings.language">Lingua</span>
+                            <select id="settings-language" class="layer-source-select">
+                                <option value="it">Italiano</option>
+                                <option value="en">English</option>
+                            </select>
+                        </label>
+                        <label class="settings-field">
+                            <span data-i18n="settings.units">Sistema di misura</span>
+                            <select id="settings-unit-system" class="layer-source-select">
+                                <option value="metric" data-i18n="unit.metric">Metrico (m, km, ha)</option>
+                                <option value="imperial" data-i18n="unit.imperial">Imperiale (ft, mi, ac)</option>
+                            </select>
+                        </label>
+                        <label class="settings-field">
+                            <span data-i18n="settings.exportQuality">Qualita export immagine</span>
+                            <select id="settings-export-quality" class="layer-source-select">
+                                <option value="standard" data-i18n="settings.exportQuality.standard">Standard (1x)</option>
+                                <option value="high" data-i18n="settings.exportQuality.high">High (1.5x)</option>
+                                <option value="ultra" data-i18n="settings.exportQuality.ultra">Ultra (2x)</option>
+                            </select>
+                        </label>
+                    </div>
+                </section>
+
+                <section class="toolbar-section" aria-labelledby="settings-overlay-title">
+                    <div class="section-heading">
+                        <h2 id="settings-overlay-title" data-i18n="section.settings.overlay">Overlay</h2>
+                        <span class="section-kicker" data-i18n="section.settings.overlay.kicker">Visual</span>
+                    </div>
+                    <div class="settings-grid">
+                        <label class="settings-field settings-field-slider">
+                            <span data-i18n="settings.catastoOpacity">Trasparenza overlay catasto</span>
+                            <input type="range" id="settings-catasto-opacity" min="0" max="100" value="90">
+                            <small id="settings-catasto-opacity-value">90%</small>
+                        </label>
+                        <label class="settings-check">
+                            <input type="checkbox" id="settings-parcel-info-enabled">
+                            <span data-i18n="settings.parcelInfoEnabled">Interroga particelle con click sulla mappa (solo catasto ufficiale).</span>
+                        </label>
+                    </div>
+                    <p class="section-help" data-i18n="settings.parcelInfoHint">Quando attivo, in modalità modifica o elimina un click sulla mappa recupera i dati catastali della particella sottostante.</p>
+
+                    <div class="settings-field" style="margin-top: 10px;">
+                        <strong data-i18n="settings.catastoWmsLayers">Composizione mosaico catastale (WMS ufficiale)</strong>
+                        <p class="section-help" data-i18n="settings.catastoWmsLayersHint">Scegli quali sottolayer catastali richiedere al WMS. Almeno un layer deve restare attivo.</p>
+                        <div class="settings-grid">
+                            <label class="settings-check">
+                                <input type="checkbox" id="settings-wms-part-parcels" data-wms-layer-part="CP.CadastralParcel" checked>
+                                <span data-i18n="settings.wms.part.parcels">Particelle</span>
+                            </label>
+                            <label class="settings-check">
+                                <input type="checkbox" id="settings-wms-part-numbers" data-wms-layer-part="codice_plla">
+                                <span data-i18n="settings.wms.part.numbers">Numeri particella</span>
+                            </label>
+                            <label class="settings-check">
+                                <input type="checkbox" id="settings-wms-part-buildings" data-wms-layer-part="fabbricati">
+                                <span data-i18n="settings.wms.part.buildings">Edifici</span>
+                            </label>
+                            <label class="settings-check">
+                                <input type="checkbox" id="settings-wms-part-roads" data-wms-layer-part="strade">
+                                <span data-i18n="settings.wms.part.roads">Strade</span>
+                            </label>
+                            <label class="settings-check">
+                                <input type="checkbox" id="settings-wms-part-waters" data-wms-layer-part="acque">
+                                <span data-i18n="settings.wms.part.waters">Acque</span>
+                            </label>
+                            <label class="settings-check">
+                                <input type="checkbox" id="settings-wms-part-zoning" data-wms-layer-part="CP.CadastralZoning">
+                                <span data-i18n="settings.wms.part.zoning">Zonizzazione catastale</span>
+                            </label>
+                            <label class="settings-check">
+                                <input type="checkbox" id="settings-wms-part-vestizioni" data-wms-layer-part="vestizioni">
+                                <span data-i18n="settings.wms.part.vestizioni">Vestizioni</span>
+                            </label>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="toolbar-section" aria-labelledby="settings-cache-title">
+                    <div class="section-heading">
+                        <h2 id="settings-cache-title" data-i18n="section.settings.cache">Cache Tile WMS</h2>
+                        <span class="section-kicker" data-i18n="section.settings.cache.kicker">SQLite</span>
+                    </div>
+                    <p id="cache-stats-display" class="section-help" data-i18n="cache.loading">Caricamento statistiche...</p>
+                    <div class="action-grid">
+                        <button type="button" id="btn-cache-clear" class="action-button action-button-danger icon-button" data-i18n="action.cacheClear" data-i18n-title="hint.action.cacheClear" data-icon="🗃">Svuota cache tile</button>
+                    </div>
+                </section>
+            </div>
         </aside>
         <nav id="map-context-menu" class="map-context-menu" hidden aria-label="Menu contestuale mappa">
-            <ul class="context-menu-list">
-                <li><button type="button" id="ctx-cancel-draw" class="context-menu-item" data-i18n="ctx.cancelDraw">Annulla tracciamento</button></li>
-            </ul>
+            <ul class="context-menu-list"></ul>
         </nav>
     </main>
 

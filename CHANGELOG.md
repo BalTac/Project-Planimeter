@@ -2,6 +2,35 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [2026-05-05] — Tool icons e tooltip hover (step 1)
+
+### Added
+- [planimeter.html](planimeter.html) aggiunge icone standard ai pulsanti di `Strumenti` e `Azioni` (incluso clear cache) tramite classe condivisa `icon-button`.
+- [planimeter.html](planimeter.html) aggiunge tooltip hover localizzati con attributo `data-i18n-title` su tutti i pulsanti tool/action.
+- [src/i18n/it.js](src/i18n/it.js) e [src/i18n/en.js](src/i18n/en.js) introducono nuove chiavi `hint.tool.*` e `hint.action.*`.
+
+### Changed
+- [styles.css](styles.css) estende lo stile pulsanti con allineamento icona+testo consistente, mantenendo compatibilità con stato attivo e varianti danger.
+
+### Notes
+- Gli hint vengono aggiornati automaticamente al cambio lingua grazie al supporto già presente per `data-i18n-title` in [src/i18n/i18n.js](src/i18n/i18n.js).
+
+## [2026-05-05] — Settings tab e interrogazione particelle catastali
+
+### Added
+- [planimeter.html](planimeter.html) introduce una toolbar a tab con viste separate `Operativo` e `Settings`.
+- [planimeter.html](planimeter.html) aggiunge un pannello `Info catastali` che mostra `Label`, `NationalCadastralReference`, `localId` e `namespace` della particella interrogata.
+- [src/io/preferences.js](src/io/preferences.js) salva in `localStorage` lingua, unità, tab attiva, opacità overlay e toggle query particella.
+
+### Changed
+- [src/planimeter.js](src/planimeter.js) inizializza il runtime a partire dalle preferenze persistite e sincronizza header rapido + pannello `Settings`.
+- [src/planimeter.js](src/planimeter.js) invia richieste `GetFeatureInfo` via proxy WMS quando il catasto ufficiale è attivo e l'utente clicca la mappa in modalità `Modifica` o `Elimina`.
+- [styles.css](styles.css) aggiunge layout/stili per tab toolbar, controlli `Settings` e card delle info catastali.
+- [src/i18n/it.js](src/i18n/it.js) e [src/i18n/en.js](src/i18n/en.js) estendono il catalogo con chiavi per `Settings` e interrogazione particelle.
+
+### Notes
+- Le query particella sono volutamente limitate al catasto ufficiale e ai workflow non di disegno, per evitare conflitti con il click usato da draw/measure.
+
 ## [2026-05-05] — Fix health check proxy e layout strumenti
 
 ### Fixed

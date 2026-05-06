@@ -1,6 +1,63 @@
 # TODO LIST
 - [ ] Mantenere [CHANGELOG.md](CHANGELOG.md) aggiornato a ogni milestone.
 
+## Piano Implementazione — Tool Icons, Layer 2-Gruppi, Cache WMS Avanzata
+
+### Obiettivo
+- [ ] Consegnare una UX con icone standard + tooltip, gestione layer in 2 gruppi (max 2 layer totali sovrapposti), cache WMS completa con TTL e size limit configurabili anche da Settings.
+
+### 1) Tool con icone standard + hint hover
+- [x] Definire set icone standard (draw/edit/delete/navigate/measure/locate/export/import/duplicate/clear/cache).
+- [x] Aggiornare toolbar strumenti e azioni con icona + testo accessibile.
+- [x] Aggiungere tooltip hover coerenti (`title` + fallback accessibile) su tutti i pulsanti tool/action.
+- [ ] Verificare resa responsive desktop/mobile senza overflow.
+
+Test e validazione:
+- [ ] Hover su ogni tool mostra hint corretto in IT/EN.
+- [ ] Screen reader mantiene label descrittiva (nessun bottone "senza nome").
+- [ ] Nessuna regressione su click/keyboard navigation (`Tab`, `Enter`, `Space`).
+
+### 2) Layer separati in 2 gruppi (max 2 overlay)
+- [ ] Introdurre Gruppo A "Base" (es. satellite/rilievo/strade base): selezione mutuamente esclusiva (1 solo layer attivo).
+- [ ] Introdurre Gruppo B "Amministrativo/Tematico" (es. topo amministrativo, WMS, confini, flood): selezione mutuamente esclusiva (1 solo layer attivo).
+- [ ] Vincolo runtime: massimo 2 layer attivi contemporaneamente (1 per gruppo).
+- [ ] Aggiornare stato UI, persistenza preferenze e ripristino all'avvio.
+- [ ] Aggiornare i18n IT/EN per label gruppi, layer e hint.
+
+Test e validazione:
+- [ ] Attivando un layer nello stesso gruppo, il precedente viene spento automaticamente.
+- [ ] È possibile tenere contemporaneamente 1 layer del gruppo Base + 1 del gruppo Amministrativo.
+- [ ] Contatore/logica non permette mai 3 layer sovrapposti da questi gruppi.
+- [ ] Ripristino preferenze corretto dopo refresh pagina.
+
+### 3) TTL e dimensione cache configurabili da Settings
+- [ ] Estendere Settings con campi: TTL cache (giorni) e limite cache (MB), con default rispettivamente 30 giorni e 500 MB.
+- [ ] Persistenza preferenze TTL/size lato client e invio al backend endpoint dedicato.
+- [ ] Backend: applicare TTL configurabile e cap dimensionale con strategia di eviction (LRU o oldest-first documentata).
+- [ ] Validare input (range min/max) lato UI e lato server.
+
+Test e validazione:
+- [ ] Modifica TTL da UI applicata e riflessa nelle statistiche/config runtime.
+- [ ] Modifica size limit da UI applicata; superata soglia parte eviction automatica.
+- [ ] Con default pulito, cache parte a 500 MB limite senza errori.
+
+### 4) Cache di tutti i layer WMS
+- [ ] Generalizzare chiave cache per includere layer/params WMS e non solo `CP.CadastralParcel`.
+- [ ] Applicare cache a tutte le richieste WMS `GetMap` idonee.
+- [ ] Aggiornare endpoint stats per metriche aggregate e (se utile) per-layer.
+- [ ] Garantire compatibilita con source ufficiale e fallback WMS futuri.
+
+Test e validazione:
+- [ ] Primo caricamento tile WMS = MISS, secondo caricamento stessa tile = HIT.
+- [ ] Hit/miss funzionano per layer WMS differenti.
+- [ ] Clear cache da Settings azzera metriche e contenuto.
+
+### Integrazione, QA e chiusura
+- [ ] Aggiornare [CHANGELOG.md](CHANGELOG.md) con milestone "Layer/Cache UX v2".
+- [ ] Eseguire test manuale end-to-end (navigate, draw/edit/delete, switch layer gruppi, cache settings, clear cache).
+- [ ] Verificare `python -m py_compile server.py` e assenza errori JS nei file modificati.
+- [ ] Flaggare come completate solo le voci effettivamente testate.
+
 ## Refactoring ES Modules + i18n + Unità di Misura
 
 - [x] Ristrutturare codebase in ES modules con importmap OL 8.2.0 (no bundler):
@@ -40,6 +97,28 @@
 	- controllo istanze già attive con policy configurabile `--instance-policy reuse|replace`,
 	- in caso di porta occupata da servizio non Planimeter: fallback automatico su porta random libera,
 	- prevenzione listener multipli sulla stessa porta (`allow_reuse_address = False` + probe porta robusto).
+- [x] Aggiungere tab `Settings` alla toolbar:
+	- separazione vista `Operativo` / `Settings`,
+	- mantenimento selezione overlay nella vista `Operativo`, con spostamento in `Settings` solo delle preferenze non operative,
+	- persistenza preferenze UI in `localStorage`.
+- [x] Aggiungere interrogazione catastale opzionale via `GetFeatureInfo`:
+	- toggle dedicato in `Settings`,
+	- recupero metadati particella su click mappa (workflow attuale: modalità `Modifica` / `Elimina`),
+	- pannello riepilogo con `Label`, `NationalCadastralReference`, `localId`, `namespace`.
+- [x] Hardening interrogazione particelle da context-menu:
+	- URL `GetFeatureInfo` generata tramite `TileWMS.getFeatureInfoUrl` (niente query WMS costruita a mano),
+	- riconoscimento risposta upstream `ServiceException InvalidFormat` con messaggio UI dedicato (non più errore generico di proxy).
+	- fallback automatico `INFO_FORMAT` su `application/vnd.ogc.gml` -> `text/plain` -> `text/html` e parser payload XML/plain-text oltre HTML.
+- [x] Settings composizione mosaico WMS ufficiale:
+	- selezione sottolayer catastali (`CP.CadastralParcel`, `codice_plla`, `fabbricati`, `strade`, `acque`, `CP.CadastralZoning`, `vestizioni`),
+	- applicazione live ai parametri `LAYERS/QUERY_LAYERS` del `TileWMS`,
+	- persistenza preferenze e blocco query particella quando il sottolayer `CP.CadastralParcel` non è attivo.
+- [x] Menu contestuale Navigate: export view/selection/areas:
+	- `Export view` snapshot PNG del viewport mappa (toolbar esclusa) con footer metadati (center, zoom, bbox, layer, timestamp),
+	- `Export selection` con rettangolo a trascinamento e auto-pan ai bordi, export PNG della selezione con footer area,
+	- `Export areas` instradato al flusso export aree già esistente (GeoJSON/KML toolbar).
+	- Miglioramento UX export selection: la selezione resta modificabile (move/resize/rotate con handle), drag mappa disattivato durante editing, menu contestuale secondario `Export`/`Cancel`.
+	- Preset qualità export immagine (`standard/high/ultra`) in Settings + fallback robusto su layer non esportabili per vincoli CORS.
 - [ ] Verificare compatibilità importmap cross-browser (Chrome 89+, Firefox 108+, Safari 16.4+).
 - [ ] Aggiungere test smoke E2E (Playwright) per: draw polygon, export GeoJSON, locale switch.
 Proposte operative per i prossimi step del progetto Project Planimeter.
@@ -48,6 +127,7 @@ Proposte operative per i prossimi step del progetto Project Planimeter.
 
 - [x] Aggiungere script di avvio rapido Windows:
 - `start-planimeter.bat` che lancia `python server.py` e apre il browser sulla URL locale.
+- Supporto argomenti CLI pass-through (es. `--instance-policy replace`, `--host`, `--port`) nello script batch.
 - [x] Introdurre health check proxy in UI:
 - Indicatore `Proxy WMS: OK/KO` nella toolbar con ultimo errore leggibile.
 - [x] Migliorare resilienza catasto ufficiale:
