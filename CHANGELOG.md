@@ -2,6 +2,22 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [2026-05-06] — Layer groups A/B con vincolo max 2 overlay
+
+### Added
+- [planimeter.html](planimeter.html) separa i layer in due gruppi espliciti: `Gruppo A (Base)` e `Gruppo B (Amministrativo/Tematico)` con hint dedicati.
+- [src/io/preferences.js](src/io/preferences.js) e [src/core/state.js](src/core/state.js) introducono preferenze/stato `activeBaseLayer` e `activeAdminLayer`.
+- [src/i18n/it.js](src/i18n/it.js) e [src/i18n/en.js](src/i18n/en.js) aggiungono nuove chiavi i18n per i hint dei gruppi layer.
+
+### Changed
+- [src/planimeter.js](src/planimeter.js) sostituisce la logica legacy con gestione a gruppi:
+  - mutua esclusione nel gruppo Base,
+  - mutua esclusione nel gruppo Amministrativo,
+  - massimo due overlay simultanei (1 base + 1 amministrativo/tematico),
+  - sincronizzazione UI/layer OpenLayers,
+  - persistenza e ripristino automatico all'avvio.
+- [src/planimeter.js](src/planimeter.js) aggiorna `setCatastoSource` per persistere subito la scelta sorgente in preferenze.
+
 ## [2026-05-06] — Settings cache runtime (TTL + size limit)
 
 ### Added

@@ -18,11 +18,11 @@ Test e validazione:
 - [ ] Nessuna regressione su click/keyboard navigation (`Tab`, `Enter`, `Space`).
 
 ### 2) Layer separati in 2 gruppi (max 2 overlay)
-- [ ] Introdurre Gruppo A "Base" (es. satellite/rilievo/strade base): selezione mutuamente esclusiva (1 solo layer attivo).
-- [ ] Introdurre Gruppo B "Amministrativo/Tematico" (es. topo amministrativo, WMS, confini, flood): selezione mutuamente esclusiva (1 solo layer attivo).
-- [ ] Vincolo runtime: massimo 2 layer attivi contemporaneamente (1 per gruppo).
-- [ ] Aggiornare stato UI, persistenza preferenze e ripristino all'avvio.
-- [ ] Aggiornare i18n IT/EN per label gruppi, layer e hint.
+- [x] Introdurre Gruppo A "Base" (es. satellite/rilievo/strade base): selezione mutuamente esclusiva (1 solo layer attivo).
+- [x] Introdurre Gruppo B "Amministrativo/Tematico" (es. topo amministrativo, WMS, confini, flood): selezione mutuamente esclusiva (1 solo layer attivo).
+- [x] Vincolo runtime: massimo 2 layer attivi contemporaneamente (1 per gruppo).
+- [x] Aggiornare stato UI, persistenza preferenze e ripristino all'avvio.
+- [x] Aggiornare i18n IT/EN per label gruppi, layer e hint.
 
 Test e validazione:
 - [ ] Attivando un layer nello stesso gruppo, il precedente viene spento automaticamente.

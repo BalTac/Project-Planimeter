@@ -32,6 +32,8 @@ const AVAILABLE_CATASTO_WMS_LAYERS = [
     'CP.CadastralZoning',
     'vestizioni',
 ];
+const BASE_LAYER_KEYS = ['sat', 'openTopoMap', 'esriTopo', 'esriRelief'];
+const ADMIN_LAYER_KEYS = ['osm', 'catasto'];
 
 export default class Planimeter {
     constructor() {
@@ -49,6 +51,8 @@ export default class Planimeter {
         this.state.locale = locale;
         this.state.unitSystem = this.unitSystem.system;
         this.state.toolbarPanel = preferences.toolbarPanel;
+        this.state.activeBaseLayer = this.sanitizeBaseLayerKey(preferences.activeBaseLayer);
+        this.state.activeAdminLayer = this.sanitizeAdminLayerKey(preferences.activeAdminLayer);
         this.state.catastoOpacity = preferences.catastoOpacity;
         this.state.catastoWmsLayers = this.sanitizeCatastoWmsLayers(preferences.catastoWmsLayers);
         this.state.parcelInfoEnabled = preferences.parcelInfoEnabled;
@@ -102,6 +106,7 @@ export default class Planimeter {
             },
         });
         this.proxyHealth.setHealth('checking', t('proxy.awaitInit'));
+        this.applyLayerGroupSelection();
 
         // ── Restore localStorage ──────────────────────────────────────────────
         restorePersistedFeatures(
@@ -139,6 +144,8 @@ export default class Planimeter {
             layerEsriRelief:           document.getElementById('layer-esri-relief'),
             layerOsm:                  document.getElementById('layer-osm'),
             layerCatasto:              document.getElementById('layer-catasto'),
+            baseLayerInputs:           [...document.querySelectorAll('[data-layer-group="base"]')],
+            adminLayerInputs:          [...document.querySelectorAll('[data-layer-group="admin"]')],
             catastoSource:             document.getElementById('catasto-source'),
             catastoHint:               document.getElementById('catasto-hint'),
             locateButton:              document.getElementById('btn-locate'),
@@ -331,24 +338,10 @@ export default class Planimeter {
     // ── UI bindings ──────────────────────────────────────────────────────────────
 
     bindUI() {
-        this.bindLayerToggle(this.elements.layerSat,        'sat');
-        this.bindLayerToggle(this.elements.layerOpenTopoMap, 'openTopoMap');
-        this.bindLayerToggle(this.elements.layerEsriTopo,    'esriTopo');
-        this.bindLayerToggle(this.elements.layerEsriRelief,  'esriRelief');
-        this.bindLayerToggle(this.elements.layerOsm,         'osm');
-        this.bindBaseLayerExclusion();
+        this.bindLayerGroupToggles();
 
         this.elements.tabButtons.forEach((button) => {
             button.addEventListener('click', () => this.setToolbarPanel(button.dataset.panel));
-        });
-
-        this.elements.layerCatasto.addEventListener('change', () => {
-            this.updateCatastoVisibility();
-            this.proxyHealth.update(
-                this.elements.layerCatasto.checked,
-                this.state.catastoSource,
-            );
-            this.renderParcelInfo();
         });
 
         this.elements.catastoSource.addEventListener('change', (ev) => {
@@ -1340,23 +1333,69 @@ export default class Planimeter {
 
     // ── Layer helpers ────────────────────────────────────────────────────────────
 
-    bindLayerToggle(el, layerKey) {
-        el.addEventListener('change', (ev) => this.layers[layerKey].setVisible(ev.target.checked));
+    sanitizeBaseLayerKey(layerKey) {
+        return BASE_LAYER_KEYS.includes(layerKey) ? layerKey : 'sat';
     }
 
-    bindBaseLayerExclusion() {
-        const baseEls = [...document.querySelectorAll('[data-base-layer]')];
-        baseEls.forEach((el) => {
+    sanitizeAdminLayerKey(layerKey) {
+        return ADMIN_LAYER_KEYS.includes(layerKey) ? layerKey : null;
+    }
+
+    bindLayerGroupToggles() {
+        this.elements.baseLayerInputs.forEach((el) => {
             el.addEventListener('change', (ev) => {
-                if (!ev.target.checked) return;
-                baseEls
-                    .filter((other) => other !== ev.target && other.checked)
-                    .forEach((other) => {
-                        other.checked = false;
-                        other.dispatchEvent(new Event('change'));
-                    });
+                const key = ev.target.dataset.layerKey;
+                if (ev.target.checked) {
+                    this.state.activeBaseLayer = this.sanitizeBaseLayerKey(key);
+                } else if (this.state.activeBaseLayer === key) {
+                    // Keep exactly one base layer active at all times.
+                    ev.target.checked = true;
+                    return;
+                }
+
+                this.applyLayerGroupSelection();
+                this.persistPreferences();
             });
         });
+
+        this.elements.adminLayerInputs.forEach((el) => {
+            el.addEventListener('change', (ev) => {
+                const key = ev.target.dataset.layerKey;
+                if (ev.target.checked) {
+                    this.state.activeAdminLayer = this.sanitizeAdminLayerKey(key);
+                } else if (this.state.activeAdminLayer === key) {
+                    this.state.activeAdminLayer = null;
+                }
+
+                this.applyLayerGroupSelection();
+                this.persistPreferences();
+            });
+        });
+    }
+
+    applyLayerGroupSelection() {
+        this.state.activeBaseLayer = this.sanitizeBaseLayerKey(this.state.activeBaseLayer);
+        this.state.activeAdminLayer = this.sanitizeAdminLayerKey(this.state.activeAdminLayer);
+
+        const baseActive = this.state.activeBaseLayer;
+        this.elements.layerSat.checked = baseActive === 'sat';
+        this.elements.layerOpenTopoMap.checked = baseActive === 'openTopoMap';
+        this.elements.layerEsriTopo.checked = baseActive === 'esriTopo';
+        this.elements.layerEsriRelief.checked = baseActive === 'esriRelief';
+
+        this.layers.sat.setVisible(baseActive === 'sat');
+        this.layers.openTopoMap.setVisible(baseActive === 'openTopoMap');
+        this.layers.esriTopo.setVisible(baseActive === 'esriTopo');
+        this.layers.esriRelief.setVisible(baseActive === 'esriRelief');
+
+        const adminActive = this.state.activeAdminLayer;
+        this.elements.layerOsm.checked = adminActive === 'osm';
+        this.elements.layerCatasto.checked = adminActive === 'catasto';
+        this.layers.osm.setVisible(adminActive === 'osm');
+        this.updateCatastoVisibility();
+
+        this.proxyHealth?.update(this.elements.layerCatasto.checked, this.state.catastoSource);
+        this.renderParcelInfo();
     }
 
     setCatastoSource(sourceKey) {
@@ -1369,6 +1408,7 @@ export default class Planimeter {
 
         this.proxyHealth.update(this.elements.layerCatasto.checked, sourceKey);
         this.renderParcelInfo();
+        this.persistPreferences();
     }
 
     updateCatastoVisibility() {
@@ -1461,6 +1501,9 @@ export default class Planimeter {
                 el.checked = active.has(el.dataset.wmsLayerPart);
             });
         }
+
+        // Keep layer checkboxes synchronized with persisted group selections.
+        this.applyLayerGroupSelection();
     }
 
     persistPreferences() {
@@ -1468,6 +1511,8 @@ export default class Planimeter {
             locale: this.state.locale,
             unitSystem: this.state.unitSystem,
             toolbarPanel: this.state.toolbarPanel,
+            activeBaseLayer: this.state.activeBaseLayer,
+            activeAdminLayer: this.state.activeAdminLayer,
             catastoOpacity: this.state.catastoOpacity,
             catastoWmsLayers: this.state.catastoWmsLayers,
             parcelInfoEnabled: this.state.parcelInfoEnabled,

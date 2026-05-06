@@ -57,45 +57,48 @@
                         <h2 id="layers-title" data-i18n="section.layers">Layer</h2>
                         <span class="section-kicker" data-i18n="section.layers.kicker">Overlay</span>
                     </div>
-                    <p class="section-help" data-i18n="layer.baseHint">Seleziona un layer base (mutuamente esclusivi).</p>
+                    <p class="section-help" data-i18n="layer.groupBaseHint">Gruppo A (Base): selezione mutuamente esclusiva, sempre un layer attivo.</p>
                     <div class="toggle-grid">
                         <label class="toggle-card" for="layer-sat">
-                            <input type="checkbox" id="layer-sat" checked data-base-layer>
+                            <input type="checkbox" id="layer-sat" checked data-layer-group="base" data-layer-key="sat">
                             <span>
                                 <strong data-i18n="layer.sat">Satellitare</strong>
                                 <small data-i18n="layer.sat.sub">ESRI World Imagery</small>
                             </span>
                         </label>
                         <label class="toggle-card" for="layer-open-topo">
-                            <input type="checkbox" id="layer-open-topo" data-base-layer>
+                            <input type="checkbox" id="layer-open-topo" data-layer-group="base" data-layer-key="openTopoMap">
                             <span>
                                 <strong data-i18n="layer.openTopo">Topografico</strong>
                                 <small data-i18n="layer.openTopo.sub">OpenTopoMap</small>
                             </span>
                         </label>
                         <label class="toggle-card" for="layer-esri-topo">
-                            <input type="checkbox" id="layer-esri-topo" data-base-layer>
+                            <input type="checkbox" id="layer-esri-topo" data-layer-group="base" data-layer-key="esriTopo">
                             <span>
                                 <strong data-i18n="layer.esriTopo">Topo ESRI</strong>
                                 <small data-i18n="layer.esriTopo.sub">ESRI World Topo Map</small>
                             </span>
                         </label>
                         <label class="toggle-card" for="layer-esri-relief">
-                            <input type="checkbox" id="layer-esri-relief" data-base-layer>
+                            <input type="checkbox" id="layer-esri-relief" data-layer-group="base" data-layer-key="esriRelief">
                             <span>
                                 <strong data-i18n="layer.esriRelief">Rilievo</strong>
                                 <small data-i18n="layer.esriRelief.sub">ESRI Shaded Relief</small>
                             </span>
                         </label>
+                    </div>
+                    <p class="section-help" data-i18n="layer.groupAdminHint">Gruppo B (Amministrativo/Tematico): selezione mutuamente esclusiva (max 1 attivo).</p>
+                    <div class="toggle-grid">
                         <label class="toggle-card" for="layer-osm">
-                            <input type="checkbox" id="layer-osm">
+                            <input type="checkbox" id="layer-osm" data-layer-group="admin" data-layer-key="osm">
                             <span>
                                 <strong data-i18n="layer.osm">Strade</strong>
                                 <small data-i18n="layer.osm.sub">OpenStreetMap</small>
                             </span>
                         </label>
                         <label class="toggle-card" for="layer-catasto">
-                            <input type="checkbox" id="layer-catasto">
+                            <input type="checkbox" id="layer-catasto" data-layer-group="admin" data-layer-key="catasto">
                             <span>
                                 <strong data-i18n="layer.catasto">Catasto</strong>
                                 <small data-i18n="layer.catasto.sub">Overlay catastale</small>

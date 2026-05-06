@@ -34,6 +34,8 @@ export default {
     'layer.esriRelief':           'Rilievo ombreggiato',
     'layer.esriRelief.sub':       'ESRI Shaded Relief',
     'layer.baseHint':             'Seleziona un layer base — i layer base sono mutuamente esclusivi.',
+    'layer.groupBaseHint':        'Gruppo A (Base): selezione mutuamente esclusiva, sempre un layer attivo.',
+    'layer.groupAdminHint':       'Gruppo B (Amministrativo/Tematico): selezione mutuamente esclusiva (max 1 attivo).',
     'layer.osm':                  'Strade',
     'layer.osm.sub':              'OpenStreetMap',
     'layer.catasto':              'Catasto',

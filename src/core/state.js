@@ -17,6 +17,8 @@ export function createInitialState() {
         locale: 'it',
         unitSystem: 'metric',
         toolbarPanel: 'operate',
+        activeBaseLayer: 'sat',
+        activeAdminLayer: null,
         catastoOpacity: 0.9,
         catastoWmsLayers: ['CP.CadastralParcel'],
         parcelInfoEnabled: false,

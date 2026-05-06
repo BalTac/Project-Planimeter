@@ -34,6 +34,8 @@ export default {
     'layer.esriRelief':           'Shaded Relief',
     'layer.esriRelief.sub':       'ESRI Shaded Relief',
     'layer.baseHint':             'Select a base layer — base layers are mutually exclusive.',
+    'layer.groupBaseHint':        'Group A (Base): mutually exclusive selection, always one active layer.',
+    'layer.groupAdminHint':       'Group B (Administrative/Thematic): mutually exclusive selection (max 1 active).',
     'layer.osm':                  'Streets',
     'layer.osm.sub':              'OpenStreetMap',
     'layer.catasto':              'Cadastral',
