@@ -324,8 +324,21 @@
                         <h2 id="settings-cache-title" data-i18n="section.settings.cache">Cache Tile WMS</h2>
                         <span class="section-kicker" data-i18n="section.settings.cache.kicker">SQLite</span>
                     </div>
+                    <div class="settings-grid">
+                        <label class="settings-field">
+                            <span data-i18n="settings.cacheTtlDays">TTL cache (giorni)</span>
+                            <input type="number" id="settings-cache-ttl-days" min="1" max="365" step="1" value="30">
+                            <small data-i18n="settings.cacheTtlDays.hint">Range consentito: 1-365 giorni</small>
+                        </label>
+                        <label class="settings-field">
+                            <span data-i18n="settings.cacheSizeMb">Limite cache (MB)</span>
+                            <input type="number" id="settings-cache-size-mb" min="32" max="4096" step="1" value="500">
+                            <small data-i18n="settings.cacheSizeMb.hint">Range consentito: 32-4096 MB</small>
+                        </label>
+                    </div>
                     <p id="cache-stats-display" class="section-help" data-i18n="cache.loading">Caricamento statistiche...</p>
                     <div class="action-grid">
+                        <button type="button" id="btn-cache-apply" class="action-button icon-button" data-i18n="action.cacheApply" data-icon="✅">Applica parametri cache</button>
                         <button type="button" id="btn-cache-clear" class="action-button action-button-danger icon-button" data-i18n="action.cacheClear" data-i18n-title="hint.action.cacheClear" data-icon="🗃">Svuota cache tile</button>
                     </div>
                 </section>

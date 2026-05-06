@@ -11,6 +11,8 @@ export const DEFAULT_PREFERENCES = {
     catastoWmsLayers: ['CP.CadastralParcel'],
     parcelInfoEnabled: false,
     exportImageQuality: 'standard',
+    cacheTtlDays: 30,
+    cacheSizeMb: 500,
 };
 
 export function loadPreferences() {

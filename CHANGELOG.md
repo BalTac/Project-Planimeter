@@ -2,6 +2,19 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [2026-05-06] — Settings cache runtime (TTL + size limit)
+
+### Added
+- [planimeter.html](planimeter.html) aggiunge in `Settings > Cache Tile WMS` i campi configurabili `TTL cache (giorni)` e `Limite cache (MB)` con default 30/500 e range validati.
+- [planimeter.html](planimeter.html) aggiunge pulsante `Applica parametri cache` per inviare la configurazione runtime al backend.
+- [src/planimeter.js](src/planimeter.js), [src/core/state.js](src/core/state.js) e [src/io/preferences.js](src/io/preferences.js) introducono persistenza client di `cacheTtlDays` e `cacheSizeMb`.
+- [server.py](server.py) aggiunge endpoint `GET/POST /cache-config` per leggere/aggiornare TTL e limite dimensionale cache in runtime.
+
+### Changed
+- [server.py](server.py) estende `TileCache` con configurazione dinamica (`set_config`, `get_config`) e applica eviction `oldest-first` quando `SUM(LENGTH(data))` supera `max_size_mb`.
+- [server.py](server.py) estende `--tile-cache-max-mb` (e `PLANIMETER_TILE_CACHE_MAX_MB`) e include TTL/limite nei log di avvio.
+- [src/planimeter.js](src/planimeter.js) sincronizza i campi cache con `/cache-stats` e mostra feedback utente in toolbar su update config riuscito/fallito.
+
 ## [2026-05-06] — Cache WMS generalizzata + logging strutturato proxy
 
 ### Added

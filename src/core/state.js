@@ -21,6 +21,8 @@ export function createInitialState() {
         catastoWmsLayers: ['CP.CadastralParcel'],
         parcelInfoEnabled: false,
         exportImageQuality: 'standard',
+        cacheTtlDays: 30,
+        cacheSizeMb: 500,
         parcelInfoLoading: false,
         parcelInfo: null,
         parcelInfoStatusKey: 'parcelInfo.disabled',

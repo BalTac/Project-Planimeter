@@ -65,6 +65,7 @@ export default {
     'action.clearAll':       'Clear all areas',
     'action.exportFormat':   'Export format',
     'action.importHint':     'Auto-detects GeoJSON and KML on import. GeoJSON is recommended for web/GIS interoperability.',
+    'action.cacheApply':     'Apply cache settings',
     'action.cacheClear':     'Clear tile cache',
 
     'hint.tool.navigate':         'Pan and explore the map without editing geometries.',
@@ -87,6 +88,8 @@ export default {
     'cache.disabled':    'Tile cache not active (server started without tile cache option).',
     'cache.unavailable': 'Cache statistics unavailable.',
     'cache.stats':       '{count} tiles cached · {size} MB used',
+    'cache.configApplied': 'Cache configuration updated: TTL {ttl} days, limit {size} MB.',
+    'cache.configError': 'Unable to update cache configuration.',
     'cache.cleared':     '{deleted} tiles removed from cache.',
     'cache.clearError':  'Error while clearing the cache.',
 
@@ -116,6 +119,10 @@ export default {
     'settings.exportQuality.standard': 'Standard (1x)',
     'settings.exportQuality.high':     'High (1.5x)',
     'settings.exportQuality.ultra':    'Ultra (2x)',
+    'settings.cacheTtlDays':      'Cache TTL (days)',
+    'settings.cacheTtlDays.hint': 'Allowed range: 1-365 days',
+    'settings.cacheSizeMb':       'Cache limit (MB)',
+    'settings.cacheSizeMb.hint':  'Allowed range: 32-4096 MB',
     'settings.catastoOpacity':    'Cadastral overlay opacity',
     'settings.catastoWmsLayers':  'Cadastral mosaic composition (official WMS)',
     'settings.catastoWmsLayersHint':'Choose which cadastral sublayers are requested from WMS. At least one layer must remain active.',

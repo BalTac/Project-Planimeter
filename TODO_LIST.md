@@ -31,10 +31,10 @@ Test e validazione:
 - [ ] Ripristino preferenze corretto dopo refresh pagina.
 
 ### 3) TTL e dimensione cache configurabili da Settings
-- [ ] Estendere Settings con campi: TTL cache (giorni) e limite cache (MB), con default rispettivamente 30 giorni e 500 MB.
-- [ ] Persistenza preferenze TTL/size lato client e invio al backend endpoint dedicato.
-- [ ] Backend: applicare TTL configurabile e cap dimensionale con strategia di eviction (LRU o oldest-first documentata).
-- [ ] Validare input (range min/max) lato UI e lato server.
+- [x] Estendere Settings con campi: TTL cache (giorni) e limite cache (MB), con default rispettivamente 30 giorni e 500 MB.
+- [x] Persistenza preferenze TTL/size lato client e invio al backend endpoint dedicato.
+- [x] Backend: applicare TTL configurabile e cap dimensionale con strategia di eviction (LRU o oldest-first documentata).
+- [x] Validare input (range min/max) lato UI e lato server.
 
 Test e validazione:
 - [ ] Modifica TTL da UI applicata e riflessa nelle statistiche/config runtime.
@@ -55,7 +55,7 @@ Test e validazione:
 ### Integrazione, QA e chiusura
 - [ ] Aggiornare [CHANGELOG.md](CHANGELOG.md) con milestone "Layer/Cache UX v2".
 - [ ] Eseguire test manuale end-to-end (navigate, draw/edit/delete, switch layer gruppi, cache settings, clear cache).
-- [ ] Verificare `python -m py_compile server.py` e assenza errori JS nei file modificati.
+- [x] Verificare `python -m py_compile server.py` e assenza errori JS nei file modificati.
 - [ ] Flaggare come completate solo le voci effettivamente testate.
 
 ## Refactoring ES Modules + i18n + Unità di Misura

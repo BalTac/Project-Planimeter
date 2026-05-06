@@ -20,6 +20,7 @@ import sqlite3
 import threading
 import urllib.parse
 import urllib.request
+from collections.abc import Mapping
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
@@ -50,13 +51,24 @@ TRANSIENT_UPSTREAM_STATUS = {
 
 
 TILE_CACHE_TTL_DAYS_DEFAULT = 30
+TILE_CACHE_MAX_MB_DEFAULT = 500
+MIN_CACHE_TTL_DAYS = 1
+MAX_CACHE_TTL_DAYS = 365
+MIN_CACHE_SIZE_MB = 32
+MAX_CACHE_SIZE_MB = 4096
 
 
 class TileCache:
     """Thread-safe SQLite tile cache for WMS GetMap responses."""
 
-    def __init__(self, cache_dir: pathlib.Path, ttl_days: int = TILE_CACHE_TTL_DAYS_DEFAULT) -> None:
+    def __init__(
+        self,
+        cache_dir: pathlib.Path,
+        ttl_days: int = TILE_CACHE_TTL_DAYS_DEFAULT,
+        max_size_mb: int = TILE_CACHE_MAX_MB_DEFAULT,
+    ) -> None:
         self._ttl = ttl_days * 86400
+        self._max_size_bytes = max_size_mb * 1024 * 1024
         cache_dir.mkdir(parents=True, exist_ok=True)
         self._db_path = str(cache_dir / "tiles.db")
         self._lock = threading.Lock()
@@ -93,6 +105,33 @@ class TileCache:
                     "INSERT OR REPLACE INTO tiles (key, ctype, data, ts) VALUES (?, ?, ?, ?)",
                     (key, ctype, sqlite3.Binary(data), time.time()),
                 )
+                self._enforce_size_limit(conn)
+
+    def set_config(self, ttl_days: int, max_size_mb: int) -> None:
+        with self._lock:
+            self._ttl = max(ttl_days, 1) * 86400
+            self._max_size_bytes = max(max_size_mb, 1) * 1024 * 1024
+            with self._connect() as conn:
+                self._enforce_size_limit(conn)
+
+    def get_config(self) -> dict[str, int]:
+        return {
+            "ttl_days": max(1, int(round(self._ttl / 86400))),
+            "max_size_mb": max(1, int(round(self._max_size_bytes / (1024 * 1024)))),
+        }
+
+    def _enforce_size_limit(self, conn: sqlite3.Connection) -> None:
+        row = conn.execute("SELECT COALESCE(SUM(LENGTH(data)), 0) FROM tiles").fetchone()
+        total_size = int(row[0] or 0)
+        if total_size <= self._max_size_bytes:
+            return
+
+        # Eviction policy: oldest-first by insertion/update timestamp.
+        for key, blob_size in conn.execute("SELECT key, LENGTH(data) FROM tiles ORDER BY ts ASC"):
+            conn.execute("DELETE FROM tiles WHERE key = ?", (key,))
+            total_size -= int(blob_size or 0)
+            if total_size <= self._max_size_bytes:
+                break
 
     def clear_all(self) -> int:
         with self._lock:
@@ -125,10 +164,10 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
 
     def do_OPTIONS(self) -> None:
         if (self.path.startswith("/wms-proxy") or self.path.startswith("/wms-tile")
-            or self.path.startswith("/cache-clear")):
+            or self.path.startswith("/cache-clear") or self.path.startswith("/cache-config")):
             self.send_response(HTTPStatus.NO_CONTENT)
             self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type")
             self.end_headers()
             return
@@ -149,6 +188,9 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         if parsed.path in {"/cache-stats", "/cache-stats/"}:
             self.handle_cache_stats()
             return
+        if parsed.path in {"/cache-config", "/cache-config/"}:
+            self.handle_cache_config_get()
+            return
         super().do_GET()
 
     def do_POST(self) -> None:
@@ -156,10 +198,13 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         if parsed.path in {"/cache-clear", "/cache-clear/"}:
             self.handle_cache_clear()
             return
+        if parsed.path in {"/cache-config", "/cache-config/"}:
+            self.handle_cache_config_update()
+            return
         self.send_response(HTTPStatus.METHOD_NOT_ALLOWED)
         self.end_headers()
 
-    def send_json(self, status: HTTPStatus, payload: dict[str, object]) -> None:
+    def send_json(self, status: HTTPStatus, payload: Mapping[str, object]) -> None:
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -191,6 +236,7 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
                     time.sleep(0.35)
                     continue
                 raise
+        raise RuntimeError("fetch_upstream exhausted retries unexpectedly")
 
     def handle_proxy_health(self) -> None:
         started_at = time.perf_counter()
@@ -559,6 +605,7 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             self.send_json(HTTPStatus.OK, {"count": 0, "size_bytes": 0, "enabled": False})
             return
         stats = cache.stats()
+        stats.update(cache.get_config())
         stats["enabled"] = True  # type: ignore[assignment]
         self.send_json(HTTPStatus.OK, stats)
 
@@ -569,6 +616,75 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             return
         deleted = cache.clear_all()
         self.send_json(HTTPStatus.OK, {"deleted": deleted, "enabled": True})
+
+    def handle_cache_config_get(self) -> None:
+        cache: TileCache | None = getattr(self.server, "tile_cache", None)
+        if cache is None:
+            self.send_json(
+                HTTPStatus.OK,
+                {
+                    "enabled": False,
+                    "ttl_days": TILE_CACHE_TTL_DAYS_DEFAULT,
+                    "max_size_mb": TILE_CACHE_MAX_MB_DEFAULT,
+                },
+            )
+            return
+        payload = cache.get_config()
+        payload["enabled"] = True  # type: ignore[assignment]
+        self.send_json(HTTPStatus.OK, payload)
+
+    def handle_cache_config_update(self) -> None:
+        cache: TileCache | None = getattr(self.server, "tile_cache", None)
+        if cache is None:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "Cache non disponibile."})
+            return
+
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length <= 0:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "Payload mancante."})
+            return
+
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except Exception:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "Payload JSON non valido."})
+            return
+
+        try:
+            ttl_days = int(payload.get("ttl_days", TILE_CACHE_TTL_DAYS_DEFAULT))
+            max_size_mb = int(payload.get("max_size_mb", TILE_CACHE_MAX_MB_DEFAULT))
+        except Exception:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "Valori cache non validi."})
+            return
+
+        if ttl_days < MIN_CACHE_TTL_DAYS or ttl_days > MAX_CACHE_TTL_DAYS:
+            self.send_json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "ok": False,
+                    "message": f"TTL non valido: usare {MIN_CACHE_TTL_DAYS}-{MAX_CACHE_TTL_DAYS} giorni.",
+                },
+            )
+            return
+        if max_size_mb < MIN_CACHE_SIZE_MB or max_size_mb > MAX_CACHE_SIZE_MB:
+            self.send_json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "ok": False,
+                    "message": f"Size limit non valido: usare {MIN_CACHE_SIZE_MB}-{MAX_CACHE_SIZE_MB} MB.",
+                },
+            )
+            return
+
+        cache.set_config(ttl_days=ttl_days, max_size_mb=max_size_mb)
+        self.send_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "ttl_days": ttl_days,
+                "max_size_mb": max_size_mb,
+            },
+        )
 
     @staticmethod
     def _tile_cache_key(query: dict[str, list[str]]) -> str:
@@ -581,6 +697,9 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
 class PlanimeterServer(ThreadingHTTPServer):
     # Avoid multiple listeners on the same port (especially on Windows).
     allow_reuse_address = False
+    upstream_timeout: float
+    upstream_retries: int
+    tile_cache: TileCache
 
 
 def parse_args() -> argparse.Namespace:
@@ -613,6 +732,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=int(os.environ.get("PLANIMETER_TILE_CACHE_TTL_DAYS", str(TILE_CACHE_TTL_DAYS_DEFAULT))),
         help=f"TTL in giorni per le tile WMS in cache (default: {TILE_CACHE_TTL_DAYS_DEFAULT})",
+    )
+    parser.add_argument(
+        "--tile-cache-max-mb",
+        type=int,
+        default=int(os.environ.get("PLANIMETER_TILE_CACHE_MAX_MB", str(TILE_CACHE_MAX_MB_DEFAULT))),
+        help=f"Dimensione massima cache tile in MB (default: {TILE_CACHE_MAX_MB_DEFAULT})",
     )
     parser.add_argument(
         "--tile-cache-dir",
@@ -759,9 +884,18 @@ def main() -> None:
     server.upstream_timeout = max(args.upstream_timeout, 1.0)
     server.upstream_retries = max(args.upstream_retries, 0)
     cache_dir = args.tile_cache_dir if args.tile_cache_dir else (workspace / "_tile_cache")
-    server.tile_cache = TileCache(cache_dir, ttl_days=max(args.tile_cache_ttl, 1))
+    server.tile_cache = TileCache(
+        cache_dir,
+        ttl_days=max(args.tile_cache_ttl, MIN_CACHE_TTL_DAYS),
+        max_size_mb=max(args.tile_cache_max_mb, MIN_CACHE_SIZE_MB),
+    )
     print(f"Project Planimeter server attivo su http://{args.host}:{effective_port}/planimeter.html")
-    print(f"Tile cache WMS: {cache_dir / 'tiles.db'} (TTL: {args.tile_cache_ttl} giorni)")
+    print(
+        "Tile cache WMS: "
+        f"{cache_dir / 'tiles.db'} "
+        f"(TTL: {max(args.tile_cache_ttl, MIN_CACHE_TTL_DAYS)} giorni, "
+        f"limite: {max(args.tile_cache_max_mb, MIN_CACHE_SIZE_MB)} MB)"
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:

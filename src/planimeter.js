@@ -53,6 +53,8 @@ export default class Planimeter {
         this.state.catastoWmsLayers = this.sanitizeCatastoWmsLayers(preferences.catastoWmsLayers);
         this.state.parcelInfoEnabled = preferences.parcelInfoEnabled;
         this.state.exportImageQuality = this.sanitizeExportImageQuality(preferences.exportImageQuality);
+        this.state.cacheTtlDays = this.sanitizeCacheTtlDays(preferences.cacheTtlDays);
+        this.state.cacheSizeMb = this.sanitizeCacheSizeMb(preferences.cacheSizeMb);
         this.state.parcelInfoStatusKey = preferences.parcelInfoEnabled
             ? 'parcelInfo.clickHint'
             : 'parcelInfo.disabled';
@@ -163,6 +165,8 @@ export default class Planimeter {
             settingsLanguage:          document.getElementById('settings-language'),
             settingsUnitSystem:        document.getElementById('settings-unit-system'),
             settingsExportQuality:     document.getElementById('settings-export-quality'),
+            settingsCacheTtlDays:      document.getElementById('settings-cache-ttl-days'),
+            settingsCacheSizeMb:       document.getElementById('settings-cache-size-mb'),
             settingsCatastoOpacity:    document.getElementById('settings-catasto-opacity'),
             settingsCatastoOpacityValue: document.getElementById('settings-catasto-opacity-value'),
             settingsParcelInfoEnabled: document.getElementById('settings-parcel-info-enabled'),
@@ -174,6 +178,7 @@ export default class Planimeter {
             parcelInfoLocalId:         document.getElementById('parcel-info-local-id'),
             parcelInfoNamespace:       document.getElementById('parcel-info-namespace'),
             cacheStatsDisplay:         document.getElementById('cache-stats-display'),
+            btnCacheApply:             document.getElementById('btn-cache-apply'),
             btnCacheClear:             document.getElementById('btn-cache-clear'),
         };
     }
@@ -378,10 +383,23 @@ export default class Planimeter {
             this.updateExportImageQuality(ev.target.value);
         });
 
+        this.elements.settingsCacheTtlDays?.addEventListener('change', (ev) => {
+            this.state.cacheTtlDays = this.sanitizeCacheTtlDays(ev.target.value);
+            this.syncPreferenceControls();
+            this.persistPreferences();
+        });
+
+        this.elements.settingsCacheSizeMb?.addEventListener('change', (ev) => {
+            this.state.cacheSizeMb = this.sanitizeCacheSizeMb(ev.target.value);
+            this.syncPreferenceControls();
+            this.persistPreferences();
+        });
+
         this.elements.settingsCatastoOpacity?.addEventListener('input', (ev) => {
             this.updateCatastoOpacity(Number(ev.target.value) / 100);
         });
 
+        this.elements.btnCacheApply?.addEventListener('click', () => this.updateCacheRuntimeConfig());
         this.elements.btnCacheClear?.addEventListener('click', () => this.clearTileCache());
 
         this.elements.settingsParcelInfoEnabled?.addEventListener('change', (ev) => {
@@ -1422,6 +1440,12 @@ export default class Planimeter {
         if (this.elements.settingsExportQuality) {
             this.elements.settingsExportQuality.value = this.state.exportImageQuality;
         }
+        if (this.elements.settingsCacheTtlDays) {
+            this.elements.settingsCacheTtlDays.value = String(this.state.cacheTtlDays);
+        }
+        if (this.elements.settingsCacheSizeMb) {
+            this.elements.settingsCacheSizeMb.value = String(this.state.cacheSizeMb);
+        }
         if (this.elements.settingsCatastoOpacity) {
             this.elements.settingsCatastoOpacity.value = String(Math.round(this.state.catastoOpacity * 100));
         }
@@ -1448,6 +1472,8 @@ export default class Planimeter {
             catastoWmsLayers: this.state.catastoWmsLayers,
             parcelInfoEnabled: this.state.parcelInfoEnabled,
             exportImageQuality: this.state.exportImageQuality,
+            cacheTtlDays: this.state.cacheTtlDays,
+            cacheSizeMb: this.state.cacheSizeMb,
         });
     }
 
@@ -1472,6 +1498,18 @@ export default class Planimeter {
             return quality;
         }
         return 'standard';
+    }
+
+    sanitizeCacheTtlDays(ttlDays) {
+        const value = Number.parseInt(String(ttlDays), 10);
+        if (!Number.isFinite(value)) return 30;
+        return Math.max(1, Math.min(365, value));
+    }
+
+    sanitizeCacheSizeMb(sizeMb) {
+        const value = Number.parseInt(String(sizeMb), 10);
+        if (!Number.isFinite(value)) return 500;
+        return Math.max(32, Math.min(4096, value));
     }
 
     updateExportImageQuality(quality) {
@@ -1841,15 +1879,42 @@ export default class Planimeter {
         if (!el) return;
         try {
             const r = await fetch('/cache-stats');
-            const { count, size_bytes, enabled } = await r.json();
+            const { count, size_bytes, enabled, ttl_days, max_size_mb } = await r.json();
             if (!enabled) {
                 el.textContent = t('cache.disabled');
                 return;
             }
+            if (Number.isFinite(ttl_days)) this.state.cacheTtlDays = this.sanitizeCacheTtlDays(ttl_days);
+            if (Number.isFinite(max_size_mb)) this.state.cacheSizeMb = this.sanitizeCacheSizeMb(max_size_mb);
+            this.syncPreferenceControls();
+            this.persistPreferences();
             const sizeMb = (size_bytes / (1024 * 1024)).toFixed(2);
             el.textContent = t('cache.stats', { count, size: sizeMb });
         } catch {
             el.textContent = t('cache.unavailable');
+        }
+    }
+
+    async updateCacheRuntimeConfig() {
+        const ttl = this.sanitizeCacheTtlDays(this.state.cacheTtlDays);
+        const size = this.sanitizeCacheSizeMb(this.state.cacheSizeMb);
+        try {
+            const response = await fetch('/cache-config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ttl_days: ttl, max_size_mb: size }),
+            });
+            if (!response.ok) {
+                throw new Error(`cache-config failed: ${response.status}`);
+            }
+            this.state.cacheTtlDays = ttl;
+            this.state.cacheSizeMb = size;
+            this.syncPreferenceControls();
+            this.persistPreferences();
+            this.setToolbarMessage(t('cache.configApplied', { ttl, size }));
+            await this.loadCacheStats();
+        } catch {
+            this.setToolbarMessage(t('cache.configError'));
         }
     }
 
