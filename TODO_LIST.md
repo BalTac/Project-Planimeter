@@ -42,8 +42,8 @@ Test e validazione:
 - [ ] Con default pulito, cache parte a 500 MB limite senza errori.
 
 ### 4) Cache di tutti i layer WMS
-- [ ] Generalizzare chiave cache per includere layer/params WMS e non solo `CP.CadastralParcel`.
-- [ ] Applicare cache a tutte le richieste WMS `GetMap` idonee.
+- [x] Generalizzare chiave cache per includere layer/params WMS e non solo `CP.CadastralParcel`.
+- [x] Applicare cache a tutte le richieste WMS `GetMap` idonee.
 - [ ] Aggiornare endpoint stats per metriche aggregate e (se utile) per-layer.
 - [ ] Garantire compatibilita con source ufficiale e fallback WMS futuri.
 
@@ -161,7 +161,7 @@ Proposte operative per i prossimi step del progetto Project Planimeter.
 
 ## Hardening Tecnico
 
-- [ ] Logging proxy piu strutturato in [server.py](server.py):
+- [x] Logging proxy piu strutturato in [server.py](server.py):
 - codice risposta upstream,
 - durata richiesta,
 - query WMS sanitizzata.

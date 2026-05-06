@@ -2,6 +2,17 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [2026-05-06] — Cache WMS generalizzata + logging strutturato proxy
+
+### Added
+- [server.py](server.py) estende la cache SQLite su **tutti** i layer WMS `GetMap` (non solo `CP.CadastralParcel`); ogni richiesta tile viene cached a prescindere dal layer richiesto.
+- [server.py](server.py) introduce logging strutturato via modulo `logging`: ogni risposta upstream registra livello (`INFO`/`WARNING`/`ERROR`), endpoint (`wms-proxy`/`wms-tile`), layers, bbox troncata, durata in ms e dimensione risposta in byte.
+
+### Changed
+- [server.py](server.py) `handle_wms_tile` aggiornato: rimosse la variabile `layers` e il filtro `layers == "CP.CadastralParcel"` dalla condizione `use_cache`; docstring aggiornata.
+- [server.py](server.py) `handle_wms_proxy` aggiornato: aggiunto timing `started_at`/`elapsed_ms` e chiamate `_log.info/warning/error` coerenti con il pattern di `handle_wms_tile`.
+
+
 ## [2026-05-05] — Tool icons e tooltip hover (step 1)
 
 ### Added

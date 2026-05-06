@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import logging
 import math
 import os
 import pathlib
@@ -23,6 +24,14 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 from PIL import Image
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    datefmt="%H:%M:%S",
+)
+_log = logging.getLogger("planimeter")
 
 
 UPSTREAM_WMS = "https://wms.cartografia.agenziaentrate.gov.it/inspire/wms/ows01.php"
@@ -265,6 +274,12 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
 
         self._normalize_getmap_query(query)
 
+        layers = (query.get("LAYERS", [""])[0] or "").strip()
+        bbox = (query.get("BBOX", [""])[0] or "").strip()
+        width = (query.get("WIDTH", [""])[0] or "").strip()
+        height = (query.get("HEIGHT", [""])[0] or "").strip()
+        started_at = time.perf_counter()
+
         resize_plan = self._compute_resize_plan(query)
         upstream_query = {k: list(v) for k, v in query.items()}
         if resize_plan:
@@ -289,11 +304,13 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
                 retries=self.get_upstream_retries(),
             ) as response:
                 payload = response.read()
+                elapsed_ms = int((time.perf_counter() - started_at) * 1000)
                 content_type = response.headers.get("Content-Type", "application/octet-stream")
 
                 # WMS servers often return ServiceException XML with HTTP 200.
                 # Surface it as gateway error so the frontend can react clearly.
                 if self._looks_like_wms_xml_exception(payload, content_type):
+                    _log.warning("wms-proxy ServiceException layers=%s %dms", layers, elapsed_ms)
                     self.send_response(HTTPStatus.BAD_GATEWAY)
                     self.send_header("Content-Type", "application/xml; charset=utf-8")
                     self.send_header("Access-Control-Allow-Origin", "*")
@@ -308,6 +325,11 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
                         resize_plan["requested_height"],
                     )
 
+                _log.info(
+                    "wms-proxy OK layers=%s size=%dx%s bbox=%s %dms %db",
+                    layers, int(width) if width else 0, height, bbox[:40] if bbox else "",
+                    elapsed_ms, len(payload),
+                )
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(payload)))
@@ -315,12 +337,16 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(payload)
         except UpstreamHTTPError as exc:
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            _log.error("wms-proxy upstream HTTP %d layers=%s %dms", exc.status_code, layers, elapsed_ms)
             self.send_response(exc.status_code)
             self.send_header("Content-Type", exc.headers.get("Content-Type", "text/plain; charset=utf-8"))
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(exc.body)
         except urllib.error.URLError as exc:
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            _log.error("wms-proxy URLError layers=%s %dms: %s", layers, elapsed_ms, exc.reason)
             self.send_error(HTTPStatus.BAD_GATEWAY, f"Errore upstream WMS: {exc.reason}")
 
     def _normalize_getmap_query(self, query: dict[str, list[str]]) -> None:
@@ -417,7 +443,7 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         return "xml" in ctype or "text/plain" in ctype or "application/vnd.ogc.se_xml" in ctype
 
     def handle_wms_tile(self, query_string: str) -> None:
-        """WMS proxy with SQLite tile cache for CP.CadastralParcel GetMap requests."""
+        """WMS proxy with SQLite tile cache for all GetMap requests."""
         query = urllib.parse.parse_qs(query_string, keep_blank_values=True)
         if not query:
             self.send_error(HTTPStatus.BAD_REQUEST, "Query string mancante")
@@ -431,13 +457,15 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
 
         self._normalize_getmap_query(query)
 
+        layers = (query.get("LAYERS", [""])[0] or "").strip()
+        bbox = (query.get("BBOX", [""])[0] or "").strip()
+        started_at = time.perf_counter()
+
         tile_cache: TileCache | None = getattr(self.server, "tile_cache", None)
         request_type = (query.get("REQUEST", [""])[0] or "").upper()
-        layers = (query.get("LAYERS", [""])[0] or "").strip()
         use_cache = (
             tile_cache is not None
             and request_type == "GETMAP"
-            and layers == "CP.CadastralParcel"
         )
 
         cache_key: str | None = None
@@ -446,6 +474,7 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             cached = tile_cache.get(cache_key)  # type: ignore[union-attr]
             if cached:
                 content_type, data = cached
+                _log.debug("wms-tile HIT layers=%s %db", layers, len(data))
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(data)))
@@ -478,9 +507,11 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
                 retries=self.get_upstream_retries(),
             ) as response:
                 payload = response.read()
+                elapsed_ms = int((time.perf_counter() - started_at) * 1000)
                 content_type = response.headers.get("Content-Type", "application/octet-stream")
 
                 if self._looks_like_wms_xml_exception(payload, content_type):
+                    _log.warning("wms-tile ServiceException layers=%s %dms", layers, elapsed_ms)
                     self.send_response(HTTPStatus.BAD_GATEWAY)
                     self.send_header("Content-Type", "application/xml; charset=utf-8")
                     self.send_header("Access-Control-Allow-Origin", "*")
@@ -498,6 +529,10 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
                 if use_cache and cache_key and "png" in content_type.lower():
                     tile_cache.put(cache_key, content_type, payload)  # type: ignore[union-attr]
 
+                _log.info(
+                    "wms-tile MISS layers=%s bbox=%s %dms %db",
+                    layers, bbox[:40] if bbox else "", elapsed_ms, len(payload),
+                )
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(payload)))
@@ -506,12 +541,16 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(payload)
         except UpstreamHTTPError as exc:
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            _log.error("wms-tile upstream HTTP %d layers=%s %dms", exc.status_code, layers, elapsed_ms)
             self.send_response(exc.status_code)
             self.send_header("Content-Type", exc.headers.get("Content-Type", "text/plain; charset=utf-8"))
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(exc.body)
         except urllib.error.URLError as exc:
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            _log.error("wms-tile URLError layers=%s %dms: %s", layers, elapsed_ms, exc.reason)
             self.send_error(HTTPStatus.BAD_GATEWAY, f"Errore upstream WMS: {exc.reason}")
 
     def handle_cache_stats(self) -> None:
