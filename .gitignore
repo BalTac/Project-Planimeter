@@ -7,8 +7,9 @@ __pycache__/
 wms-test.png
 _debug_*
 AGENTS.md
-wiki/
-raw/
 logs/
 _tile_cache/
 *.db
+wiki/
+raw/
+.agents/
