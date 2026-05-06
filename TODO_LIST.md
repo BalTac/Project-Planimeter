@@ -44,7 +44,7 @@ Test e validazione:
 ### 4) Cache di tutti i layer WMS
 - [x] Generalizzare chiave cache per includere layer/params WMS e non solo `CP.CadastralParcel`.
 - [x] Applicare cache a tutte le richieste WMS `GetMap` idonee.
-- [ ] Aggiornare endpoint stats per metriche aggregate e (se utile) per-layer.
+- [x] Aggiornare endpoint stats per metriche aggregate e (se utile) per-layer.
 - [ ] Garantire compatibilita con source ufficiale e fallback WMS futuri.
 
 Test e validazione:
