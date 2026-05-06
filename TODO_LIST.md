@@ -58,6 +58,35 @@ Test e validazione:
 - [x] Verificare `python -m py_compile server.py` e assenza errori JS nei file modificati.
 - [ ] Flaggare come completate solo le voci effettivamente testate.
 
+### Quick wins da knowledge ingest (WMS ufficiale + export GIS)
+- [x] Estendere formato export UI con `GeoTIFF`, `PNG + World File (PGW)`, `Dataset Bundle`.
+- [x] Collegare export aree a endpoint backend dedicati (`/export-geotiff`, `/export-pgw`, `/export-bundle`).
+- [x] Aggiungere endpoint server per export raster e bundle con metadata.
+- [x] Aggiungere chiavi i18n IT/EN per nuovi formati e stati export backend.
+- [x] Introdurre `maxZoom` sul layer catastale ufficiale per controllo scala esplicito.
+
+Test e validazione:
+- [ ] Verificare download reale GeoTIFF da toolbar `Esporta`.
+- [ ] Verificare ZIP `PNG+PGW` con file `.png` e `.pgw` coerenti.
+- [ ] Verificare ZIP bundle con `image.tif`, `areas.geojson`, `meta.json`.
+
+### Fix query particella e UX popup
+- [x] Correggere il proxy `GetFeatureInfo` per evitare `502` con WMS Agenzia Entrate.
+- [x] Correggere il fallback parser frontend: provare `text/plain`/`text/html` se il GML non contiene attributi utili.
+- [x] Visualizzare le info catastali in una floating box vicino al cursore con pulsante `Copy Info`.
+- [x] Chiudere la floating box con click sinistro esterno e con pulsante `X` dedicato.
+- [x] Rendere il parser frontend più severo: scartare risposte che producono solo campi `-` e continuare il fallback.
+- [x] Visualizzare direttamente la paginetta HTML `GetFeatureInfo` nel popup (iframe) per ridurre complessità di parsing campi.
+- [x] Semplificare ulteriormente il frontend query particella: singola richiesta `text/html`, parser rimosso e bottone `Copy Info` rimosso.
+- [x] Adattare dinamicamente altezza/larghezza del popup al contenuto iframe per limitare l'uso di scrollbar.
+- [x] Aggiungere parsing tabella lato `server.py` con stampa/log dei campi estratti solo su terminale.
+
+Test e validazione:
+- [ ] Verificare che `Cadestral info here` mostri `Label`, `Reference`, `Local ID`, `Namespace` in popup.
+- [ ] Verificare che `Copy Info` copi correttamente i valori negli appunti.
+- [ ] Verificare che un click sinistro fuori dal popup lo chiuda senza riposizionarlo.
+- [x] Limitare la query particella al solo menu contestuale in modalità `Navigate` (nessuna auto-query su click sinistro in `Edit/Delete`).
+
 ## Refactoring ES Modules + i18n + Unità di Misura
 
 - [x] Ristrutturare codebase in ES modules con importmap OL 8.2.0 (no bundler):

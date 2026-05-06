@@ -82,6 +82,7 @@ export function buildLayers(vectorSource, featureStyleFn) {
         visible: false,
         zIndex: 3,
         minZoom: 14,
+        maxZoom: 28,
         opacity: 0.9,
     });
 

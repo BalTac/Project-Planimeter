@@ -2,6 +2,37 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [2026-05-06] — Refinement da knowledge ingest (Catasto WMS + export GIS)
+
+### Added
+- [planimeter.html](planimeter.html) estende `Formato export` con opzioni `GeoTIFF`, `PNG + World File (PGW)` e `Dataset Bundle`.
+- [src/io/export.js](src/io/export.js) aggiunge `requestBackendExport()` per i nuovi formati raster/server-side.
+- [server.py](server.py) aggiunge endpoint `POST /export-geotiff`, `POST /export-pgw`, `POST /export-bundle`.
+- [server.py](server.py) introduce helper backend per export: parsing payload JSON, fetch WMS PNG, conversione TIFF, generazione world file PGW e creazione ZIP bundle.
+- [src/i18n/it.js](src/i18n/it.js) e [src/i18n/en.js](src/i18n/en.js) aggiungono nuove chiavi i18n per formati export, stato elaborazione e messaggi di successo/errore backend.
+
+### Changed
+- [src/planimeter.js](src/planimeter.js) rende `exportFeatures()` asincrono con instradamento automatico verso backend per `geotiff/pgw/bundle`.
+- [src/map/layers.js](src/map/layers.js) estende il layer catastale ufficiale con `maxZoom: 28` per controllo scala più esplicito.
+- [server.py](server.py) aggiorna CORS preflight (`OPTIONS`) includendo i nuovi endpoint export.
+
+## [2026-05-07] — Fix query particella + floating info box
+
+### Fixed
+- [server.py](server.py) normalizza anche le richieste `GetFeatureInfo`, eliminando il `502` sul percorso `Cadestral info here` verso il WMS Agenzia Entrate.
+- [src/planimeter.js](src/planimeter.js) corregge il fallback `GetFeatureInfo`: se il payload GML contiene solo geometria, prosegue su `text/plain` e `text/html` invece di fermarsi con esito vuoto.
+- [src/planimeter.js](src/planimeter.js) estende il parser HTML per leggere i campi `InspireId localId` e `InspireId_namespace` restituiti dal servizio ufficiale.
+- [src/planimeter.js](src/planimeter.js) evita falsi positivi su payload GML/plain deboli: il fallback accetta un risultato solo se contiene una vera identità particella (`reference` o `localId`), riducendo i casi con popup valorizzato a trattini.
+
+### Changed
+- [planimeter.html](planimeter.html), [styles.css](styles.css) e [src/planimeter.js](src/planimeter.js) sostituiscono la visualizzazione toolbar delle info catastali con una floating box vicino al cursore, completa di pulsante `Copy Info`.
+- [planimeter.html](planimeter.html), [styles.css](styles.css), [src/core/state.js](src/core/state.js) e [src/planimeter.js](src/planimeter.js) aggiungono chiusura esplicita del popup (`X`) e dismiss su click sinistro esterno, evitando che la box segua il puntatore al click successivo.
+- [src/planimeter.js](src/planimeter.js) irrigidisce il parsing `GetFeatureInfo`: un risultato con soli trattini viene ora scartato e il fallback continua sui formati successivi, con estrazione HTML più robusta per le tabelle Agenzia.
+- [src/planimeter.js](src/planimeter.js), [src/ui/context-menu.js](src/ui/context-menu.js), [src/i18n/it.js](src/i18n/it.js) e [src/i18n/en.js](src/i18n/en.js) allineano il workflow query particella: richiesta disponibile solo da menu contestuale in modalità `Navigate`, senza interrogazioni automatiche su click sinistro mappa in `Edit/Delete`.
+- [planimeter.html](planimeter.html), [styles.css](styles.css), [src/core/state.js](src/core/state.js) e [src/planimeter.js](src/planimeter.js) introducono rendering diretto del payload `GetFeatureInfo` HTML in `iframe` nel popup; il parser campi resta come fallback per formati non HTML.
+- [planimeter.html](planimeter.html), [styles.css](styles.css), [src/core/state.js](src/core/state.js) e [src/planimeter.js](src/planimeter.js) rimuovono `Copy Info`, campi parser nel popup e parser frontend legacy: la query particella ora esegue una sola richiesta `text/html` e rende il risultato raw nel frame con dimensionamento dinamico.
+- [server.py](server.py) aggiunge estrazione campi da tabella `GetFeatureInfo` HTML e logging su terminale (`wms-proxy parsed-featureinfo ...`) senza alterare la risposta inviata al frontend.
+
 ## [2026-05-06] — Layer groups A/B con vincolo max 2 overlay
 
 ### Added

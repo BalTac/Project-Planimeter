@@ -26,7 +26,10 @@ export function createInitialState() {
         cacheTtlDays: 30,
         cacheSizeMb: 500,
         parcelInfoLoading: false,
-        parcelInfo: null,
+        parcelInfoHtml: null,
         parcelInfoStatusKey: 'parcelInfo.disabled',
+        parcelInfoAnchorPixel: null,
+        parcelInfoPopoverDismissed: false,
+        suppressNextParcelInfoClick: false,
     };
 }

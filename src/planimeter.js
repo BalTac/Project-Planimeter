@@ -18,7 +18,7 @@ import {
     schedulePersistenceSync,
     restorePersistedFeatures,
 } from './io/persistence.js';
-import { buildExportConfig, triggerDownload } from './io/export.js';
+import { buildExportConfig, triggerDownload, requestBackendExport } from './io/export.js';
 import { detectImportFormat, readImportedFeatures } from './io/import.js';
 import { loadPreferences, savePreferences } from './io/preferences.js';
 
@@ -179,11 +179,10 @@ export default class Planimeter {
             settingsParcelInfoEnabled: document.getElementById('settings-parcel-info-enabled'),
             settingsWmsLayerParts:     [...document.querySelectorAll('[data-wms-layer-part]')],
             parcelInfoStatus:          document.getElementById('parcel-info-status'),
-            parcelInfoGrid:            document.getElementById('parcel-info-grid'),
-            parcelInfoLabel:           document.getElementById('parcel-info-label'),
-            parcelInfoReference:       document.getElementById('parcel-info-reference'),
-            parcelInfoLocalId:         document.getElementById('parcel-info-local-id'),
-            parcelInfoNamespace:       document.getElementById('parcel-info-namespace'),
+            parcelInfoPopover:         document.getElementById('parcel-info-popover'),
+            parcelInfoPopoverStatus:   document.getElementById('parcel-info-popover-status'),
+            parcelInfoPopoverFrame:    document.getElementById('parcel-info-popover-frame'),
+            parcelInfoCloseButton:     document.getElementById('parcel-info-close'),
             cacheStatsDisplay:         document.getElementById('cache-stats-display'),
             btnCacheApply:             document.getElementById('btn-cache-apply'),
             btnCacheClear:             document.getElementById('btn-cache-clear'),
@@ -221,10 +220,6 @@ export default class Planimeter {
                 this.proxyHealth?.setHealth('ko', t('msg.layerError'));
                 this.setToolbarMessage(t('msg.layerError'));
             }
-        });
-
-        this.map.on('singleclick', (event) => {
-            this.handleParcelInfoRequest(event);
         });
 
         this.view.on('change:resolution', () => this.updateSummary());
@@ -359,6 +354,25 @@ export default class Planimeter {
         this.elements.duplicateSelectedButton.addEventListener('click', () => this.duplicateSelectedArea());
         this.elements.deleteSelectedButton.addEventListener('click',    () => this.deleteSelectedFeature());
         this.elements.importInput.addEventListener('change', (ev) => this.importFeatures(ev));
+        this.elements.parcelInfoCloseButton?.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            this.closeParcelInfoPopover();
+        });
+
+        document.addEventListener('pointerdown', (ev) => {
+            if (ev.button !== 0) return;
+            const popover = this.elements.parcelInfoPopover;
+            if (!popover || popover.hidden) return;
+            const target = ev.target;
+            if (!(target instanceof Node) || popover.contains(target)) return;
+
+            const viewport = this.map?.getViewport();
+            if (viewport?.contains(target)) {
+                this.state.suppressNextParcelInfoClick = true;
+            }
+
+            this.closeParcelInfoPopover();
+        });
 
         this.elements.langSwitcher?.addEventListener('change', (ev) => {
             this.updateLocale(ev.target.value);
@@ -397,7 +411,6 @@ export default class Planimeter {
 
         this.elements.settingsParcelInfoEnabled?.addEventListener('change', (ev) => {
             this.state.parcelInfoEnabled = ev.target.checked;
-            this.state.parcelInfo = null;
             this.state.parcelInfoLoading = false;
             this.state.parcelInfoStatusKey = ev.target.checked
                 ? 'parcelInfo.clickHint'
@@ -471,6 +484,17 @@ export default class Planimeter {
             'measure-straight': 'msg.measureStraightActive',
             'measure-polyline': 'msg.measurePolylineActive',
         };
+
+        // Parcel info can be requested only from context menu in Navigate mode.
+        if (mode !== 'navigate') {
+            this.state.parcelInfoHtml = null;
+            this.state.parcelInfoLoading = false;
+            this.state.parcelInfoStatusKey = 'parcelInfo.clickHint';
+            this.state.parcelInfoPopoverDismissed = true;
+            this.state.parcelInfoAnchorPixel = null;
+            this.state.suppressNextParcelInfoClick = false;
+        }
+
         this.setToolbarMessage(t(modeMsg[mode] ?? 'msg.navigateActive'));
         this.renderParcelInfo();
     }
@@ -635,13 +659,42 @@ export default class Planimeter {
 
     // ── Export / Import ──────────────────────────────────────────────────────────
 
-    exportFeatures() {
+    async exportFeatures() {
         const features = this.vectorSource.getFeatures();
         if (!features.length) {
             alert(t('alert.noExport'));
             return;
         }
         const fmt    = this.elements.exportFormat.value;
+
+        if (['geotiff', 'pgw', 'bundle'].includes(fmt)) {
+            this.setToolbarMessage(t('msg.exportProcessing'));
+            try {
+                const size = this.map.getSize();
+                if (!size) {
+                    throw new Error('Map size unavailable');
+                }
+                const extent = this.map.getView().calculateExtent(size);
+                const [west, south, east, north] = transformExtent(extent, 'EPSG:3857', 'EPSG:4258');
+
+                await requestBackendExport(
+                    /** @type {'geotiff'|'pgw'|'bundle'} */ (fmt),
+                    {
+                        bbox: [south, west, north, east],
+                        width: size[0],
+                        height: size[1],
+                        layers: this.state.catastoWmsLayers,
+                    },
+                    features,
+                );
+                this.setToolbarMessage(t(`export.done.${fmt}`));
+            } catch (error) {
+                const message = error instanceof Error ? error.message : 'unknown error';
+                this.setToolbarMessage(t('export.error.backend', { error: message }));
+            }
+            return;
+        }
+
         const config = buildExportConfig(features, fmt);
         triggerDownload(
             config.payload,
@@ -1617,7 +1670,7 @@ export default class Planimeter {
             this.state.catastoSource === 'official' &&
             this.elements.layerCatasto.checked &&
             this.state.catastoWmsLayers.includes('CP.CadastralParcel') &&
-            (this.state.mode === 'edit' || this.state.mode === 'delete') &&
+            this.state.mode === 'navigate' &&
             !this.state.isDrawing;
     }
 
@@ -1625,6 +1678,7 @@ export default class Planimeter {
         return this.state.parcelInfoEnabled &&
             this.state.catastoSource === 'official' &&
             this.elements.layerCatasto.checked &&
+            this.state.mode === 'navigate' &&
             this.state.catastoWmsLayers.includes('CP.CadastralParcel');
     }
 
@@ -1647,18 +1701,33 @@ export default class Planimeter {
     }
 
     async fetchParcelInfoAtPixel(pixel) {
+        if (!this.canQueryParcelFromContextMenu()) {
+            this.state.parcelInfoHtml = null;
+            this.state.parcelInfoLoading = false;
+            this.state.parcelInfoStatusKey = this.state.parcelInfoEnabled
+                ? 'parcelInfo.clickHint'
+                : 'parcelInfo.disabled';
+            this.state.parcelInfoAnchorPixel = null;
+            this.state.parcelInfoPopoverDismissed = true;
+            this.renderParcelInfo();
+            return;
+        }
+
+        this.state.parcelInfoPopoverDismissed = false;
+        this.state.suppressNextParcelInfoClick = false;
+        this.state.parcelInfoAnchorPixel = pixel;
         this.state.parcelInfoLoading = true;
-        this.state.parcelInfo = null;
+        this.state.parcelInfoHtml = null;
         this.state.parcelInfoStatusKey = 'parcelInfo.loading';
         this.renderParcelInfo();
 
         try {
-            const result = await this.requestParcelInfoWithFallback(pixel);
-            this.state.parcelInfo = result.parcelInfo;
+            const result = await this.requestParcelInfoHtml(pixel);
+            this.state.parcelInfoHtml = result.parcelInfoHtml ?? null;
             this.state.parcelInfoStatusKey = result.statusKey;
         } catch (error) {
             console.error('Parcel info request failed:', error);
-            this.state.parcelInfo = null;
+            this.state.parcelInfoHtml = null;
             this.state.parcelInfoStatusKey = 'parcelInfo.error';
         } finally {
             this.state.parcelInfoLoading = false;
@@ -1666,85 +1735,38 @@ export default class Planimeter {
         }
     }
 
-    async handleParcelInfoRequest(event) {
-        if (this.selectionExport?.active) {
-            return;
+    async requestParcelInfoHtml(pixel) {
+        const url = this.buildParcelInfoUrl(pixel, 'text/html');
+        if (!url) return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty' };
+
+        const response = await fetch(url, {
+            headers: { Accept: 'text/html, text/*;q=0.8, */*;q=0.2' },
+        });
+        const payload = await response.text();
+
+        if (this.isFeatureInfoUnsupported(payload)) {
+            return { parcelInfoHtml: null, statusKey: 'parcelInfo.unsupported' };
+        }
+        if (!response.ok) {
+            return { parcelInfoHtml: null, statusKey: 'parcelInfo.error' };
         }
 
-        if (!this.state.parcelInfoEnabled) {
-            this.state.parcelInfoStatusKey = 'parcelInfo.disabled';
-            this.renderParcelInfo();
-            return;
+        const rawHtml = this.extractFeatureInfoHtmlPage(payload);
+        if (!rawHtml) {
+            return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty' };
         }
 
-        if (!this.canQueryParcelInfo()) {
-            if (this.elements.layerCatasto.checked && this.state.catastoSource === 'official') {
-                this.state.parcelInfoStatusKey = this.state.catastoWmsLayers.includes('CP.CadastralParcel')
-                    ? 'parcelInfo.modeHint'
-                    : 'parcelInfo.missingParcelLayer';
-            } else {
-                this.state.parcelInfoStatusKey = 'parcelInfo.notAvailable';
-            }
-            this.renderParcelInfo();
-            return;
-        }
-
-        this.state.parcelInfoLoading = true;
-        this.state.parcelInfo = null;
-        this.state.parcelInfoStatusKey = 'parcelInfo.loading';
-        this.renderParcelInfo();
-
-        try {
-            const result = await this.requestParcelInfoWithFallback(event.pixel);
-            this.state.parcelInfo = result.parcelInfo;
-            this.state.parcelInfoStatusKey = result.statusKey;
-        } catch (error) {
-            console.error('Parcel info request failed:', error);
-            this.state.parcelInfo = null;
-            this.state.parcelInfoStatusKey = 'parcelInfo.error';
-        } finally {
-            this.state.parcelInfoLoading = false;
-            this.renderParcelInfo();
-        }
+        return { parcelInfoHtml: rawHtml, statusKey: 'parcelInfo.ready' };
     }
 
-    async requestParcelInfoWithFallback(pixel) {
-        const infoFormats = [
-            'application/vnd.ogc.gml',
-            'text/plain',
-            'text/html',
-        ];
+    extractFeatureInfoHtmlPage(payload) {
+        const html = String(payload || '');
+        if (!html) return null;
+        if (/no\s+features\s+were\s+found/i.test(html)) return null;
+        if (!/<table[\s\S]*<\/table>/i.test(html)) return null;
 
-        let sawUnsupportedFormat = false;
-
-        for (const infoFormat of infoFormats) {
-            const url = this.buildParcelInfoUrl(pixel, infoFormat);
-            if (!url) continue;
-
-            const response = await fetch(url, {
-                headers: { Accept: `${infoFormat}, text/*;q=0.8, */*;q=0.2` },
-            });
-            const payload = await response.text();
-
-            if (this.isFeatureInfoUnsupported(payload)) {
-                sawUnsupportedFormat = true;
-                continue;
-            }
-            if (!response.ok) {
-                throw new Error(`GetFeatureInfo failed with status ${response.status}`);
-            }
-
-            const parsed = this.parseParcelInfo(payload, infoFormat);
-            if (parsed) {
-                return { parcelInfo: parsed, statusKey: 'parcelInfo.ready' };
-            }
-            return { parcelInfo: null, statusKey: 'parcelInfo.empty' };
-        }
-
-        if (sawUnsupportedFormat) {
-            return { parcelInfo: null, statusKey: 'parcelInfo.unsupported' };
-        }
-        return { parcelInfo: null, statusKey: 'parcelInfo.empty' };
+        // Keep upstream table markup, strip scripts for safety.
+        return html.replace(/<script\b[\s\S]*?<\/script>/gi, '').trim();
     }
 
     buildParcelInfoUrl(pixel, infoFormat = 'text/html') {
@@ -1776,145 +1798,122 @@ export default class Planimeter {
             /GetFeatureInfo/i.test(payload);
     }
 
-    parseParcelInfo(payload, infoFormat = 'text/html') {
-        if (!payload || /no\s+features\s+were\s+found/i.test(payload)) {
-            return null;
-        }
-
-        if (infoFormat.includes('gml') || /^\s*</.test(payload)) {
-            const xmlParsed = this.parseParcelInfoXml(payload);
-            if (xmlParsed) return xmlParsed;
-        }
-
-        if (infoFormat === 'text/plain') {
-            const plainParsed = this.parseParcelInfoPlainText(payload);
-            if (plainParsed) return plainParsed;
-        }
-
-        return this.parseParcelInfoHtml(payload);
+    closeParcelInfoPopover() {
+        this.state.parcelInfoPopoverDismissed = true;
+        this.state.parcelInfoAnchorPixel = null;
+        this.renderParcelInfo();
     }
 
-    parseParcelInfoHtml(html) {
-        if (!html || /no\s+features\s+were\s+found/i.test(html)) return null;
+    syncParcelInfoFrameSize() {
+        const frame = this.elements.parcelInfoPopoverFrame;
+        const popover = this.elements.parcelInfoPopover;
+        if (!frame || !popover || frame.hidden) return;
 
-        const documentHtml = new DOMParser().parseFromString(html, 'text/html');
-        const rows = [...documentHtml.querySelectorAll('tr')];
-        if (!rows.length) return null;
+        try {
+            const doc = frame.contentDocument;
+            if (!doc?.body) return;
+            const viewport = this.map?.getViewport();
+            const viewportRect = viewport?.getBoundingClientRect();
+            const maxHeight = Math.max(220, (viewportRect?.height || window.innerHeight) - 80);
+            const maxWidth = Math.max(360, (viewportRect?.width || window.innerWidth) - 40);
+            const contentHeight = Math.min(maxHeight, Math.max(180, doc.body.scrollHeight + 8));
+            const contentWidth = Math.min(maxWidth, Math.max(320, doc.body.scrollWidth + 16));
 
-        const values = new Map();
-        rows.forEach((row) => {
-            const key = row.querySelector('th, td:first-child')?.textContent?.trim();
-            const value = row.querySelector('td:last-child')?.textContent?.trim();
-            if (key && value) values.set(key.toLowerCase(), value);
-        });
-
-        const readValue = (...keys) => {
-            for (const [field, value] of values.entries()) {
-                if (keys.some((key) => field.includes(key))) return value;
-            }
-            return '-';
-        };
-
-        return {
-            label: readValue('label'),
-            reference: readValue('nationalcadastralreference', 'cadastralreference'),
-            localId: readValue('localid'),
-            namespace: readValue('namespace'),
-        };
-    }
-
-    parseParcelInfoXml(xmlText) {
-        const xml = new DOMParser().parseFromString(xmlText, 'application/xml');
-        if (xml.querySelector('parsererror, ServiceException, ExceptionText')) return null;
-
-        const values = new Map();
-        const nodes = xml.querySelectorAll('*');
-        nodes.forEach((node) => {
-            const key = (node.localName || node.nodeName || '').toLowerCase();
-            const value = node.textContent?.trim();
-            if (key && value && value !== '-') values.set(key, value);
-        });
-
-        const readValue = (...keys) => {
-            for (const [field, value] of values.entries()) {
-                if (keys.some((key) => field.includes(key))) return value;
-            }
-            return '-';
-        };
-
-        const result = {
-            label: readValue('label'),
-            reference: readValue('nationalcadastralreference', 'cadastralreference', 'reference'),
-            localId: readValue('localid', 'id'),
-            namespace: readValue('namespace'),
-        };
-
-        return result.label === '-' && result.reference === '-' && result.localId === '-' && result.namespace === '-'
-            ? null
-            : result;
-    }
-
-    parseParcelInfoPlainText(text) {
-        const lines = String(text || '').split(/\r?\n/);
-        const values = new Map();
-
-        lines.forEach((line) => {
-            const match = line.match(/^\s*([^:=]+)\s*[:=]\s*(.+)\s*$/);
-            if (!match) return;
-            values.set(match[1].trim().toLowerCase(), match[2].trim());
-        });
-
-        if (!values.size) return null;
-
-        const readValue = (...keys) => {
-            for (const [field, value] of values.entries()) {
-                if (keys.some((key) => field.includes(key))) return value;
-            }
-            return '-';
-        };
-
-        return {
-            label: readValue('label'),
-            reference: readValue('nationalcadastralreference', 'cadastralreference', 'reference'),
-            localId: readValue('localid', 'id'),
-            namespace: readValue('namespace'),
-        };
+            frame.style.height = `${contentHeight}px`;
+            popover.style.width = `${contentWidth}px`;
+        } catch {
+            // ignore sizing errors and keep defaults
+        }
     }
 
     renderParcelInfo() {
         const statusEl = this.elements.parcelInfoStatus;
-        const gridEl = this.elements.parcelInfoGrid;
+        const popoverEl = this.elements.parcelInfoPopover;
+        const popoverStatusEl = this.elements.parcelInfoPopoverStatus;
+        const popoverFrameEl = this.elements.parcelInfoPopoverFrame;
+
+        const setStatus = (key) => {
+            const text = t(key);
+            if (statusEl) statusEl.textContent = text;
+            if (popoverStatusEl) popoverStatusEl.textContent = text;
+        };
+
+        const setPopoverVisible = (visible) => {
+            if (!popoverEl) return;
+            popoverEl.hidden = !visible;
+        };
+
+        const shouldShowPopover = () => !this.state.parcelInfoPopoverDismissed && Boolean(this.state.parcelInfoAnchorPixel);
 
         if (!this.state.parcelInfoEnabled) {
-            statusEl.textContent = t('parcelInfo.disabled');
-            gridEl.hidden = true;
+            setStatus('parcelInfo.disabled');
+            if (popoverFrameEl) popoverFrameEl.hidden = true;
+            setPopoverVisible(false);
             return;
         }
 
         if (!this.elements.layerCatasto.checked || this.state.catastoSource !== 'official') {
-            statusEl.textContent = t('parcelInfo.notAvailable');
-            gridEl.hidden = true;
+            setStatus('parcelInfo.notAvailable');
+            if (popoverFrameEl) popoverFrameEl.hidden = true;
+            setPopoverVisible(false);
             return;
         }
 
         if (this.state.parcelInfoLoading) {
-            statusEl.textContent = t('parcelInfo.loading');
-            gridEl.hidden = true;
+            setStatus('parcelInfo.loading');
+            if (popoverFrameEl) popoverFrameEl.hidden = true;
+            this.positionParcelInfoPopover();
+            setPopoverVisible(shouldShowPopover());
             return;
         }
 
-        if (!this.state.parcelInfo) {
-            statusEl.textContent = t(this.state.parcelInfoStatusKey || 'parcelInfo.clickHint');
-            gridEl.hidden = true;
+        if (!this.state.parcelInfoHtml) {
+            setStatus(this.state.parcelInfoStatusKey || 'parcelInfo.clickHint');
+            if (popoverFrameEl) popoverFrameEl.hidden = true;
+            this.positionParcelInfoPopover();
+            setPopoverVisible(shouldShowPopover());
             return;
         }
 
-        this.elements.parcelInfoLabel.textContent = this.state.parcelInfo.label;
-        this.elements.parcelInfoReference.textContent = this.state.parcelInfo.reference;
-        this.elements.parcelInfoLocalId.textContent = this.state.parcelInfo.localId;
-        this.elements.parcelInfoNamespace.textContent = this.state.parcelInfo.namespace;
-        statusEl.textContent = t('parcelInfo.ready');
-        gridEl.hidden = false;
+        setStatus('parcelInfo.ready');
+        if (popoverFrameEl) {
+            popoverFrameEl.hidden = false;
+            if (popoverFrameEl.srcdoc !== this.state.parcelInfoHtml) {
+                popoverFrameEl.srcdoc = this.state.parcelInfoHtml;
+                popoverFrameEl.onload = () => {
+                    this.syncParcelInfoFrameSize();
+                    this.positionParcelInfoPopover();
+                };
+            }
+            this.syncParcelInfoFrameSize();
+        }
+        this.positionParcelInfoPopover();
+        setPopoverVisible(shouldShowPopover());
+    }
+
+    positionParcelInfoPopover() {
+        const popover = this.elements.parcelInfoPopover;
+        const anchorPixel = this.state.parcelInfoAnchorPixel;
+        if (!popover || !anchorPixel || !this.map) return;
+
+        const viewport = this.map.getViewport();
+        const viewportRect = viewport.getBoundingClientRect();
+        const width = popover.offsetWidth || 320;
+        const height = popover.offsetHeight || 180;
+        const gap = 14;
+
+        let left = anchorPixel[0] + gap;
+        let top = anchorPixel[1] + gap;
+
+        if (left + width > viewportRect.width - gap) {
+            left = Math.max(gap, anchorPixel[0] - width - gap);
+        }
+        if (top + height > viewportRect.height - gap) {
+            top = Math.max(gap, anchorPixel[1] - height - gap);
+        }
+
+        popover.style.left = `${left}px`;
+        popover.style.top = `${top}px`;
     }
 
     // ── Tile cache ────────────────────────────────────────────────────────────────

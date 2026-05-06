@@ -150,6 +150,9 @@
                         <select id="export-format" class="layer-source-select" aria-label="Scegli il formato di esportazione">
                             <option value="geojson" selected>GeoJSON</option>
                             <option value="kml">KML</option>
+                            <option value="geotiff" data-i18n="export.format.geotiff">GeoTIFF</option>
+                            <option value="pgw" data-i18n="export.format.pgw">PNG + World File</option>
+                            <option value="bundle" data-i18n="export.format.bundle">Dataset Bundle</option>
                         </select>
                         <p class="section-help" data-i18n="action.importHint">Import automatico da GeoJSON e KML. GeoJSON resta il formato consigliato.</p>
                     </div>
@@ -194,31 +197,13 @@
                     <p id="proxy-health-detail" class="section-help proxy-detail" data-i18n="stat.proxyInit">Stato proxy in attesa di verifica.</p>
                 </section>
 
-                <section class="toolbar-section" aria-labelledby="cadastral-info-title">
+                <section class="toolbar-section" aria-labelledby="cadastral-info-title" hidden>
                     <div class="section-heading">
                         <h2 id="cadastral-info-title" data-i18n="section.parcelInfo">Info catastali</h2>
                         <span class="section-kicker" data-i18n="section.parcelInfo.kicker">Query</span>
                     </div>
                     <div id="parcel-info-card" class="info-card">
                         <p id="parcel-info-status" class="section-help info-card-status" data-i18n="parcelInfo.disabled">Abilita l'interrogazione particelle in Settings.</p>
-                        <dl id="parcel-info-grid" class="info-grid" hidden>
-                            <div>
-                                <dt data-i18n="parcelInfo.label">Particella</dt>
-                                <dd id="parcel-info-label">-</dd>
-                            </div>
-                            <div>
-                                <dt data-i18n="parcelInfo.reference">Riferimento</dt>
-                                <dd id="parcel-info-reference">-</dd>
-                            </div>
-                            <div>
-                                <dt data-i18n="parcelInfo.localId">Local ID</dt>
-                                <dd id="parcel-info-local-id">-</dd>
-                            </div>
-                            <div>
-                                <dt data-i18n="parcelInfo.namespace">Namespace</dt>
-                                <dd id="parcel-info-namespace">-</dd>
-                            </div>
-                        </dl>
                     </div>
                 </section>
 
@@ -281,10 +266,10 @@
                         </label>
                         <label class="settings-check">
                             <input type="checkbox" id="settings-parcel-info-enabled">
-                            <span data-i18n="settings.parcelInfoEnabled">Interroga particelle con click sulla mappa (solo catasto ufficiale).</span>
+                            <span data-i18n="settings.parcelInfoEnabled">Interroga particelle dal menu contestuale in Navigate (solo catasto ufficiale).</span>
                         </label>
                     </div>
-                    <p class="section-help" data-i18n="settings.parcelInfoHint">Quando attivo, in modalità modifica o elimina un click sulla mappa recupera i dati catastali della particella sottostante.</p>
+                    <p class="section-help" data-i18n="settings.parcelInfoHint">Quando attivo, in modalità Navigate usa il menu contestuale della mappa per interrogare i dati catastali della particella.</p>
 
                     <div class="settings-field" style="margin-top: 10px;">
                         <strong data-i18n="settings.catastoWmsLayers">Composizione mosaico catastale (WMS ufficiale)</strong>
@@ -347,6 +332,18 @@
                 </section>
             </div>
         </aside>
+
+        <section id="parcel-info-popover" class="parcel-info-popover" hidden aria-live="polite">
+            <div class="parcel-info-popover__header">
+                <strong data-i18n="section.parcelInfo">Info catastali</strong>
+                <div class="parcel-info-popover__actions">
+                    <button type="button" id="parcel-info-close" class="parcel-info-popover__close" data-i18n="parcelInfo.closeButton" aria-label="Chiudi info catastali">X</button>
+                </div>
+            </div>
+            <p id="parcel-info-popover-status" class="section-help info-card-status" data-i18n="parcelInfo.clickHint">In modalità Navigate, usa il menu contestuale della mappa su una particella per leggerne i dati.</p>
+            <iframe id="parcel-info-popover-frame" class="parcel-info-popover__frame" title="Dettaglio GetFeatureInfo" scrolling="no" hidden></iframe>
+        </section>
+
         <nav id="map-context-menu" class="map-context-menu" hidden aria-label="Menu contestuale mappa">
             <ul class="context-menu-list"></ul>
         </nav>

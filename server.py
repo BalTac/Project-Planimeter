@@ -11,6 +11,7 @@ import math
 import os
 import pathlib
 import platform
+import re
 import socket
 import subprocess
 import time
@@ -20,7 +21,9 @@ import sqlite3
 import threading
 import urllib.parse
 import urllib.request
+import zipfile
 from collections.abc import Mapping
+from html import unescape
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
@@ -164,7 +167,9 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
 
     def do_OPTIONS(self) -> None:
         if (self.path.startswith("/wms-proxy") or self.path.startswith("/wms-tile")
-            or self.path.startswith("/cache-clear") or self.path.startswith("/cache-config")):
+            or self.path.startswith("/cache-clear") or self.path.startswith("/cache-config")
+            or self.path.startswith("/export-geotiff") or self.path.startswith("/export-pgw")
+            or self.path.startswith("/export-bundle")):
             self.send_response(HTTPStatus.NO_CONTENT)
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -200,6 +205,15 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path in {"/cache-config", "/cache-config/"}:
             self.handle_cache_config_update()
+            return
+        if parsed.path in {"/export-geotiff", "/export-geotiff/"}:
+            self.handle_export_geotiff()
+            return
+        if parsed.path in {"/export-pgw", "/export-pgw/"}:
+            self.handle_export_pgw()
+            return
+        if parsed.path in {"/export-bundle", "/export-bundle/"}:
+            self.handle_export_bundle()
             return
         self.send_response(HTTPStatus.METHOD_NOT_ALLOWED)
         self.end_headers()
@@ -318,12 +332,13 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         query.setdefault("TRANSPARENT", ["true"])
         query.setdefault("FORMAT", ["image/png"])
 
-        self._normalize_getmap_query(query)
+        self._normalize_wms_query(query)
 
         layers = (query.get("LAYERS", [""])[0] or "").strip()
         bbox = (query.get("BBOX", [""])[0] or "").strip()
         width = (query.get("WIDTH", [""])[0] or "").strip()
         height = (query.get("HEIGHT", [""])[0] or "").strip()
+        info_format = (query.get("INFO_FORMAT", [""])[0] or "").strip()
         started_at = time.perf_counter()
 
         resize_plan = self._compute_resize_plan(query)
@@ -339,7 +354,7 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             upstream_url,
             headers={
                 "User-Agent": "Planimeter-Local-Proxy/1.0",
-                "Accept": "image/png,image/*;q=0.9,*/*;q=0.8",
+                "Accept": self._build_proxy_accept_header(query, default="image/png,image/*;q=0.9,*/*;q=0.8"),
             },
         )
 
@@ -372,10 +387,23 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
                     )
 
                 _log.info(
-                    "wms-proxy OK layers=%s size=%dx%s bbox=%s %dms %db",
-                    layers, int(width) if width else 0, height, bbox[:40] if bbox else "",
+                    "wms-proxy OK request=%s layers=%s info_format=%s size=%dx%s bbox=%s %dms %db",
+                    (query.get("REQUEST", [""])[0] or "").upper(),
+                    layers,
+                    info_format,
+                    int(width) if width else 0,
+                    height,
+                    bbox[:40] if bbox else "",
                     elapsed_ms, len(payload),
                 )
+
+                request_name = (query.get("REQUEST", [""])[0] or "").upper()
+                info_format_lower = info_format.lower()
+                if request_name == "GETFEATUREINFO" and "text/html" in info_format_lower:
+                    feature_fields = self._extract_featureinfo_fields_from_html(payload)
+                    if feature_fields:
+                        _log.info("wms-proxy parsed-featureinfo fields=%s", feature_fields)
+
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(payload)))
@@ -395,12 +423,18 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             _log.error("wms-proxy URLError layers=%s %dms: %s", layers, elapsed_ms, exc.reason)
             self.send_error(HTTPStatus.BAD_GATEWAY, f"Errore upstream WMS: {exc.reason}")
 
-    def _normalize_getmap_query(self, query: dict[str, list[str]]) -> None:
+    def _normalize_wms_query(self, query: dict[str, list[str]]) -> None:
         request = (query.get("REQUEST", [""])[0] or "").upper()
-        if request != "GETMAP":
+        if request not in {"GETMAP", "GETFEATUREINFO"}:
             return
 
         self._normalize_crs_bbox_for_agenzia(query)
+
+    def _build_proxy_accept_header(self, query: dict[str, list[str]], default: str) -> str:
+        info_format = (query.get("INFO_FORMAT", [""])[0] or "").strip()
+        if info_format:
+            return f"{info_format}, text/xml;q=0.9, application/xml;q=0.8, */*;q=0.2"
+        return default
 
     def _compute_resize_plan(self, query: dict[str, list[str]]) -> dict[str, int] | None:
         request = (query.get("REQUEST", [""])[0] or "").upper()
@@ -488,6 +522,27 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         ctype = (content_type or "").lower()
         return "xml" in ctype or "text/plain" in ctype or "application/vnd.ogc.se_xml" in ctype
 
+    @staticmethod
+    def _extract_featureinfo_fields_from_html(payload: bytes) -> dict[str, str]:
+        if not payload:
+            return {}
+
+        text = payload.decode("utf-8", errors="ignore")
+        fields: dict[str, str] = {}
+        row_pattern = re.compile(
+            r"<tr\b[^>]*>\s*<th\b[^>]*>(.*?)</th>\s*<td\b[^>]*>(.*?)</td>\s*</tr>",
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+
+        for key_raw, value_raw in row_pattern.findall(text):
+            key = re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", key_raw))).strip()
+            value = re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", value_raw))).strip()
+            if not key or not value:
+                continue
+            fields[key] = value
+
+        return fields
+
     def handle_wms_tile(self, query_string: str) -> None:
         """WMS proxy with SQLite tile cache for all GetMap requests."""
         query = urllib.parse.parse_qs(query_string, keep_blank_values=True)
@@ -501,7 +556,7 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         query.setdefault("TRANSPARENT", ["true"])
         query.setdefault("FORMAT", ["image/png"])
 
-        self._normalize_getmap_query(query)
+        self._normalize_wms_query(query)
 
         layers = (query.get("LAYERS", [""])[0] or "").strip()
         bbox = (query.get("BBOX", [""])[0] or "").strip()
@@ -685,6 +740,193 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
                 "max_size_mb": max_size_mb,
             },
         )
+
+    def _read_json_payload(self) -> dict[str, object] | None:
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length <= 0:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "Payload mancante."})
+            return None
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except Exception:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "Payload JSON non valido."})
+            return None
+        if not isinstance(payload, dict):
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "Payload JSON non valido."})
+            return None
+        return payload
+
+    def _parse_export_payload(self) -> tuple[list[float], int, int, list[str], str] | None:
+        payload = self._read_json_payload()
+        if payload is None:
+            return None
+
+        bbox_raw = payload.get("bbox")
+        if not isinstance(bbox_raw, list) or len(bbox_raw) != 4:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "bbox non valido."})
+            return None
+        try:
+            south, west, north, east = [float(v) for v in bbox_raw]
+        except Exception:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "bbox non valido."})
+            return None
+
+        try:
+            width = int(str(payload.get("width", 1024)))
+            height = int(str(payload.get("height", 1024)))
+        except Exception:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "Dimensioni export non valide."})
+            return None
+
+        width = max(256, min(width, UPSTREAM_MAX_SIZE))
+        height = max(256, min(height, UPSTREAM_MAX_SIZE))
+
+        layers_raw = payload.get("layers")
+        if isinstance(layers_raw, list):
+            layers = [str(item).strip() for item in layers_raw if str(item).strip()]
+        else:
+            layers = ["CP.CadastralParcel"]
+        if not layers:
+            layers = ["CP.CadastralParcel"]
+
+        features_json = payload.get("features")
+        features = features_json if isinstance(features_json, str) else "{\"type\":\"FeatureCollection\",\"features\":[]}"
+
+        return [south, west, north, east], width, height, layers, features
+
+    def _fetch_wms_png(self, bbox: list[float], width: int, height: int, layers: list[str]) -> bytes:
+        south, west, north, east = bbox
+        query = {
+            "SERVICE": ["WMS"],
+            "REQUEST": ["GetMap"],
+            "VERSION": ["1.3.0"],
+            "CRS": ["EPSG:4258"],
+            "BBOX": [f"{south},{west},{north},{east}"],
+            "WIDTH": [str(width)],
+            "HEIGHT": [str(height)],
+            "LAYERS": [",".join(layers)],
+            "STYLES": [""],
+            "FORMAT": ["image/png"],
+            "TRANSPARENT": ["true"],
+        }
+        safe_query = urllib.parse.urlencode(query, doseq=True)
+        upstream_url = f"{UPSTREAM_WMS}?language=ita&{safe_query}"
+        req = urllib.request.Request(
+            upstream_url,
+            headers={
+                "User-Agent": "Planimeter-Local-Proxy/1.0",
+                "Accept": "image/png,image/*;q=0.9,*/*;q=0.8",
+            },
+        )
+
+        with self.fetch_upstream(
+            req,
+            timeout=self.get_upstream_timeout(),
+            retries=self.get_upstream_retries(),
+        ) as response:
+            payload = response.read()
+            content_type = response.headers.get("Content-Type", "application/octet-stream")
+            if self._looks_like_wms_xml_exception(payload, content_type):
+                raise ValueError("Upstream WMS ha restituito ServiceException")
+            return payload
+
+    def _build_world_file(self, bbox: list[float], width: int, height: int) -> str:
+        south, west, north, east = bbox
+        pixel_size_x = (east - west) / float(width)
+        pixel_size_y = (north - south) / float(height)
+        return "\n".join(
+            [
+                f"{pixel_size_x:.12f}",
+                "0.0",
+                "0.0",
+                f"{-pixel_size_y:.12f}",
+                f"{west:.12f}",
+                f"{north:.12f}",
+            ]
+        )
+
+    def _to_tiff(self, png_payload: bytes) -> bytes:
+        with Image.open(io.BytesIO(png_payload)) as img:
+            output = io.BytesIO()
+            img.save(output, format="TIFF", compression="tiff_lzw")
+            return output.getvalue()
+
+    def handle_export_geotiff(self) -> None:
+        parsed = self._parse_export_payload()
+        if parsed is None:
+            return
+        bbox, width, height, layers, _features = parsed
+        try:
+            png_payload = self._fetch_wms_png(bbox, width, height, layers)
+            tiff_payload = self._to_tiff(png_payload)
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "image/tiff")
+            self.send_header("Content-Length", str(len(tiff_payload)))
+            self.send_header("Content-Disposition", "attachment; filename=planimeter-export.tif")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(tiff_payload)
+        except Exception as exc:
+            self.send_json(HTTPStatus.BAD_GATEWAY, {"ok": False, "message": f"Export GeoTIFF fallito: {exc}"})
+
+    def handle_export_pgw(self) -> None:
+        parsed = self._parse_export_payload()
+        if parsed is None:
+            return
+        bbox, width, height, layers, _features = parsed
+        try:
+            png_payload = self._fetch_wms_png(bbox, width, height, layers)
+            world_file = self._build_world_file(bbox, width, height).encode("utf-8")
+
+            archive = io.BytesIO()
+            with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("planimeter-export.png", png_payload)
+                zf.writestr("planimeter-export.pgw", world_file)
+            payload = archive.getvalue()
+
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Content-Disposition", "attachment; filename=planimeter-export-pgw.zip")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(payload)
+        except Exception as exc:
+            self.send_json(HTTPStatus.BAD_GATEWAY, {"ok": False, "message": f"Export PGW fallito: {exc}"})
+
+    def handle_export_bundle(self) -> None:
+        parsed = self._parse_export_payload()
+        if parsed is None:
+            return
+        bbox, width, height, layers, features = parsed
+        try:
+            png_payload = self._fetch_wms_png(bbox, width, height, layers)
+            tiff_payload = self._to_tiff(png_payload)
+            meta = {
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "bbox": bbox,
+                "crs": "EPSG:4258",
+                "width": width,
+                "height": height,
+                "layers": layers,
+            }
+
+            archive = io.BytesIO()
+            with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("image.tif", tiff_payload)
+                zf.writestr("areas.geojson", features.encode("utf-8"))
+                zf.writestr("meta.json", json.dumps(meta, ensure_ascii=False, indent=2).encode("utf-8"))
+            payload = archive.getvalue()
+
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Content-Disposition", "attachment; filename=planimeter-export-bundle.zip")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(payload)
+        except Exception as exc:
+            self.send_json(HTTPStatus.BAD_GATEWAY, {"ok": False, "message": f"Export bundle fallito: {exc}"})
 
     @staticmethod
     def _tile_cache_key(query: dict[str, list[str]]) -> str:
