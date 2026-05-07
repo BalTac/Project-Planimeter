@@ -219,4 +219,50 @@ Proposte operative per i prossimi step del progetto Project Planimeter.
 - [x] Aggiungere sezione "Known Issues" in [README.md](README.md).
 - [x] Aggiungere sezione "FAQ" (CORS, proxy, differenza ufficiale/sostitutivo).
 - [x] Aggiungere sezione "Riferimenti e attribuzioni" in [README.md](README.md) per pubblicazione GitHub.
+- [x] Ingest nuovi documenti in [raw/](raw/) con aggiornamento wiki interna ([wiki/log.md](wiki/log.md), [wiki/wms-export.md](wiki/wms-export.md)).
+- [x] Ingest `raw/project_objectives.md` in [wiki/project-objectives.md](wiki/project-objectives.md) + health-check link wiki.
+- [x] Ingest `raw/wms_proxy_interpretation_layer_spec.md` in [wiki/wms-proxy-interpretation-layer.md](wiki/wms-proxy-interpretation-layer.md).
+- [x] Rimuovere checklist operativa legacy e tutti i riferimenti documentali associati.
 - [ ] Mantenere [CHANGELOG.md](CHANGELOG.md) aggiornato a ogni milestone.
+
+## Roadmap Integrata — Interpretation Layer + Project Objectives
+
+### Fase 1: Proxy interpretation layer (non-breaking)
+- [ ] Estendere `/wms-proxy` con branch condizionale `OUTPUT=json` valido solo per `REQUEST=GetFeatureInfo`.
+- [ ] Mantenere invariato il comportamento default (`raw` HTML/XML/PNG) in assenza di `OUTPUT=json`.
+- [ ] Normalizzare i campi parser in payload canonico: `parcel.id`, `parcel.label`, `parcel.namespace`, `parcel.local_id`.
+- [ ] Aggiungere payload di fallback parse error (`type=FeatureInfo`, `error=parse_failed`, `raw_html`).
+- [ ] Aggiungere test manuali di regressione: stessa query senza `OUTPUT` restituisce byte-identico tipo contenuto.
+
+### Fase 2: Endpoint semantico particella
+- [ ] Implementare `POST /parcel-at-point` con input `{lat, lon, buffer?}`.
+- [ ] Incapsulare workflow interno (bbox da punto, GetFeatureInfo, parse, normalize) senza duplicare logica WMS.
+- [ ] Restituire payload `ParcelLookup` con `source=wms` e campi particella normalizzati.
+- [ ] Aggiungere guardrail input (range lat/lon, buffer valido, errori JSON espliciti).
+
+### Fase 3: Data model feature evoluto
+- [ ] Introdurre modello feature persistente con UUID stabile, `geometry`, `bbox`, `created_at`, `updated_at`, `properties`, `tags`.
+- [ ] Aggiungere `links.cadastral[]` con `parcel_id`, `intersection_area`, `coverage_ratio`.
+- [ ] Aggiornare serializzazione/import/export per includere il nuovo schema senza perdita backward.
+
+### Fase 4: Intersection engine riusabile
+- [ ] Creare modulo dedicato (UI-agnostic) per intersection area/ratio tra geometrie utente e particelle catastali.
+- [ ] Integrare libreria geometrica (es. turf.js) con API interna stabile e testabile.
+- [ ] Esportare risultati verso `links.cadastral` e pipeline analytics/export.
+
+### Fase 5: DSL categorie + form dinamiche
+- [ ] Definire formato category DSL JSON (`name`, `label`, `fields`, vincoli).
+- [ ] Implementare loader categorie da file JSON + modalità strict/flexible.
+- [ ] Generare form dinamiche legate a `feature.properties` in base alla categoria selezionata.
+- [ ] Validare campi in modalità strict e fallback non bloccante in modalità flexible.
+
+### Fase 6: Export AI-ready + versioning
+- [ ] Allineare export bundle a schema esteso (feature + links + metadata) con CRS coerente `EPSG:4258`.
+- [ ] Garantire bbox allineato raster/vector e tracciabilità versione dataset.
+- [ ] Implementare versioning append-only per mutazioni geometria/proprietà.
+
+### Test e accettazione (nuove feature)
+- [ ] Verificare migrazione progressiva frontend: HTML raw -> `OUTPUT=json` -> `/parcel-at-point`.
+- [ ] Verificare nessuna regressione su popup HTML attuale in modalità compatibilità.
+- [ ] Verificare correttezza `links.cadastral` su casi reali (parcel_id presente, ratio 0..1).
+- [ ] Verificare export bundle con campi estesi e metadata coerenti.

@@ -202,7 +202,6 @@ Il repository contiene questi file principali:
 - [styles.css](styles.css): layout, overlay toolbar, responsive behavior e tema visuale.
 - [app.js](app.js): inizializzazione mappa, interazioni OpenLayers, export/import e strumenti di editing.
 - [server.py](server.py): server locale con proxy WMS per evitare il blocco CORS del layer ufficiale Agenzia Entrate.
-- [HANDOFF.md](HANDOFF.md): checklist operativa rapida per ripartenza su nuova postazione.
 - [start-planimeter.bat](start-planimeter.bat): avvio one-click su Windows (server + apertura browser).
 
 Il progetto e ispirato a tool esistenti per la misurazione di aree su mappa, sviluppato in modo indipendente.
@@ -376,10 +375,6 @@ Sono formati aperti e leggeri, adatti a una web app standalone. Formati piu pesa
 - Introdurre tema chiaro opzionale.
 - Aggiungere mini guida interattiva al primo avvio.
 - Valutare validazioni topologiche piu avanzate durante editing/import.
-
-## Continuita Operativa
-
-Per riprendere velocemente il lavoro da un'altra macchina, usa la checklist in [HANDOFF.md](HANDOFF.md).
 
 ## Riferimenti e attribuzioni
 

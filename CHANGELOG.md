@@ -2,6 +2,42 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [2026-05-07] — Cleanup documentazione operativa obsoleta
+
+### Removed
+- Rimossa checklist operativa legacy dal repository.
+
+### Changed
+- [README.md](README.md) pulito dai riferimenti alla checklist legacy (struttura progetto e sezione continuita operativa).
+- [TODO_LIST.md](TODO_LIST.md) aggiornato con task completato relativo alla rimozione.
+
+## [2026-05-07] — Ingest interpretation layer spec + TODO integrazione feature
+
+### Added
+- [wiki/wms-proxy-interpretation-layer.md](wiki/wms-proxy-interpretation-layer.md) con sintesi tecnica del documento `raw/wms_proxy_interpretation_layer_spec.md`.
+
+### Changed
+- [wiki/index.md](wiki/index.md) aggiornato con topic `WMS Proxy Interpretation Layer`.
+- [wiki/log.md](wiki/log.md) aggiornato con ingest e implicazioni architetturali (dual-mode FeatureInfo + `/parcel-at-point`).
+- [TODO_LIST.md](TODO_LIST.md) esteso con roadmap integrata: interpretation layer, endpoint semantico, data model evoluto, intersection engine, DSL categorie, export AI-ready e versioning.
+
+## [2026-05-07] — Ingest project objectives + wiki health-check
+
+### Added
+- [wiki/project-objectives.md](wiki/project-objectives.md) con sintesi strutturata di `raw/project_objectives.md` (data model refactor, cadastral links, intersection engine, DSL categorie, dynamic forms, export constraints, versioning).
+
+### Changed
+- [wiki/index.md](wiki/index.md) aggiorna i topic con la nuova pagina `Project Objectives`.
+- [wiki/log.md](wiki/log.md) registra ingest e health-check wiki eseguito.
+- [TODO_LIST.md](TODO_LIST.md) allinea il tracciamento attività documentali.
+
+## [2026-05-07] — Ingest documenti raw
+
+### Changed
+- [wiki/log.md](wiki/log.md) aggiorna il log di ingest con passaggio `raw/` del 2026-05-07.
+- [wiki/wms-export.md](wiki/wms-export.md) refresh sintesi (`Last Synthesized`) e allineamento wording architettura proxy locale.
+- [TODO_LIST.md](TODO_LIST.md) allinea il tracciamento documentale con completamento ingest `raw/`.
+
 ## [2026-05-06] — Refinement da knowledge ingest (Catasto WMS + export GIS)
 
 ### Added
