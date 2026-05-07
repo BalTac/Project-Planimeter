@@ -12,6 +12,7 @@ import os
 import pathlib
 import platform
 import re
+import shutil
 import socket
 import subprocess
 import time
@@ -770,6 +771,17 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         except Exception:
             self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "bbox non valido."})
             return None
+        if (
+            not all(math.isfinite(v) for v in (south, west, north, east))
+            or south >= north
+            or west >= east
+            or south < -90
+            or north > 90
+            or west < -180
+            or east > 180
+        ):
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "bbox non valido."})
+            return None
 
         try:
             width = int(str(payload.get("width", 1024)))
@@ -834,14 +846,16 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         south, west, north, east = bbox
         pixel_size_x = (east - west) / float(width)
         pixel_size_y = (north - south) / float(height)
+        center_x = west + pixel_size_x / 2.0
+        center_y = north - pixel_size_y / 2.0
         return "\n".join(
             [
                 f"{pixel_size_x:.12f}",
                 "0.0",
                 "0.0",
                 f"{-pixel_size_y:.12f}",
-                f"{west:.12f}",
-                f"{north:.12f}",
+                f"{center_x:.12f}",
+                f"{center_y:.12f}",
             ]
         )
 
@@ -867,7 +881,7 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(tiff_payload)
         except Exception as exc:
-            self.send_json(HTTPStatus.BAD_GATEWAY, {"ok": False, "message": f"Export GeoTIFF fallito: {exc}"})
+            self.send_json(HTTPStatus.BAD_GATEWAY, {"ok": False, "message": f"Export TIFF fallito: {exc}"})
 
     def handle_export_pgw(self) -> None:
         parsed = self._parse_export_payload()
@@ -1028,8 +1042,54 @@ def pick_random_port(host: str) -> int:
 
 
 def find_listening_pids(port: int) -> list[int]:
-    # Windows-first implementation for current project environment.
-    if platform.system().lower() != "windows":
+    system_name = platform.system().lower()
+    if system_name != "windows":
+        # Prefer lsof when available on Unix-like systems.
+        if shutil.which("lsof"):
+            try:
+                output = subprocess.check_output(
+                    ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                pids: set[int] = set()
+                for line in output.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        pids.add(int(line))
+                    except ValueError:
+                        continue
+                return sorted(pids)
+            except Exception:
+                pass
+
+        # Fallback to ss parser on Linux systems without lsof.
+        if shutil.which("ss"):
+            try:
+                output = subprocess.check_output(
+                    ["ss", "-ltnp"],
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                pids: set[int] = set()
+                pid_pattern = re.compile(r"pid=(\d+)")
+                port_marker = f":{port}"
+                for line in output.splitlines():
+                    if port_marker not in line:
+                        continue
+                    for match in pid_pattern.findall(line):
+                        try:
+                            pids.add(int(match))
+                        except ValueError:
+                            continue
+                return sorted(pids)
+            except Exception:
+                pass
+
         return []
 
     try:

@@ -1,4 +1,5 @@
 import {
+    DEFAULT_CATASTO_WMS_LAYER_SETTINGS,
     SETTINGS_LOCAL_STORAGE_KEY,
     SETTINGS_LOCAL_STORAGE_SCHEMA_VERSION,
 } from '../core/constants.js';
@@ -11,6 +12,7 @@ export const DEFAULT_PREFERENCES = {
     activeAdminLayer: null,
     catastoOpacity: 0.9,
     catastoWmsLayers: ['CP.CadastralParcel'],
+    catastoWmsLayerSettings: DEFAULT_CATASTO_WMS_LAYER_SETTINGS,
     parcelInfoEnabled: false,
     exportImageQuality: 'standard',
     cacheTtlDays: 30,

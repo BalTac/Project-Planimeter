@@ -1,3 +1,5 @@
+import { DEFAULT_CATASTO_WMS_LAYER_SETTINGS } from './constants.js';
+
 /** Factory — returns a fresh state object for each Planimeter instance. */
 export function createInitialState() {
     return {
@@ -19,8 +21,7 @@ export function createInitialState() {
         toolbarPanel: 'operate',
         activeBaseLayer: 'sat',
         activeAdminLayer: null,
-        catastoOpacity: 0.9,
-        catastoWmsLayers: ['CP.CadastralParcel'],
+        catastoWmsLayerSettings: structuredClone(DEFAULT_CATASTO_WMS_LAYER_SETTINGS),
         parcelInfoEnabled: false,
         exportImageQuality: 'standard',
         cacheTtlDays: 30,

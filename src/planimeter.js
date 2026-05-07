@@ -21,17 +21,8 @@ import {
 import { buildExportConfig, triggerDownload, requestBackendExport } from './io/export.js';
 import { detectImportFormat, readImportedFeatures } from './io/import.js';
 import { loadPreferences, savePreferences } from './io/preferences.js';
+import { CATASTO_WMS_LAYER_DEFS, DEFAULT_CATASTO_WMS_LAYER_SETTINGS } from './core/constants.js';
 
-const DEFAULT_CATASTO_WMS_LAYERS = ['CP.CadastralParcel'];
-const AVAILABLE_CATASTO_WMS_LAYERS = [
-    'CP.CadastralParcel',
-    'codice_plla',
-    'fabbricati',
-    'strade',
-    'acque',
-    'CP.CadastralZoning',
-    'vestizioni',
-];
 const BASE_LAYER_KEYS = ['sat', 'openTopoMap', 'esriTopo', 'esriRelief'];
 const ADMIN_LAYER_KEYS = ['osm', 'catasto'];
 
@@ -53,8 +44,11 @@ export default class Planimeter {
         this.state.toolbarPanel = preferences.toolbarPanel;
         this.state.activeBaseLayer = this.sanitizeBaseLayerKey(preferences.activeBaseLayer);
         this.state.activeAdminLayer = this.sanitizeAdminLayerKey(preferences.activeAdminLayer);
-        this.state.catastoOpacity = preferences.catastoOpacity;
-        this.state.catastoWmsLayers = this.sanitizeCatastoWmsLayers(preferences.catastoWmsLayers);
+        this.state.catastoWmsLayerSettings = this.sanitizeCatastoWmsLayerSettings(
+            preferences.catastoWmsLayerSettings,
+            preferences.catastoWmsLayers,
+            preferences.catastoOpacity,
+        );
         this.state.parcelInfoEnabled = preferences.parcelInfoEnabled;
         this.state.exportImageQuality = this.sanitizeExportImageQuality(preferences.exportImageQuality);
         this.state.cacheTtlDays = this.sanitizeCacheTtlDays(preferences.cacheTtlDays);
@@ -121,9 +115,8 @@ export default class Planimeter {
 
         this.updateSummary();
         this.setMode('navigate');
-        this.applyCatastoWmsLayersToOfficialSource();
         this.syncPreferenceControls();
-        this.applyCatastoOpacity();
+        this.applyCatastoWmsLayerSettings();
         this.renderParcelInfo();
         this.setToolbarPanel(this.state.toolbarPanel);
         this.loadCacheStats();
@@ -174,10 +167,9 @@ export default class Planimeter {
             settingsExportQuality:     document.getElementById('settings-export-quality'),
             settingsCacheTtlDays:      document.getElementById('settings-cache-ttl-days'),
             settingsCacheSizeMb:       document.getElementById('settings-cache-size-mb'),
-            settingsCatastoOpacity:    document.getElementById('settings-catasto-opacity'),
-            settingsCatastoOpacityValue: document.getElementById('settings-catasto-opacity-value'),
             settingsParcelInfoEnabled: document.getElementById('settings-parcel-info-enabled'),
             settingsWmsLayerParts:     [...document.querySelectorAll('[data-wms-layer-part]')],
+            settingsWmsLayerOpacity:   [...document.querySelectorAll('[data-wms-layer-opacity]')],
             parcelInfoStatus:          document.getElementById('parcel-info-status'),
             parcelInfoPopover:         document.getElementById('parcel-info-popover'),
             parcelInfoPopoverStatus:   document.getElementById('parcel-info-popover-status'),
@@ -207,7 +199,7 @@ export default class Planimeter {
                 this.layers.esriTopo,
                 this.layers.esriRelief,
                 this.layers.osm,
-                this.layers.catastoOfficial,
+                ...Object.values(this.layers.catastoOfficial),
                 this.layers.catastoFallback,
                 this.layers.vector,
             ],
@@ -215,11 +207,13 @@ export default class Planimeter {
             controls: defaultControls({ zoom: false, rotate: false }),
         });
 
-        this.layers.catastoOfficial.getSource().on('tileloaderror', () => {
-            if (this.state.catastoSource === 'official' && this.elements.layerCatasto.checked) {
-                this.proxyHealth?.setHealth('ko', t('msg.layerError'));
-                this.setToolbarMessage(t('msg.layerError'));
-            }
+        Object.values(this.layers.catastoOfficial).forEach((layer) => {
+            layer.getSource().on('tileloaderror', () => {
+                if (this.state.catastoSource === 'official' && this.elements.layerCatasto.checked) {
+                    this.proxyHealth?.setHealth('ko', t('msg.layerError'));
+                    this.setToolbarMessage(t('msg.layerError'));
+                }
+            });
         });
 
         this.view.on('change:resolution', () => this.updateSummary());
@@ -402,10 +396,6 @@ export default class Planimeter {
             this.persistPreferences();
         });
 
-        this.elements.settingsCatastoOpacity?.addEventListener('input', (ev) => {
-            this.updateCatastoOpacity(Number(ev.target.value) / 100);
-        });
-
         this.elements.btnCacheApply?.addEventListener('click', () => this.updateCacheRuntimeConfig());
         this.elements.btnCacheClear?.addEventListener('click', () => this.clearTileCache());
 
@@ -427,6 +417,9 @@ export default class Planimeter {
 
         this.elements.settingsWmsLayerParts?.forEach((el) => {
             el.addEventListener('change', () => this.updateCatastoWmsLayersFromSettings());
+        });
+        this.elements.settingsWmsLayerOpacity?.forEach((el) => {
+            el.addEventListener('input', () => this.updateCatastoWmsLayerOpacityFromSettings());
         });
     }
 
@@ -683,7 +676,7 @@ export default class Planimeter {
                         bbox: [south, west, north, east],
                         width: size[0],
                         height: size[1],
-                        layers: this.state.catastoWmsLayers,
+                        layers: this.getVisibleCatastoWmsLayerNames(),
                     },
                     features,
                 );
@@ -1286,7 +1279,7 @@ export default class Planimeter {
         if (this.elements.layerOsm.checked) list.push('osm');
         if (this.elements.layerCatasto.checked) {
             if (this.state.catastoSource === 'official') {
-                list.push(`catasto:${this.state.catastoWmsLayers.join('+')}`);
+                list.push(`catasto:${this.getVisibleCatastoWmsLayerNames().join('+')}`);
             } else {
                 list.push('catasto:fallback');
             }
@@ -1467,9 +1460,8 @@ export default class Planimeter {
     updateCatastoVisibility() {
         const show       = this.elements.layerCatasto.checked;
         const isOfficial = this.state.catastoSource === 'official';
-        this.layers.catastoOfficial.setVisible(show && isOfficial);
+        this.applyCatastoWmsLayerSettings();
         this.layers.catastoFallback.setVisible(show && !isOfficial);
-        this.applyCatastoOpacity();
     }
 
     // ── Locale/unit refresh ──────────────────────────────────────────────────────
@@ -1539,19 +1531,24 @@ export default class Planimeter {
         if (this.elements.settingsCacheSizeMb) {
             this.elements.settingsCacheSizeMb.value = String(this.state.cacheSizeMb);
         }
-        if (this.elements.settingsCatastoOpacity) {
-            this.elements.settingsCatastoOpacity.value = String(Math.round(this.state.catastoOpacity * 100));
-        }
-        if (this.elements.settingsCatastoOpacityValue) {
-            this.elements.settingsCatastoOpacityValue.textContent = `${Math.round(this.state.catastoOpacity * 100)}%`;
-        }
         if (this.elements.settingsParcelInfoEnabled) {
             this.elements.settingsParcelInfoEnabled.checked = this.state.parcelInfoEnabled;
         }
         if (this.elements.settingsWmsLayerParts?.length) {
-            const active = new Set(this.state.catastoWmsLayers);
             this.elements.settingsWmsLayerParts.forEach((el) => {
-                el.checked = active.has(el.dataset.wmsLayerPart);
+                const settings = this.state.catastoWmsLayerSettings[el.dataset.wmsLayerPart];
+                el.checked = Boolean(settings?.visible);
+            });
+        }
+        if (this.elements.settingsWmsLayerOpacity?.length) {
+            this.elements.settingsWmsLayerOpacity.forEach((el) => {
+                const settings = this.state.catastoWmsLayerSettings[el.dataset.wmsLayerOpacity];
+                const opacity = settings?.opacity ?? 0.9;
+                el.value = String(Math.round(opacity * 100));
+                const valueEl = document.querySelector(
+                    `[data-wms-layer-opacity-value="${el.dataset.wmsLayerOpacity}"]`,
+                );
+                if (valueEl) valueEl.textContent = `${Math.round(opacity * 100)}%`;
             });
         }
 
@@ -1566,8 +1563,7 @@ export default class Planimeter {
             toolbarPanel: this.state.toolbarPanel,
             activeBaseLayer: this.state.activeBaseLayer,
             activeAdminLayer: this.state.activeAdminLayer,
-            catastoOpacity: this.state.catastoOpacity,
-            catastoWmsLayers: this.state.catastoWmsLayers,
+            catastoWmsLayerSettings: this.state.catastoWmsLayerSettings,
             parcelInfoEnabled: this.state.parcelInfoEnabled,
             exportImageQuality: this.state.exportImageQuality,
             cacheTtlDays: this.state.cacheTtlDays,
@@ -1616,60 +1612,96 @@ export default class Planimeter {
         this.persistPreferences();
     }
 
-    updateCatastoOpacity(opacity) {
-        this.state.catastoOpacity = Math.max(0, Math.min(1, opacity));
-        this.applyCatastoOpacity();
-        this.syncPreferenceControls();
-        this.persistPreferences();
-    }
+    sanitizeCatastoWmsLayerSettings(settings, legacyLayers = null, legacyOpacity = null) {
+        const legacyVisible = Array.isArray(legacyLayers)
+            ? new Set(legacyLayers)
+            : null;
+        const legacyOpacityValue = Number.isFinite(Number(legacyOpacity))
+            ? Math.max(0, Math.min(1, Number(legacyOpacity)))
+            : null;
 
-    applyCatastoOpacity() {
-        this.layers.catastoOfficial.setOpacity(this.state.catastoOpacity);
-        this.layers.catastoFallback.setOpacity(this.state.catastoOpacity);
-    }
-
-    sanitizeCatastoWmsLayers(layers) {
-        const list = Array.isArray(layers) ? layers : DEFAULT_CATASTO_WMS_LAYERS;
-        const unique = [];
-        for (const layer of list) {
-            if (!AVAILABLE_CATASTO_WMS_LAYERS.includes(layer)) continue;
-            if (!unique.includes(layer)) unique.push(layer);
-        }
-        return unique.length ? unique : [...DEFAULT_CATASTO_WMS_LAYERS];
+        return Object.fromEntries(CATASTO_WMS_LAYER_DEFS.map((def) => {
+            const raw = settings?.[def.key] ?? {};
+            const rawOpacity = Number(raw.opacity);
+            const opacity = Number.isFinite(rawOpacity)
+                ? Math.max(0, Math.min(1, rawOpacity))
+                : (legacyOpacityValue ?? def.defaultOpacity);
+            const visible = typeof raw.visible === 'boolean'
+                ? raw.visible
+                : (legacyVisible ? legacyVisible.has(def.layerName) : def.defaultVisible);
+            return [def.key, { visible, opacity }];
+        }));
     }
 
     updateCatastoWmsLayersFromSettings() {
-        const selected = this.elements.settingsWmsLayerParts
-            .filter((el) => el.checked)
-            .map((el) => el.dataset.wmsLayerPart);
-
-        this.state.catastoWmsLayers = this.sanitizeCatastoWmsLayers(selected);
-
-        const selectedSet = new Set(this.state.catastoWmsLayers);
+        const next = { ...this.state.catastoWmsLayerSettings };
         this.elements.settingsWmsLayerParts.forEach((el) => {
-            el.checked = selectedSet.has(el.dataset.wmsLayerPart);
+            const key = el.dataset.wmsLayerPart;
+            next[key] = {
+                ...(next[key] ?? DEFAULT_CATASTO_WMS_LAYER_SETTINGS[key]),
+                visible: el.checked,
+            };
         });
 
-        this.applyCatastoWmsLayersToOfficialSource();
+        if (!Object.values(next).some((settings) => settings.visible)) {
+            const firstKey = CATASTO_WMS_LAYER_DEFS[0].key;
+            next[firstKey] = { ...next[firstKey], visible: true };
+        }
+
+        this.state.catastoWmsLayerSettings = this.sanitizeCatastoWmsLayerSettings(next);
+        this.applyCatastoWmsLayerSettings();
+        this.syncPreferenceControls();
         this.persistPreferences();
         this.renderParcelInfo();
     }
 
-    applyCatastoWmsLayersToOfficialSource() {
-        const source = this.layers.catastoOfficial.getSource();
-        const layers = this.state.catastoWmsLayers.join(',');
-        source.updateParams({
-            LAYERS: layers,
-            QUERY_LAYERS: layers,
+    updateCatastoWmsLayerOpacityFromSettings() {
+        const next = { ...this.state.catastoWmsLayerSettings };
+        this.elements.settingsWmsLayerOpacity.forEach((el) => {
+            const key = el.dataset.wmsLayerOpacity;
+            next[key] = {
+                ...(next[key] ?? DEFAULT_CATASTO_WMS_LAYER_SETTINGS[key]),
+                opacity: Number(el.value) / 100,
+            };
         });
-        source.refresh();
+
+        this.state.catastoWmsLayerSettings = this.sanitizeCatastoWmsLayerSettings(next);
+        this.applyCatastoWmsLayerSettings();
+        this.syncPreferenceControls();
+        this.persistPreferences();
+    }
+
+    applyCatastoWmsLayerSettings() {
+        const show = this.elements.layerCatasto.checked && this.state.catastoSource === 'official';
+        CATASTO_WMS_LAYER_DEFS.forEach((def) => {
+            const settings = this.state.catastoWmsLayerSettings[def.key]
+                ?? DEFAULT_CATASTO_WMS_LAYER_SETTINGS[def.key];
+            const layer = this.layers.catastoOfficial[def.key];
+            layer.setVisible(show && settings.visible);
+            layer.setOpacity(settings.opacity);
+        });
+        this.layers.catastoFallback.setOpacity(this.getAverageVisibleCatastoOpacity());
+    }
+
+    getAverageVisibleCatastoOpacity() {
+        const visible = Object.values(this.state.catastoWmsLayerSettings)
+            .filter((settings) => settings.visible);
+        if (!visible.length) return 0.9;
+        const total = visible.reduce((sum, settings) => sum + settings.opacity, 0);
+        return total / visible.length;
+    }
+
+    getVisibleCatastoWmsLayerNames() {
+        return CATASTO_WMS_LAYER_DEFS
+            .filter((def) => this.state.catastoWmsLayerSettings[def.key]?.visible)
+            .map((def) => def.layerName);
     }
 
     canQueryParcelInfo() {
         return this.state.parcelInfoEnabled &&
             this.state.catastoSource === 'official' &&
             this.elements.layerCatasto.checked &&
-            this.state.catastoWmsLayers.includes('CP.CadastralParcel') &&
+            this.state.catastoWmsLayerSettings.parcels?.visible &&
             this.state.mode === 'navigate' &&
             !this.state.isDrawing;
     }
@@ -1679,7 +1711,7 @@ export default class Planimeter {
             this.state.catastoSource === 'official' &&
             this.elements.layerCatasto.checked &&
             this.state.mode === 'navigate' &&
-            this.state.catastoWmsLayers.includes('CP.CadastralParcel');
+            this.state.catastoWmsLayerSettings.parcels?.visible;
     }
 
     editFeatureFromContext(feature) {
@@ -1770,7 +1802,7 @@ export default class Planimeter {
     }
 
     buildParcelInfoUrl(pixel, infoFormat = 'text/html') {
-        const source = this.layers.catastoOfficial.getSource();
+        const source = this.layers.catastoOfficial.parcels.getSource();
         const coordinate = this.map.getCoordinateFromPixel(pixel);
         const resolution = this.view.getResolution();
         if (!coordinate || !resolution) return null;

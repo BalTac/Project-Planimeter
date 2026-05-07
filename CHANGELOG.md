@@ -2,6 +2,34 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [2026-05-07] — Layer WMS catastali separati e controlli opacity
+
+### Added
+- Pattern stile GeoLive per catasto ufficiale: un `TileWMS` separato per ogni sottolayer catastale.
+- Controlli UI separati per visibilita e trasparenza di particelle, numeri particella, fabbricati, strade, acque, province, zonizzazione e vestizioni.
+- Test unitari per validazione bbox export e world file PGW con centro pixel corretto.
+- Sezione README con comandi lint/test standard.
+
+### Changed
+- Export backend usa solo sottolayer WMS visibili.
+- Preferenze catasto migrate da lista `LAYERS` unica a configurazione `{visible, opacity}` per sottolayer, mantenendo compatibilita con le vecchie impostazioni salvate.
+- Export `.tif` rinominato in UI/docs come TIFF raster, evitando di promettere tag GeoTIFF embedded.
+- [app.js](app.js) documentato come bundle legacy; entry point attivo in [src/main.js](src/main.js).
+
+### Fixed
+- Validazione bbox export rifiuta valori non finiti, coordinate fuori range e bbox invertiti.
+- World file PGW scrive coordinate del centro pixel upper-left, non del bordo raster.
+
+## [2026-05-07] — Cross-platform startup e allineamento porta README
+
+### Added
+- [start_planimeter.sh](start_planimeter.sh) per avvio rapido su Linux/macOS con apertura browser automatica.
+
+### Changed
+- [README.md](README.md) allineato alla porta di default reale (`8000`) e aggiornato con istruzioni Windows + Unix.
+- [server.py](server.py) migliora il supporto cross-platform in `--instance-policy replace` con rilevazione PID su Unix via `lsof`/`ss` (best effort).
+- [TODO_LIST.md](TODO_LIST.md) aggiornato con task completato relativo ad avvio cross-platform e documentazione.
+
 ## [2026-05-07] — Cleanup documentazione operativa obsoleta
 
 ### Removed

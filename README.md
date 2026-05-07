@@ -83,6 +83,9 @@ OpenLayers 8.2.0 is loaded via **importmap** from esm.sh — no bundler, no `nod
 |---|---|---|---|
 | GeoJSON | `.geojson` | EPSG:4326 (WGS 84) | Recommended for web/GIS interop |
 | KML | `.kml` | WGS 84 geographic | Compatible with Google Earth, QGIS |
+| Raster TIFF | `.tif` | Image only | WMS viewport raster; no embedded GeoTIFF tags |
+| PNG + PGW | `.zip` | EPSG:4258 world file | Raster image with companion world file |
+| Dataset Bundle | `.zip` | Mixed | TIFF image, GeoJSON areas and metadata |
 
 Shapefile import is intentionally **not** supported — the binary format requires a dedicated parser library that would add significant weight for a use case already covered by GeoJSON/KML round-trips through QGIS or ogr2ogr.
 
@@ -114,17 +117,36 @@ Map tiles and vector features are stored in **EPSG:3857** (Web Mercator) at runt
 
 ```bash
 python server.py
-# Default: http://localhost:8765
+# Default: http://localhost:8000
 ```
+
+Quick launcher scripts:
+- Windows: `start-planimeter.bat`
+- Unix-like (Linux/macOS): `start_planimeter.sh`
 
 The proxy exposes:
 - `GET /wms-proxy?...` — transparent WMS relay to Agenzia delle Entrate
 - `GET /proxy-health` — JSON health check (`{"ok": true, "durationMs": N}`)
 - All other requests — static file server rooted at the project directory
 
+### Cadastral WMS layers
+
+The official cadastral overlay is modeled as separate OpenLayers `TileWMS` layers, one per Agenzia delle Entrate WMS sublayer. In Settings each sublayer has independent visibility and opacity controls:
+
+- `CP.CadastralParcel` — parcels
+- `codice_plla` — parcel numbers
+- `fabbricati` — buildings
+- `strade` — roads
+- `acque` — waters
+- `province` — provinces
+- `CP.CadastralZoning` — zoning/sheets
+- `vestizioni` — cartographic dressing
+
+This mirrors the GIS-style pattern used by GeoLive while keeping Planimeter's local proxy, tile cache and retry logic centralized in [server.py](server.py).
+
 ### 2 — Open the application
 
-Navigate to [http://localhost:8765/planimeter.html](http://localhost:8765/planimeter.html).
+Navigate to [http://localhost:8000/planimeter.html](http://localhost:8000/planimeter.html).
 
 > **Note**: Opening `planimeter.html` directly as a `file://` URL will work for basic drawing and measurement, but the official cadastral WMS overlay requires the proxy to be running.
 
@@ -136,7 +158,7 @@ Navigate to [http://localhost:8765/planimeter.html](http://localhost:8765/planim
 python server.py [--port PORT] [--host HOST] [--instance-policy reuse|replace]
 
 Options:
-	--port  PORT   Listening port (default: 8765)
+	--port  PORT   Listening port (default: 8000)
 	--host  HOST   Bind address (default: 127.0.0.1)
 	--instance-policy  Startup behavior when requested port already has Planimeter:
 	                   reuse (default) uses existing instance;
@@ -149,6 +171,24 @@ Startup port policy summary:
   - `reuse`: exits successfully and keeps the existing instance.
   - `replace`: terminates existing instance (best effort) and starts a new one.
 - If requested port is occupied by a non-Planimeter service: server auto-falls back to a random free port and prints the final URL.
+
+Cross-platform note:
+- `server.py` runs on Windows, Linux and macOS.
+- For `--instance-policy replace`, process detection is Windows-native on Windows and uses `lsof` or `ss` on Unix-like systems when available.
+
+### Lint and tests
+
+```bash
+python -m ruff check .
+python -m unittest discover -s tests
+python -m py_compile server.py
+```
+
+For JavaScript syntax checks without a bundler:
+
+```powershell
+Get-ChildItem src -Recurse -Filter *.js | ForEach-Object { node --check $_.FullName }
+```
 
 ---
 
@@ -200,9 +240,10 @@ Il repository contiene questi file principali:
 
 - [planimeter.html](planimeter.html): shell HTML con struttura semantica, metadati SEO e collegamento agli asset.
 - [styles.css](styles.css): layout, overlay toolbar, responsive behavior e tema visuale.
-- [app.js](app.js): inizializzazione mappa, interazioni OpenLayers, export/import e strumenti di editing.
+- [app.js](app.js): bundle legacy non usato dall'entry point moderno; il codice attivo vive in [src/](src/).
 - [server.py](server.py): server locale con proxy WMS per evitare il blocco CORS del layer ufficiale Agenzia Entrate.
 - [start-planimeter.bat](start-planimeter.bat): avvio one-click su Windows (server + apertura browser).
+- [start_planimeter.sh](start_planimeter.sh): avvio rapido su Linux/macOS (server + apertura browser).
 
 Il progetto e ispirato a tool esistenti per la misurazione di aree su mappa, sviluppato in modo indipendente.
 
@@ -249,10 +290,13 @@ La logica e incapsulata nella classe `Planimeter`, che gestisce:
 
 - `GeoJSON`: formato principale consigliato per export/import. Aperto, leggero, molto compatibile con QGIS, ArcGIS Pro e workflow web.
 - `KML`: formato secondario supportato in export/import per interoperabilita rapida con Google Earth e GIS desktop.
+- `TIFF raster`: export immagine della vista WMS senza tag GeoTIFF embedded.
+- `PNG + PGW`: export raster georeferenziabile tramite world file.
+- `Dataset Bundle`: archivio con TIFF, GeoJSON delle aree e metadata di export.
 
 Scelta progettuale:
 
-- Non sono stati aggiunti `Shapefile`, `GeoPackage` o raster: aumentano complessita, dipendenze o gestione multi-file, poco coerenti con una web app standalone leggera.
+- Non sono stati aggiunti `Shapefile` o `GeoPackage`: aumentano complessita, dipendenze o gestione multi-file, poco coerenti con una web app standalone leggera.
 - Per conversioni verso formati piu pesanti, il flusso consigliato resta export GeoJSON/KML e conversione successiva in QGIS o GDAL.
 
 Sorgenti esterne usate dalla mappa:
@@ -273,6 +317,10 @@ Per personalizzare resilienza proxy:
 Alternativa Windows one-click:
 
 - Eseguire [start-planimeter.bat](start-planimeter.bat).
+
+Alternativa Linux/macOS:
+
+- Eseguire `chmod +x start_planimeter.sh` (solo la prima volta), poi [start_planimeter.sh](start_planimeter.sh).
 3. Attivare i layer desiderati dal pannello laterale.
 4. Usare la modalita `Disegna` per aggiungere i vertici di un poligono.
 5. Fare doppio clic per chiudere il poligono.
@@ -283,7 +331,8 @@ Alternativa Windows one-click:
 10. Usare `Elimina` o `Elimina selezione` per rimuovere una singola area o misura.
 11. Usare `Esporta` e `Importa` per scambiare GeoJSON o KML.
 12. Per il layer catasto scegliere manualmente la sorgente tra `Ufficiale Agenzia Entrate` e `Sostitutivo`.
-13. Tenere premuto `Ctrl` mentre si disegna/modifica/misura per disattivare temporaneamente l'effetto magnete.
+13. In Settings regolare visibilita e trasparenza di ogni sottolayer WMS catastale.
+14. Tenere premuto `Ctrl` mentre si disegna/modifica/misura per disattivare temporaneamente l'effetto magnete.
 
 ## Runbook essenziale
 
@@ -305,6 +354,13 @@ Alternativa rapida su Windows:
 
 ```powershell
 ./start-planimeter.bat
+```
+
+Alternativa rapida su Linux/macOS:
+
+```bash
+chmod +x ./start_planimeter.sh
+./start_planimeter.sh
 ```
 
 ### Stop

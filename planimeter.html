@@ -150,7 +150,7 @@
                         <select id="export-format" class="layer-source-select" aria-label="Scegli il formato di esportazione">
                             <option value="geojson" selected>GeoJSON</option>
                             <option value="kml">KML</option>
-                            <option value="geotiff" data-i18n="export.format.geotiff">GeoTIFF</option>
+                            <option value="geotiff" data-i18n="export.format.geotiff">TIFF raster</option>
                             <option value="pgw" data-i18n="export.format.pgw">PNG + World File</option>
                             <option value="bundle" data-i18n="export.format.bundle">Dataset Bundle</option>
                         </select>
@@ -259,11 +259,6 @@
                         <span class="section-kicker" data-i18n="section.settings.overlay.kicker">Visual</span>
                     </div>
                     <div class="settings-grid">
-                        <label class="settings-field settings-field-slider">
-                            <span data-i18n="settings.catastoOpacity">Trasparenza overlay catasto</span>
-                            <input type="range" id="settings-catasto-opacity" min="0" max="100" value="90">
-                            <small id="settings-catasto-opacity-value">90%</small>
-                        </label>
                         <label class="settings-check">
                             <input type="checkbox" id="settings-parcel-info-enabled">
                             <span data-i18n="settings.parcelInfoEnabled">Interroga particelle dal menu contestuale in Navigate (solo catasto ufficiale).</span>
@@ -273,36 +268,96 @@
 
                     <div class="settings-field" style="margin-top: 10px;">
                         <strong data-i18n="settings.catastoWmsLayers">Composizione mosaico catastale (WMS ufficiale)</strong>
-                        <p class="section-help" data-i18n="settings.catastoWmsLayersHint">Scegli quali sottolayer catastali richiedere al WMS. Almeno un layer deve restare attivo.</p>
-                        <div class="settings-grid">
-                            <label class="settings-check">
-                                <input type="checkbox" id="settings-wms-part-parcels" data-wms-layer-part="CP.CadastralParcel" checked>
-                                <span data-i18n="settings.wms.part.parcels">Particelle</span>
-                            </label>
-                            <label class="settings-check">
-                                <input type="checkbox" id="settings-wms-part-numbers" data-wms-layer-part="codice_plla">
-                                <span data-i18n="settings.wms.part.numbers">Numeri particella</span>
-                            </label>
-                            <label class="settings-check">
-                                <input type="checkbox" id="settings-wms-part-buildings" data-wms-layer-part="fabbricati">
-                                <span data-i18n="settings.wms.part.buildings">Edifici</span>
-                            </label>
-                            <label class="settings-check">
-                                <input type="checkbox" id="settings-wms-part-roads" data-wms-layer-part="strade">
-                                <span data-i18n="settings.wms.part.roads">Strade</span>
-                            </label>
-                            <label class="settings-check">
-                                <input type="checkbox" id="settings-wms-part-waters" data-wms-layer-part="acque">
-                                <span data-i18n="settings.wms.part.waters">Acque</span>
-                            </label>
-                            <label class="settings-check">
-                                <input type="checkbox" id="settings-wms-part-zoning" data-wms-layer-part="CP.CadastralZoning">
-                                <span data-i18n="settings.wms.part.zoning">Zonizzazione catastale</span>
-                            </label>
-                            <label class="settings-check">
-                                <input type="checkbox" id="settings-wms-part-vestizioni" data-wms-layer-part="vestizioni">
-                                <span data-i18n="settings.wms.part.vestizioni">Vestizioni</span>
-                            </label>
+                        <p class="section-help" data-i18n="settings.catastoWmsLayersHint">Scegli visibilita e trasparenza per ogni sottolayer catastale WMS. Almeno un layer deve restare attivo.</p>
+                        <div class="settings-grid wms-layer-settings">
+                            <div class="wms-layer-row">
+                                <label class="settings-check wms-layer-toggle">
+                                    <input type="checkbox" id="settings-wms-part-parcels" data-wms-layer-part="parcels" checked>
+                                    <span data-i18n="settings.wms.part.parcels">Particelle</span>
+                                </label>
+                                <label class="settings-field settings-field-slider wms-layer-opacity">
+                                    <span data-i18n="settings.wms.opacity">Trasparenza</span>
+                                    <input type="range" min="0" max="100" value="90" data-wms-layer-opacity="parcels">
+                                    <small data-wms-layer-opacity-value="parcels">90%</small>
+                                </label>
+                            </div>
+                            <div class="wms-layer-row">
+                                <label class="settings-check wms-layer-toggle">
+                                    <input type="checkbox" id="settings-wms-part-numbers" data-wms-layer-part="numbers">
+                                    <span data-i18n="settings.wms.part.numbers">Numeri particella</span>
+                                </label>
+                                <label class="settings-field settings-field-slider wms-layer-opacity">
+                                    <span data-i18n="settings.wms.opacity">Trasparenza</span>
+                                    <input type="range" min="0" max="100" value="90" data-wms-layer-opacity="numbers">
+                                    <small data-wms-layer-opacity-value="numbers">90%</small>
+                                </label>
+                            </div>
+                            <div class="wms-layer-row">
+                                <label class="settings-check wms-layer-toggle">
+                                    <input type="checkbox" id="settings-wms-part-buildings" data-wms-layer-part="buildings">
+                                    <span data-i18n="settings.wms.part.buildings">Edifici</span>
+                                </label>
+                                <label class="settings-field settings-field-slider wms-layer-opacity">
+                                    <span data-i18n="settings.wms.opacity">Trasparenza</span>
+                                    <input type="range" min="0" max="100" value="90" data-wms-layer-opacity="buildings">
+                                    <small data-wms-layer-opacity-value="buildings">90%</small>
+                                </label>
+                            </div>
+                            <div class="wms-layer-row">
+                                <label class="settings-check wms-layer-toggle">
+                                    <input type="checkbox" id="settings-wms-part-roads" data-wms-layer-part="roads">
+                                    <span data-i18n="settings.wms.part.roads">Strade</span>
+                                </label>
+                                <label class="settings-field settings-field-slider wms-layer-opacity">
+                                    <span data-i18n="settings.wms.opacity">Trasparenza</span>
+                                    <input type="range" min="0" max="100" value="90" data-wms-layer-opacity="roads">
+                                    <small data-wms-layer-opacity-value="roads">90%</small>
+                                </label>
+                            </div>
+                            <div class="wms-layer-row">
+                                <label class="settings-check wms-layer-toggle">
+                                    <input type="checkbox" id="settings-wms-part-waters" data-wms-layer-part="waters">
+                                    <span data-i18n="settings.wms.part.waters">Acque</span>
+                                </label>
+                                <label class="settings-field settings-field-slider wms-layer-opacity">
+                                    <span data-i18n="settings.wms.opacity">Trasparenza</span>
+                                    <input type="range" min="0" max="100" value="90" data-wms-layer-opacity="waters">
+                                    <small data-wms-layer-opacity-value="waters">90%</small>
+                                </label>
+                            </div>
+                            <div class="wms-layer-row">
+                                <label class="settings-check wms-layer-toggle">
+                                    <input type="checkbox" id="settings-wms-part-province" data-wms-layer-part="province">
+                                    <span data-i18n="settings.wms.part.province">Province</span>
+                                </label>
+                                <label class="settings-field settings-field-slider wms-layer-opacity">
+                                    <span data-i18n="settings.wms.opacity">Trasparenza</span>
+                                    <input type="range" min="0" max="100" value="90" data-wms-layer-opacity="province">
+                                    <small data-wms-layer-opacity-value="province">90%</small>
+                                </label>
+                            </div>
+                            <div class="wms-layer-row">
+                                <label class="settings-check wms-layer-toggle">
+                                    <input type="checkbox" id="settings-wms-part-zoning" data-wms-layer-part="zoning">
+                                    <span data-i18n="settings.wms.part.zoning">Zonizzazione catastale</span>
+                                </label>
+                                <label class="settings-field settings-field-slider wms-layer-opacity">
+                                    <span data-i18n="settings.wms.opacity">Trasparenza</span>
+                                    <input type="range" min="0" max="100" value="90" data-wms-layer-opacity="zoning">
+                                    <small data-wms-layer-opacity-value="zoning">90%</small>
+                                </label>
+                            </div>
+                            <div class="wms-layer-row">
+                                <label class="settings-check wms-layer-toggle">
+                                    <input type="checkbox" id="settings-wms-part-vestizioni" data-wms-layer-part="vestizioni">
+                                    <span data-i18n="settings.wms.part.vestizioni">Vestizioni</span>
+                                </label>
+                                <label class="settings-field settings-field-slider wms-layer-opacity">
+                                    <span data-i18n="settings.wms.opacity">Trasparenza</span>
+                                    <input type="range" min="0" max="100" value="90" data-wms-layer-opacity="vestizioni">
+                                    <small data-wms-layer-opacity-value="vestizioni">90%</small>
+                                </label>
+                            </div>
                         </div>
                     </div>
                 </section>

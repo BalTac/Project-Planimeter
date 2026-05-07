@@ -17,7 +17,7 @@ export function buildExportConfig(features, format) {
             payload: null,
             mimeType: 'application/octet-stream',
             extension: format === 'geotiff' ? 'tif' : 'zip',
-            label: format === 'geotiff' ? 'GeoTIFF' : (format === 'pgw' ? 'PNG+PGW' : 'Dataset Bundle'),
+            label: format === 'geotiff' ? 'TIFF' : (format === 'pgw' ? 'PNG+PGW' : 'Dataset Bundle'),
             requiresBackend: true,
         };
     }

@@ -1,17 +1,17 @@
 import TileLayer  from 'ol/layer/Tile.js';
-import ImageLayer from 'ol/layer/Image.js';
 import VectorLayer from 'ol/layer/Vector.js';
 import XYZ        from 'ol/source/XYZ.js';
 import OSM        from 'ol/source/OSM.js';
-import ImageWMS   from 'ol/source/ImageWMS.js';
 import TileWMS    from 'ol/source/TileWMS.js';
+
+import { CATASTO_WMS_LAYER_DEFS } from '../core/constants.js';
 
 /**
  * Build and return all map layers used by the application.
  *
  * @param {import('ol/source/Vector').default} vectorSource
  * @param {function} featureStyleFn — style function forwarded to VectorLayer
- * @returns {{ sat, openTopoMap, esriTopo, esriRelief, osm, catastoOfficial, catastoFallback, vector }}
+ * @returns {{ sat, openTopoMap, esriTopo, esriRelief, osm, catastoOfficial: Record<string, TileLayer>, catastoFallback, vector }}
  */
 export function buildLayers(vectorSource, featureStyleFn) {
     const sat = new TileLayer({
@@ -66,25 +66,30 @@ export function buildLayers(vectorSource, featureStyleFn) {
         opacity: 0.82,
     });
 
-    const catastoOfficial = new TileLayer({
-        source: new TileWMS({
-            url: '/wms-tile',
-            params: {
-                VERSION:     '1.3.0',
-                LAYERS:      'CP.CadastralParcel',
-                STYLES:      '',
-                FORMAT:      'image/png',
-                TRANSPARENT: true,
-            },
-            serverType: 'mapserver',
-            transition:  0,
-        }),
-        visible: false,
-        zIndex: 3,
-        minZoom: 14,
-        maxZoom: 28,
-        opacity: 0.9,
-    });
+    const catastoOfficial = Object.fromEntries(
+        CATASTO_WMS_LAYER_DEFS.map((def, index) => [
+            def.key,
+            new TileLayer({
+                source: new TileWMS({
+                    url: '/wms-tile',
+                    params: {
+                        VERSION:     '1.3.0',
+                        LAYERS:      def.layerName,
+                        STYLES:      '',
+                        FORMAT:      'image/png',
+                        TRANSPARENT: true,
+                    },
+                    serverType: 'mapserver',
+                    transition:  0,
+                }),
+                visible: false,
+                zIndex: 3 + index,
+                minZoom: 14,
+                maxZoom: 28,
+                opacity: def.defaultOpacity,
+            }),
+        ]),
+    );
 
     const catastoFallback = new TileLayer({
         source: new XYZ({

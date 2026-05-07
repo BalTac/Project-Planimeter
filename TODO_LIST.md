@@ -223,6 +223,7 @@ Proposte operative per i prossimi step del progetto Project Planimeter.
 - [x] Ingest `raw/project_objectives.md` in [wiki/project-objectives.md](wiki/project-objectives.md) + health-check link wiki.
 - [x] Ingest `raw/wms_proxy_interpretation_layer_spec.md` in [wiki/wms-proxy-interpretation-layer.md](wiki/wms-proxy-interpretation-layer.md).
 - [x] Rimuovere checklist operativa legacy e tutti i riferimenti documentali associati.
+- [x] Allineare [README.md](README.md) alla porta default reale (`8000`) e aggiungere launcher Unix [start_planimeter.sh](start_planimeter.sh).
 - [ ] Mantenere [CHANGELOG.md](CHANGELOG.md) aggiornato a ogni milestone.
 
 ## Roadmap Integrata — Interpretation Layer + Project Objectives
