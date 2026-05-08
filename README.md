@@ -1,467 +1,190 @@
-# Project Planimeter by BalTac
 # Project Planimeter
 
-> A lightweight, browser-based web planimeter for geodetic area measurement, polygon editing, and GIS interoperability — no backend persistence, no build step, no framework.
+Web app standalone per misurare superfici e distanze su mappa, con supporto GIS leggero e overlay catastale WMS tramite proxy locale.
 
----
+## Stato progetto
 
-## Abstract
+- Frontend: HTML, CSS, JavaScript ES modules (nessun bundler)
+- Mappa: OpenLayers 8.2.0 via importmap su esm.sh
+- Backend locale: Python con http.server + urllib + sqlite3
+- Cache tile WMS: SQLite con TTL e limite dimensione configurabili
+- Persistenza utente: localStorage nel browser
 
-**Project Planimeter** lets you draw and measure polygons directly on top of satellite imagery, OpenStreetMap, and an Italian cadastral WMS overlay. Features include real-time geodesic area and perimeter computation (EPSG:3857 / WGS 84 sphere), multi-vertex polyline distance measurement, GeoJSON and KML export/import, localStorage persistence, and snap-to-vertex editing. The interface is fully internationalised (IT / EN) with runtime locale switching and a metric/imperial unit system selector.
+## Cosa fa
 
-The application runs entirely in the browser; the only server-side component is a small Python reverse proxy (`server.py`) required to bypass CORS restrictions on the Agenzia delle Entrate WMS endpoint.
+- Disegno e modifica poligoni
+- Misura distanze (linea retta e polyline)
+- Calcolo area e perimetro geodetici
+- Export/Import GeoJSON e KML
+- Export raster: TIFF, PNG+PGW, bundle ZIP
+- Overlay catastale ufficiale Agenzia Entrate (con fallback)
+- Query particella via menu contestuale in modalita Navigate
+- UI bilingue IT/EN e sistema unita metrico/imperiale
 
----
+## Architettura
 
-## Architecture
+- [planimeter.html](planimeter.html): entry point
+- [styles.css](styles.css): layout e stile UI
+- [src/main.js](src/main.js): bootstrap app
+- [src/planimeter.js](src/planimeter.js): orchestrazione logica mappa/UI
+- [src/core](src/core): costanti e stato
+- [src/map](src/map): layer e interazioni OpenLayers
+- [src/geometry](src/geometry): calcoli e stile feature
+- [src/io](src/io): import/export/persistenza preferenze
+- [src/i18n](src/i18n): localizzazione IT/EN
+- [src/ui](src/ui): context menu e monitor proxy
+- [server.py](server.py): proxy WMS, cache tile, endpoint export
+- [app.js](app.js): file legacy non usato come entrypoint corrente
 
+## Requisiti
+
+- Python 3.8+
+- Browser moderno con supporto importmap
+- Dipendenza Python: Pillow (PIL)
+
+Installazione dipendenza backend:
+
+```bash
+python -m pip install Pillow
 ```
-planimeter.html          ← entry point; importmap + <script type="module">
-src/
-	main.js               ← DOMContentLoaded bootstrap
-	planimeter.js         ← orchestrator class (map, interactions, UI binding)
-	core/
-		constants.js        ← shared compile-time constants
-		state.js            ← createInitialState() factory
-	i18n/
-		i18n.js             ← t(), setLocale(), detectLocale()
-		it.js               ← Italian string catalogue (~130 keys)
-		en.js               ← English string catalogue
-	units/
-		units.js            ← UnitSystem class (metric / imperial)
-	geometry/
-		calculations.js     ← geodesic area, perimeter, length (ol/sphere)
-		style.js            ← OL style function (labels + fill + stroke)
-		decorate.js         ← feature ID / name assignment
-	map/
-		layers.js           ← TileLayer / ImageWMS / VectorLayer factories
-		interactions.js     ← Select / Modify / Draw / Snap factories
-	io/
-		persistence.js      ← localStorage save / restore
-		export.js           ← GeoJSON & KML export helpers
-		import.js           ← GeoJSON & KML import + format detection
-	ui/
-		proxy-health.js     ← ProxyHealthMonitor class
-		context-menu.js     ← right-click context menu
-styles.css
-server.py               ← Python WMS reverse proxy (Flask / http.server)
-```
 
-OpenLayers 8.2.0 is loaded via **importmap** from esm.sh — no bundler, no `node_modules`.
+## Compatibilita browser
 
----
+| Feature | Chrome | Firefox | Safari |
+|---|---:|---:|---:|
+| ES modules | 61+ | 60+ | 10.1+ |
+| Import Maps | 89+ | 108+ | 16.4+ |
+| Geolocation API | moderno | moderno | moderno |
+| localStorage | moderno | moderno | moderno |
 
-## Feature Set
+Nota:
 
-| Feature | Notes |
-|---|---|
-| Polygon draw | Click to add vertices, double-click to close |
-| Straight-line measurement | Two-point distance tool |
-| Polyline measurement | Multi-vertex path; double-click to close |
-| Vertex editing | Drag-to-reshape in Edit mode |
-| Delete | Per-feature or clear-all |
-| Snap | Snap-to-vertex / snap-to-edge; Ctrl to disable temporarily |
-| Area + perimeter | Geodesic (ol/sphere), live labels on map |
-| GeoJSON export/import | RFC 7946, EPSG:4326, 6 decimal places |
-| KML export/import | Polygon and MultiPolygon features |
-| localStorage persistence | Auto-save with 250 ms debounce |
-| Cadastral overlay | Agenzia delle Entrate WMS (official) or administrative boundaries (substitute) |
-| Cadastral parcel info | Optional `GetFeatureInfo` lookup with parcel metadata on map click |
-| Geolocation | browser `navigator.geolocation` with high-accuracy flag |
-| i18n | Italian / English runtime switching |
-| Unit system | Metric (m, km, ha) / Imperial (ft, mi, ac) |
-| Settings tab | Persistent UI preferences for layers, locale, units and overlay opacity |
-| Right-click context menu | Cancel active drawing |
+- Internet Explorer e Legacy Edge (EdgeHTML) non sono supportati.
 
----
+## Avvio rapido
 
-## GIS Interoperability
-
-### Supported import/export formats
-
-| Format | Extension | CRS on export | Notes |
-|---|---|---|---|
-| GeoJSON | `.geojson` | EPSG:4326 (WGS 84) | Recommended for web/GIS interop |
-| KML | `.kml` | WGS 84 geographic | Compatible with Google Earth, QGIS |
-| Raster TIFF | `.tif` | Image only | WMS viewport raster; no embedded GeoTIFF tags |
-| PNG + PGW | `.zip` | EPSG:4258 world file | Raster image with companion world file |
-| Dataset Bundle | `.zip` | Mixed | TIFF image, GeoJSON areas and metadata |
-
-Shapefile import is intentionally **not** supported — the binary format requires a dedicated parser library that would add significant weight for a use case already covered by GeoJSON/KML round-trips through QGIS or ogr2ogr.
-
-### Geometry types
-
-Only `Polygon` and `MultiPolygon` features are imported as areas; `LineString` and `MultiLineString` features are imported as distance measurements. Other geometry types are silently filtered.
-
-### Projection
-
-Map tiles and vector features are stored in **EPSG:3857** (Web Mercator) at runtime. All geodesic computations use the `ol/sphere` module with the view's native projection. Export always reprojects to **EPSG:4326**.
-
----
-
-## Stack
-
-| Component | Version / Source |
-|---|---|
-| OpenLayers | 8.2.0 (esm.sh, ES modules via importmap) |
-| HTML5 / CSS3 | Vanilla, no framework |
-| JavaScript | ES2022, native ES modules, no transpiler |
-| Python proxy | Python 3.8+, stdlib `http.server` + `urllib` |
-| Tile sources | ESRI World Imagery, OpenStreetMap, Agenzia delle Entrate WMS |
-
----
-
-## Quick Start
-
-### 1 — Start the Python proxy
+1. Avvia il server locale:
 
 ```bash
 python server.py
-# Default: http://localhost:8000
 ```
 
-Quick launcher scripts:
-- Windows: `start-planimeter.bat`
-- Unix-like (Linux/macOS): `start_planimeter.sh`
+2. Apri l'app:
 
-The proxy exposes:
-- `GET /wms-proxy?...` — transparent WMS relay to Agenzia delle Entrate
-- `GET /proxy-health` — JSON health check (`{"ok": true, "durationMs": N}`)
-- All other requests — static file server rooted at the project directory
+- http://127.0.0.1:8000/planimeter.html
 
-### Cadastral WMS layers
+Launcher rapidi:
 
-The official cadastral overlay is modeled as separate OpenLayers `TileWMS` layers, one per Agenzia delle Entrate WMS sublayer. In Settings each sublayer has independent visibility and opacity controls:
+- Windows: [start-planimeter.bat](start-planimeter.bat)
+- Linux/macOS: [start_planimeter.sh](start_planimeter.sh)
 
-- `CP.CadastralParcel` — parcels
-- `codice_plla` — parcel numbers
-- `fabbricati` — buildings
-- `strade` — roads
-- `acque` — waters
-- `province` — provinces
-- `CP.CadastralZoning` — zoning/sheets
-- `vestizioni` — cartographic dressing
+## Endpoint principali backend
 
-This mirrors the GIS-style pattern used by GeoLive while keeping Planimeter's local proxy, tile cache and retry logic centralized in [server.py](server.py).
+- GET /wms-proxy
+- GET /wms-tile
+- GET /proxy-health
+- GET /cache-stats
+- GET /cache-config
+- POST /cache-config
+- POST /cache-clear
+- POST /export-geotiff
+- POST /export-pgw
+- POST /export-bundle
 
-### 2 — Open the application
+## Opzioni CLI server
 
-Navigate to [http://localhost:8000/planimeter.html](http://localhost:8000/planimeter.html).
-
-> **Note**: Opening `planimeter.html` directly as a `file://` URL will work for basic drawing and measurement, but the official cadastral WMS overlay requires the proxy to be running.
-
----
-
-## server.py CLI Options
-
-```
-python server.py [--port PORT] [--host HOST] [--instance-policy reuse|replace]
-
-Options:
-	--port  PORT   Listening port (default: 8000)
-	--host  HOST   Bind address (default: 127.0.0.1)
-	--instance-policy  Startup behavior when requested port already has Planimeter:
-	                   reuse (default) uses existing instance;
-	                   replace terminates existing instance and starts a new one.
+```text
+python server.py \
+  --host 127.0.0.1 \
+  --port 8000 \
+  --instance-policy reuse|replace \
+  --upstream-timeout 20 \
+  --upstream-retries 1 \
+  --tile-cache-ttl 30 \
+  --tile-cache-max-mb 500 \
+  --tile-cache-dir <path>
 ```
 
-Startup port policy summary:
-- If requested port is free: server starts normally.
-- If requested port is occupied by another Planimeter instance:
-  - `reuse`: exits successfully and keeps the existing instance.
-  - `replace`: terminates existing instance (best effort) and starts a new one.
-- If requested port is occupied by a non-Planimeter service: server auto-falls back to a random free port and prints the final URL.
+Note:
 
-Cross-platform note:
-- `server.py` runs on Windows, Linux and macOS.
-- For `--instance-policy replace`, process detection is Windows-native on Windows and uses `lsof` or `ss` on Unix-like systems when available.
+- Se la porta e occupata da un'altra istanza Planimeter e instance-policy=reuse, il server riusa l'istanza esistente.
+- Se la porta e occupata da un servizio diverso, il server puo fare fallback su una porta libera.
 
-### Lint and tests
+## Formati GIS supportati
+
+Import:
+
+- GeoJSON
+- KML
+
+Export:
+
+- GeoJSON
+- KML
+- TIFF raster
+- ZIP PNG + PGW
+- ZIP bundle (image.tif, areas.geojson, meta.json)
+
+Scelta progettuale:
+
+- Shapefile/GeoPackage non sono supportati nativamente per mantenere il progetto leggero e senza parser pesanti.
+
+## Test e verifica locale
+
+Controlli consigliati:
 
 ```bash
-python -m ruff check .
-python -m unittest discover -s tests
 python -m py_compile server.py
+python -m unittest discover -s tests
 ```
 
-For JavaScript syntax checks without a bundler:
+Check sintassi JavaScript senza build:
 
 ```powershell
 Get-ChildItem src -Recurse -Filter *.js | ForEach-Object { node --check $_.FullName }
 ```
 
----
+## Limitazioni note
 
-## Browser Requirements
+- Overlay catastale ufficiale dipendente dalla disponibilita upstream WMS
+- UX touch/mobile ancora migliorabile per snapping e precisione vertici
+- Nessuna persistenza cloud o multiutente
+- TIFF esportato senza tag GeoTIFF embedded
 
-| Feature | Minimum version |
-|---|---|
-| ES modules + `import` | Chrome 61, Firefox 60, Safari 10.1 |
-| `<script type="importmap">` | Chrome 89, Firefox 108, Safari 16.4 |
-| `navigator.geolocation` | All modern browsers |
-| `localStorage` | All modern browsers |
+## Immagini e documentazione visuale
 
-Internet Explorer and legacy Edge (EdgeHTML) are not supported.
+Sezione pronta per screenshot e immagini operative.
 
----
+Al momento non sono incluse immagini. Template consigliato per quando saranno disponibili:
 
-## Known Limitations
+1. Panoramica UI principale
+- File suggerito: screenshot-ui-overview.png
+- Caption: Vista completa della toolbar e dei layer principali.
 
-- **Mobile / touch**: Snap interaction and small polygon vertices are difficult to hit accurately on touch screens.
-- **WMS latency**: The Agenzia delle Entrate WMS can be slow or unavailable during peak hours. Use the substitute source if tiles do not load.
-- **Cadastral rendering**: The official WMS renders cadastral parcels only at zoom ≥ 14.
-- **No cloud persistence**: Features are stored in browser `localStorage` only. Clearing browser data removes all drawings.
-- **Single-user**: No collaboration or multi-tab sync.
+2. Workflow disegno e modifica
+- File suggerito: screenshot-draw-edit.png
+- Caption: Disegno poligono, modifica vertici, misura area/perimetro.
 
----
+3. Export vettoriale
+- File suggerito: screenshot-export-geojson-kml.png
+- Caption: Export e import GeoJSON/KML dal pannello operativo.
 
-## Attribution
+4. Export raster e bundle
+- File suggerito: screenshot-export-raster-bundle.png
+- Caption: Export TIFF, PNG+PGW e bundle ZIP con metadata.
 
-- **OpenLayers** — [openlayers.org](https://openlayers.org) — BSD 2-Clause
-- **ESRI World Imagery** — [Esri](https://www.esri.com) — [terms](https://www.esri.com/en-us/legal/terms/full-master-agreement)
-- **OpenStreetMap** — [openstreetmap.org](https://www.openstreetmap.org) — ODbL
-- **Agenzia delle Entrate WMS** — [geoportale.cartografia.agenziaentrate.gov.it](https://geoportale.cartografia.agenziaentrate.gov.it) — public service
-- **Project Planimeter** — [BalTac](https://github.com/BalTac) — MIT
-Applicazione web standalone per misurare superfici direttamente su mappa, usando OpenLayers e una struttura front-end separata in HTML, CSS e JavaScript.
+5. Query particella
+- File suggerito: screenshot-parcel-query.png
+- Caption: Query da menu contestuale in Navigate e popup risultato.
 
-## Overview
+## Wiki locale
 
-Il progetto implementa un planimetro browser-based con interfaccia minimale e tre sorgenti cartografiche combinabili:
+La knowledge base in [wiki/](wiki/) e le sorgenti in [raw/](raw/) restano locali in questa fase.
+Saranno valutate per tracking Git quando il progetto sara piu maturo.
 
-- immagine satellitare ESRI come base principale;
-- layer OpenStreetMap per strade e toponimi;
-- overlay catastale WMS dell'Agenzia delle Entrate.
+## Attribuzioni
 
-L'utente puo disegnare uno o piu poligoni sulla mappa e visualizzare l'area calcolata automaticamente in ettari.
-
-## Struttura del progetto
-
-Il repository contiene questi file principali:
-
-- [planimeter.html](planimeter.html): shell HTML con struttura semantica, metadati SEO e collegamento agli asset.
-- [styles.css](styles.css): layout, overlay toolbar, responsive behavior e tema visuale.
-- [app.js](app.js): bundle legacy non usato dall'entry point moderno; il codice attivo vive in [src/](src/).
-- [server.py](server.py): server locale con proxy WMS per evitare il blocco CORS del layer ufficiale Agenzia Entrate.
-- [start-planimeter.bat](start-planimeter.bat): avvio one-click su Windows (server + apertura browser).
-- [start_planimeter.sh](start_planimeter.sh): avvio rapido su Linux/macOS (server + apertura browser).
-
-Il progetto e ispirato a tool esistenti per la misurazione di aree su mappa, sviluppato in modo indipendente.
-
-La logica e incapsulata nella classe `Planimeter`, che gestisce:
-
-- inizializzazione dei layer cartografici;
-- creazione della mappa OpenLayers;
-- interazione di disegno dei poligoni;
-- selezione, modifica ed eliminazione delle feature;
-- export e import dei dati in formato GeoJSON e KML;
-- styling delle feature e label area;
-- binding dei controlli UI;
-- geolocalizzazione del browser.
-
-## Funzionalita principali
-
-- Attivazione/disattivazione dei layer mappa tramite checkbox.
-- Disegno di poligoni multipli senza limite applicativo esplicito.
-- Calcolo area tramite `ol.sphere.getArea(...)`.
-- Visualizzazione del risultato con area e perimetro in label interna al poligono.
-- Toolbar flottante in overlay con comandi di lavoro e riepilogo live.
-- Indicatore health check `Proxy WMS: OK/KO` con ultimo errore leggibile in toolbar.
-- Persistenza locale automatica delle geometrie in `localStorage` con ripristino all'apertura successiva.
-- Modalita dedicate per disegno, modifica, eliminazione e misura distanza.
-- Misuratore distanza in linea retta (2 punti) e polyline (tracciato multi-vertice).
-- Riepilogo live con totale area e totale perimetro poligoni.
-- Snapping magnetico su vertici e bordi in modalita Disegna e Modifica.
-- Override rapido dello snapping tenendo premuto `Ctrl`.
-- Ritardo di sicurezza di 1 secondo dopo la chiusura del poligono con doppio clic.
-- Export delle geometrie in GeoJSON e KML.
-- Import di feature `Polygon` e `MultiPolygon` da file GeoJSON e KML.
-- Comando `Duplica area` sulla feature poligonale selezionata.
-- Pulsante di geolocalizzazione con animazione della vista.
-- Reset completo delle aree disegnate.
-
-## Stack tecnico
-
-- HTML5
-- CSS3 embedded
-- JavaScript vanilla
-- [OpenLayers 8.2.0](https://openlayers.org/) caricato via CDN `jsDelivr`
-
-## Formati GIS supportati
-
-- `GeoJSON`: formato principale consigliato per export/import. Aperto, leggero, molto compatibile con QGIS, ArcGIS Pro e workflow web.
-- `KML`: formato secondario supportato in export/import per interoperabilita rapida con Google Earth e GIS desktop.
-- `TIFF raster`: export immagine della vista WMS senza tag GeoTIFF embedded.
-- `PNG + PGW`: export raster georeferenziabile tramite world file.
-- `Dataset Bundle`: archivio con TIFF, GeoJSON delle aree e metadata di export.
-
-Scelta progettuale:
-
-- Non sono stati aggiunti `Shapefile` o `GeoPackage`: aumentano complessita, dipendenze o gestione multi-file, poco coerenti con una web app standalone leggera.
-- Per conversioni verso formati piu pesanti, il flusso consigliato resta export GeoJSON/KML e conversione successiva in QGIS o GDAL.
-
-Sorgenti esterne usate dalla mappa:
-
-- ESRI World Imagery
-- OpenStreetMap
-- WMS Agenzia delle Entrate
-
-## Flusso di utilizzo
-
-1. Avviare il server locale dalla cartella progetto con `python server.py`.
-2. Aprire in browser `http://127.0.0.1:8000/planimeter.html`.
-
-Per personalizzare resilienza proxy:
-
-- `python server.py --upstream-timeout 12 --upstream-retries 1`
-
-Alternativa Windows one-click:
-
-- Eseguire [start-planimeter.bat](start-planimeter.bat).
-
-Alternativa Linux/macOS:
-
-- Eseguire `chmod +x start_planimeter.sh` (solo la prima volta), poi [start_planimeter.sh](start_planimeter.sh).
-3. Attivare i layer desiderati dal pannello laterale.
-4. Usare la modalita `Disegna` per aggiungere i vertici di un poligono.
-5. Fare doppio clic per chiudere il poligono.
-6. Usare `Retta` per misurare la distanza tra due punti.
-7. Usare `Polyline` per misurare la distanza lungo un percorso a piu vertici.
-8. Usare `Modifica` per selezionare una feature e spostarne i vertici.
-9. Usare `Duplica area` per creare una copia offset dell'area selezionata.
-10. Usare `Elimina` o `Elimina selezione` per rimuovere una singola area o misura.
-11. Usare `Esporta` e `Importa` per scambiare GeoJSON o KML.
-12. Per il layer catasto scegliere manualmente la sorgente tra `Ufficiale Agenzia Entrate` e `Sostitutivo`.
-13. In Settings regolare visibilita e trasparenza di ogni sottolayer WMS catastale.
-14. Tenere premuto `Ctrl` mentre si disegna/modifica/misura per disattivare temporaneamente l'effetto magnete.
-
-## Runbook essenziale
-
-### Start
-
-1. Avviare il backend locale:
-
-```powershell
-python server.py
-```
-
-2. Aprire la web app:
-
-```text
-http://127.0.0.1:8000/planimeter.html
-```
-
-Alternativa rapida su Windows:
-
-```powershell
-./start-planimeter.bat
-```
-
-Alternativa rapida su Linux/macOS:
-
-```bash
-chmod +x ./start_planimeter.sh
-./start_planimeter.sh
-```
-
-### Stop
-
-1. Tornare al terminale dove e in esecuzione `server.py`.
-2. Interrompere con `Ctrl+C`.
-
-### Troubleshooting rapido
-
-1. Se il layer catastale ufficiale non compare, verificare l'indicatore `Proxy WMS` in toolbar.
-2. Se `Proxy WMS` e `KO`, riavviare `server.py` e ritentare.
-3. Se il servizio upstream non risponde, usare temporaneamente il layer `Sostitutivo`.
-4. Se la porta e occupata, avviare su porta diversa:
-
-```powershell
-python server.py --port 8010
-```
-
-e aprire la stessa pagina sulla nuova porta.
-5. Se compare `Health check HTTP 404`, la pagina e probabilmente servita da un server statico diverso da [server.py](server.py): aprire l'app da `http://127.0.0.1:8000/planimeter.html` avviando il server locale del progetto.
-
-## Note architetturali
-
-- Il progetto non richiede build, transpiler o dipendenze locali.
-- La UI adotta una floating toolbar overlay per mantenere la mappa sempre visibile.
-- HTML, stile e logica sono separati per migliorare manutenibilita e riuso.
-- La pagina include metadati head utili per SEO e condivisione social.
-- Il layer catastale ufficiale usa il WMS 1.3.0 dell'Agenzia delle Entrate.
-- Il layer catastale ufficiale passa tramite proxy locale `/wms-proxy` implementato in `server.py`.
-- La UI interroga anche `/proxy-health` per verificare raggiungibilita del proxy/WMS e mostrare ultimo errore leggibile.
-- Il proxy supporta `--upstream-timeout` e `--upstream-retries` per adattare timeout e retry brevi verso il WMS upstream.
-- Il layer sostitutivo e una sorgente visuale di confini amministrativi, non catastale.
-- Il layer catasto e limitato a `minZoom: 14` per evitare richieste troppo pesanti a zoom bassi.
-
-## Limiti attuali
-
-- Nessuna gestione avanzata degli errori di rete per i layer remoti.
-- Nessuna persistenza backend o sincronizzazione multi-device.
-- La resa del WMS ufficiale puo variare in base a zona, scala e compatibilita CRS del servizio.
-- La geolocalizzazione dipende dai permessi del browser e dal contesto di esecuzione.
-- Non sono supportati in-app `Shapefile`, `GeoPackage`, `KMZ` o raster: richiederebbero parsing multi-file o dipendenze piu pesanti.
-
-## Known Issues
-
-- Il WMS catastale ufficiale puo avere latenza elevata o indisponibilita temporanee indipendenti dall'app.
-- In aree con georeferenziazione complessa, il rendering catastale puo risultare parziale a certi livelli di zoom.
-- Su mobile, il toggle rapido dello snapping non e ancora disponibile come controllo dedicato (attualmente l'override e pensato per `Ctrl` su desktop).
-
-## FAQ
-
-### Perche devo avviare `server.py`?
-
-Il browser blocca richieste dirette cross-origin verso alcuni servizi WMS (CORS). Il proxy locale `/wms-proxy` evita questo blocco.
-
-### Qual e la differenza tra layer `Ufficiale` e `Sostitutivo`?
-
-- `Ufficiale`: WMS dell'Agenzia delle Entrate, usato come riferimento catastale.
-- `Sostitutivo`: confini amministrativi Esri, utile come fallback visuale ma non equivalente al dato catastale.
-
-### Perche import/export solo `GeoJSON` e `KML`?
-
-Sono formati aperti e leggeri, adatti a una web app standalone. Formati piu pesanti (es. Shapefile/GeoPackage) richiedono parsing avanzato o gestione multi-file.
-
-## Possibili evoluzioni
-
-- Migliorare UX mobile con toggle dedicato per attivare/disattivare snapping.
-- Aggiungere i18n minimale IT/EN per i testi toolbar.
-- Introdurre tema chiaro opzionale.
-- Aggiungere mini guida interattiva al primo avvio.
-- Valutare validazioni topologiche piu avanzate durante editing/import.
-
-## Riferimenti e attribuzioni
-
-Questa applicazione utilizza librerie, servizi e dataset esterni. In ottica pubblicazione su GitHub, i riferimenti principali sono riportati qui in forma trasparente.
-
-### Librerie e standard
-
-- OpenLayers (v8.2.0): https://openlayers.org/
-	- Distribuzione usata via CDN jsDelivr.
-	- Licenza: BSD-2-Clause (verificare sempre i termini correnti del progetto OpenLayers).
-- GeoJSON specification (RFC 7946): https://datatracker.ietf.org/doc/html/rfc7946
-- KML specification (OGC KML 2.2): https://www.ogc.org/standards/kml/
-
-### Basemap e servizi cartografici
-
-- OpenStreetMap (layer strade): https://www.openstreetmap.org/
-	- Attribuzione richiesta: "© OpenStreetMap contributors".
-	- Termini/licenza dati: https://www.openstreetmap.org/copyright
-- Esri World Imagery (basemap satellitare):
-	- Servizio: https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer
-	- Termini d'uso Esri: https://www.esri.com/en-us/legal/terms/full-master-agreement
-- Esri World Boundaries and Places (layer sostitutivo):
-	- Servizio: https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer
-	- Termini d'uso Esri: https://www.esri.com/en-us/legal/terms/full-master-agreement
-- WMS Agenzia delle Entrate (overlay catastale ufficiale):
-	- Endpoint upstream usato dal proxy locale: https://wms.cartografia.agenziaentrate.gov.it/inspire/wms/ows01.php
-	- Portale cartografico: https://www.agenziaentrate.gov.it/portale/web/guest/schede/fabbricatiterreni/cartografia-catasto
-
-### Note di conformita per pubblicazione GitHub
-
-- Questo repository non rivendica proprieta sui dati cartografici esterni: ogni dataset/servizio resta di titolarita dei rispettivi fornitori.
-- L'uso pubblico del progetto deve rispettare licenze e termini dei servizi esterni, incluse eventuali clausole su attribuzione, rate limit e uso commerciale.
-- Prima di rilasci o deploy pubblici, verificare eventuali aggiornamenti dei termini ai link ufficiali sopra.
-- Project Planimeter by BalTac e un progetto indipendente, non affiliato ne sponsorizzato da OpenStreetMap Foundation, Esri o Agenzia delle Entrate.
+- OpenLayers: https://openlayers.org
+- OpenStreetMap: https://www.openstreetmap.org
+- Esri World Imagery: https://www.esri.com/en-us/legal/terms/full-master-agreement
+- WMS Agenzia Entrate: https://wms.cartografia.agenziaentrate.gov.it/inspire/wms/ows01.php

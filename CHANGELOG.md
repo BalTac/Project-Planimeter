@@ -2,6 +2,17 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [2026-05-08] — README ripulito e riallineato al progetto
+
+### Changed
+- [README.md](README.md) ristrutturato in una versione unica e coerente (rimossi contenuti duplicati e incongruenze pregresse).
+- [README.md](README.md) aggiornato con dipendenze backend reali e sezione endpoint/server CLI allineata al comportamento corrente.
+- [README.md](README.md) esteso con matrice di compatibilita browser (ES modules, import maps, API browser usate).
+- [README.md](README.md) esteso con template operativo per screenshot futuri (titolo, filename suggerito, caption).
+
+### Notes
+- Nessuna immagine inclusa in questa milestone: sezione predisposta per inserimento progressivo quando disponibili asset visuali.
+
 ## [2026-05-07] — Layer WMS catastali separati e controlli opacity
 
 ### Added
