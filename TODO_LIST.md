@@ -27,14 +27,14 @@
 - [ ] Aggiungere smoke E2E Playwright: draw polygon, export GeoJSON, locale switch.
 
 ### P1 — Interpretation layer backend
-- [ ] Estendere [server.py](server.py) con `OUTPUT=json` per `GetFeatureInfo`, senza rompere il path raw HTML/XML corrente.
-- [ ] Normalizzare il parser server-side in payload canonico (`parcel.id`, `parcel.label`, `parcel.namespace`, `parcel.local_id`) con diagnostica `raw`.
-- [ ] Gestire contratto esplicito `parse_failed` quando l'HTML non produce campi affidabili.
+- [x] Estendere [server.py](server.py) con `OUTPUT=json` per `GetFeatureInfo`, senza rompere il path raw HTML/XML corrente.
+- [x] Normalizzare il parser server-side in payload canonico (`parcel.id`, `parcel.label`, `parcel.namespace`, `parcel.local_id`) con diagnostica `raw`.
+- [x] Gestire contratto esplicito `parse_failed` quando l'HTML non produce campi affidabili.
 - [ ] Implementare endpoint semantico `POST /parcel-at-point` che nasconde i dettagli WMS al frontend.
 
 ### P2 — Migrazione frontend parcel workflow
-- [ ] Introdurre adapter/feature flag frontend per supportare sia risposta raw HTML sia risposta JSON normalizzata.
-- [ ] Migrare progressivamente la query particella dal path raw al path JSON/semantico senza regressioni UX.
+- [x] Introdurre adapter/feature flag frontend per supportare sia risposta raw HTML sia risposta JSON normalizzata.
+- [x] Migrare progressivamente la query particella dal path raw al path JSON/semantico senza regressioni UX.
 - [ ] Preparare integrazione di `parcel_id` nel workflow applicativo come riferimento stabile.
 
 ### P3 — Data model e versioning
