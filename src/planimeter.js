@@ -1754,7 +1754,9 @@ export default class Planimeter {
         this.renderParcelInfo();
 
         try {
-            const result = await this.requestParcelInfoHtml(pixel);
+            const result = Planimeter.FEATUREINFO_USE_JSON
+                ? await this.requestParcelInfoJson(pixel)
+                : await this.requestParcelInfoHtml(pixel);
             this.state.parcelInfoHtml = result.parcelInfoHtml ?? null;
             this.state.parcelInfoStatusKey = result.statusKey;
         } catch (error) {
@@ -1765,6 +1767,43 @@ export default class Planimeter {
             this.state.parcelInfoLoading = false;
             this.renderParcelInfo();
         }
+    }
+
+    // Feature flag: switch GetFeatureInfo from raw-HTML to structured-JSON mode.
+    // When true, /wms-proxy returns parsed canonical fields from server.
+    static FEATUREINFO_USE_JSON = true;
+
+    async requestParcelInfoJson(pixel) {
+        const rawUrl = this.buildParcelInfoUrl(pixel, 'text/html');
+        if (!rawUrl) return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty' };
+
+        const url = rawUrl + '&OUTPUT=json';
+        let data;
+        try {
+            const response = await fetch(url, { headers: { Accept: 'application/json' } });
+            if (!response.ok) return { parcelInfoHtml: null, statusKey: 'parcelInfo.error' };
+            data = await response.json();
+        } catch {
+            return { parcelInfoHtml: null, statusKey: 'parcelInfo.error' };
+        }
+
+        if (data?.error === 'parse_failed') {
+            return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty' };
+        }
+        if (!data?.parcel || !Object.keys(data.parcel).length) {
+            return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty' };
+        }
+
+        return { parcelInfoHtml: this._buildParcelHtmlFromJson(data), statusKey: 'parcelInfo.ready' };
+    }
+
+    _buildParcelHtmlFromJson(data) {
+        const p = data.parcel ?? {};
+        const rows = Object.entries(data.raw ?? p)
+            .filter(([, v]) => v)
+            .map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`)
+            .join('');
+        return `<table>${rows}</table>`;
     }
 
     async requestParcelInfoHtml(pixel) {
