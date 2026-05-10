@@ -348,6 +348,8 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             upstream_query["WIDTH"] = [str(resize_plan["upstream_width"])]
             upstream_query["HEIGHT"] = [str(resize_plan["upstream_height"])]
 
+        # OUTPUT=json is a proxy-only signal; do not leak it upstream.
+        upstream_query.pop("OUTPUT", None)
         safe_query = urllib.parse.urlencode(upstream_query, doseq=True)
         upstream_url = f"{UPSTREAM_WMS}?language=ita&{safe_query}"
 
@@ -400,6 +402,36 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
 
                 request_name = (query.get("REQUEST", [""])[0] or "").upper()
                 info_format_lower = info_format.lower()
+                output_mode = (query.get("OUTPUT", [""])[0] or "").lower()
+
+                if request_name == "GETFEATUREINFO" and output_mode == "json":
+                    # Structured JSON output mode: parse HTML and return canonical fields.
+                    raw_fields = self._extract_featureinfo_fields_from_html(payload)
+                    if raw_fields:
+                        canonical = self._to_canonical_parcel_fields(raw_fields)
+                        _log.info("wms-proxy featureinfo json layers=%s fields=%s", layers, list(canonical.keys()))
+                        response_obj: dict = {
+                            "type": "FeatureInfo",
+                            "parcel": canonical,
+                            "raw": raw_fields,
+                        }
+                    else:
+                        _log.warning("wms-proxy featureinfo parse_failed layers=%s", layers)
+                        raw_html = payload.decode("utf-8", errors="replace")
+                        response_obj = {
+                            "type": "FeatureInfo",
+                            "error": "parse_failed",
+                            "raw_html": raw_html,
+                        }
+                    json_bytes = json.dumps(response_obj, ensure_ascii=False).encode("utf-8")
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(json_bytes)))
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json_bytes)
+                    return
+
                 if request_name == "GETFEATUREINFO" and "text/html" in info_format_lower:
                     feature_fields = self._extract_featureinfo_fields_from_html(payload)
                     if feature_fields:
@@ -522,6 +554,26 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             return False
         ctype = (content_type or "").lower()
         return "xml" in ctype or "text/plain" in ctype or "application/vnd.ogc.se_xml" in ctype
+
+    # Mapping from raw WMS HTML field names (case-insensitive) to canonical keys.
+    _FEATUREINFO_FIELD_MAP: dict[str, str] = {
+        "label": "label",
+        "nationalcadastralreference": "id",
+        "inspireid_localid": "local_id",
+        "inspireid_namespace": "namespace",
+    }
+
+    @staticmethod
+    def _to_canonical_parcel_fields(raw: dict[str, str]) -> dict[str, str]:
+        """Map raw WMS FeatureInfo fields to canonical parcel keys."""
+        field_map = PlanimeterHandler._FEATUREINFO_FIELD_MAP
+        result: dict[str, str] = {}
+        for raw_key, value in raw.items():
+            normalized = raw_key.lower().replace(" ", "").replace("-", "_")
+            canonical_key = field_map.get(normalized)
+            if canonical_key:
+                result[canonical_key] = value
+        return result
 
     @staticmethod
     def _extract_featureinfo_fields_from_html(payload: bytes) -> dict[str, str]:
