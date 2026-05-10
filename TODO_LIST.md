@@ -20,9 +20,9 @@
 - [ ] Verificare download reale GeoTIFF dalla toolbar Export.
 - [ ] Verificare ZIP PNG+PGW (coerenza file .png e .pgw).
 - [ ] Verificare ZIP Bundle (image.tif, areas.geojson, meta.json).
-- [ ] Validare input proxy WMS con allowlist parametri ammessi.
-- [ ] Introdurre rate limit semplice sugli endpoint proxy.
-- [ ] Aggiungere test automatici minimi backend (smoke server, parsing GeoJSON, utility area/format).
+- [x] Validare input proxy WMS con allowlist parametri ammessi.
+- [x] Introdurre rate limit semplice sugli endpoint proxy.
+- [x] Aggiungere test automatici minimi backend (smoke server, parsing GeoJSON, utility area/format).
 - [ ] Verificare compatibilita importmap cross-browser (Chrome/Firefox/Safari target).
 - [ ] Aggiungere smoke E2E Playwright: draw polygon, export GeoJSON, locale switch.
 
