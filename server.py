@@ -41,6 +41,54 @@ _log = logging.getLogger("planimeter")
 
 UPSTREAM_WMS = "https://wms.cartografia.agenziaentrate.gov.it/inspire/wms/ows01.php"
 UPSTREAM_MAX_SIZE = 2048
+
+# Allowed WMS parameters forwarded upstream. Any key not in this set is stripped.
+# Keys are compared case-insensitively (normalised to upper-case at parse time).
+_WMS_ALLOWED_PARAMS: frozenset[str] = frozenset({
+    "SERVICE", "REQUEST", "VERSION",
+    "LAYERS", "QUERY_LAYERS", "STYLES",
+    "FORMAT", "INFO_FORMAT",
+    "TRANSPARENT", "BGCOLOR",
+    "CRS", "SRS", "BBOX",
+    "WIDTH", "HEIGHT",
+    "I", "J", "X", "Y",
+    "FEATURE_COUNT",
+    "EXCEPTIONS",
+})
+
+# Rate limiter: max requests per window per client IP on proxy endpoints.
+_RATE_LIMIT_WINDOW_S = 60
+_RATE_LIMIT_MAX_REQ  = 120  # 2 req/s avg
+
+
+class _RateLimiter:
+    """Sliding-window rate limiter, thread-safe."""
+
+    def __init__(self, window_s: float = _RATE_LIMIT_WINDOW_S, max_req: int = _RATE_LIMIT_MAX_REQ) -> None:
+        self._window = window_s
+        self._max = max_req
+        self._hits: dict[str, list[float]] = {}
+        self._lock = threading.Lock()
+
+    def is_allowed(self, client_ip: str) -> bool:
+        now = time.monotonic()
+        cutoff = now - self._window
+        with self._lock:
+            hits = self._hits.get(client_ip)
+            if hits is None:
+                self._hits[client_ip] = [now]
+                return True
+            # Prune old entries
+            hits = [t for t in hits if t > cutoff]
+            if len(hits) >= self._max:
+                self._hits[client_ip] = hits
+                return False
+            hits.append(now)
+            self._hits[client_ip] = hits
+            return True
+
+
+_rate_limiter = _RateLimiter()
 HEALTHCHECK_QUERY = {
     "SERVICE": "WMS",
     "REQUEST": "GetCapabilities",
@@ -161,6 +209,32 @@ class UpstreamHTTPError(Exception):
 class PlanimeterHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, directory: str | None = None, **kwargs):
         super().__init__(*args, directory=directory, **kwargs)
+
+    # ------------------------------------------------------------------
+    # Security helpers
+    # ------------------------------------------------------------------
+
+    def _check_rate_limit(self) -> bool:
+        """Return True if request is allowed; send 429 and return False otherwise."""
+        client_ip = self.client_address[0]
+        if _rate_limiter.is_allowed(client_ip):
+            return True
+        _log.warning("rate-limit client=%s path=%s", client_ip, self.path)
+        self.send_response(HTTPStatus.TOO_MANY_REQUESTS)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Retry-After", str(int(_RATE_LIMIT_WINDOW_S)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(b"Rate limit exceeded")
+        return False
+
+    @staticmethod
+    def _filter_wms_params(query: dict[str, list[str]]) -> None:
+        """Remove keys not in the WMS allowlist (in-place). Keys already uppercased."""
+        to_remove = [k for k in query if k not in _WMS_ALLOWED_PARAMS]
+        for k in to_remove:
+            _log.debug("wms-allowlist stripped param=%s", k)
+            del query[k]
 
     def end_headers(self) -> None:
         self.send_header("Cache-Control", "no-store")
@@ -321,6 +395,8 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             )
 
     def handle_wms_proxy(self, query_string: str) -> None:
+        if not self._check_rate_limit():
+            return
         query = urllib.parse.parse_qs(query_string, keep_blank_values=True)
         if not query:
             self.send_error(HTTPStatus.BAD_REQUEST, "Query string mancante")
@@ -350,6 +426,7 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
 
         # OUTPUT=json is a proxy-only signal; do not leak it upstream.
         upstream_query.pop("OUTPUT", None)
+        self._filter_wms_params(upstream_query)
         safe_query = urllib.parse.urlencode(upstream_query, doseq=True)
         upstream_url = f"{UPSTREAM_WMS}?language=ita&{safe_query}"
 
@@ -598,6 +675,8 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
 
     def handle_wms_tile(self, query_string: str) -> None:
         """WMS proxy with SQLite tile cache for all GetMap requests."""
+        if not self._check_rate_limit():
+            return
         query = urllib.parse.parse_qs(query_string, keep_blank_values=True)
         if not query:
             self.send_error(HTTPStatus.BAD_REQUEST, "Query string mancante")
@@ -644,6 +723,7 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             upstream_query["WIDTH"] = [str(resize_plan["upstream_width"])]
             upstream_query["HEIGHT"] = [str(resize_plan["upstream_height"])]
 
+        self._filter_wms_params(upstream_query)
         safe_query = urllib.parse.urlencode(upstream_query, doseq=True)
         upstream_url = f"{UPSTREAM_WMS}?language=ita&{safe_query}"
         req = urllib.request.Request(
