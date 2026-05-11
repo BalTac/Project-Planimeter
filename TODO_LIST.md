@@ -24,7 +24,7 @@
 - [x] Introdurre rate limit semplice sugli endpoint proxy.
 - [x] Aggiungere test automatici minimi backend (smoke server, parsing GeoJSON, utility area/format).
 - [ ] Verificare compatibilita importmap cross-browser (Chrome/Firefox/Safari target).
-- [ ] Aggiungere smoke E2E Playwright: draw polygon, export GeoJSON, locale switch.
+- [x] Aggiungere smoke E2E Playwright: draw polygon, export GeoJSON, locale switch.
 
 ### P1 — Interpretation layer backend
 - [x] Estendere [server.py](server.py) con `OUTPUT=json` per `GetFeatureInfo`, senza rompere il path raw HTML/XML corrente.
