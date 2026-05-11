@@ -244,7 +244,7 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         if (self.path.startswith("/wms-proxy") or self.path.startswith("/wms-tile")
             or self.path.startswith("/cache-clear") or self.path.startswith("/cache-config")
             or self.path.startswith("/export-geotiff") or self.path.startswith("/export-pgw")
-            or self.path.startswith("/export-bundle")):
+            or self.path.startswith("/export-bundle") or self.path.startswith("/parcel-at-point")):
             self.send_response(HTTPStatus.NO_CONTENT)
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -290,6 +290,9 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         if parsed.path in {"/export-bundle", "/export-bundle/"}:
             self.handle_export_bundle()
             return
+        if parsed.path in {"/parcel-at-point", "/parcel-at-point/"}:
+            self.handle_parcel_at_point()
+            return
         self.send_response(HTTPStatus.METHOD_NOT_ALLOWED)
         self.end_headers()
 
@@ -326,6 +329,117 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
                     continue
                 raise
         raise RuntimeError("fetch_upstream exhausted retries unexpectedly")
+
+    def handle_parcel_at_point(self) -> None:
+        """POST /parcel-at-point — coordinate-based cadastral parcel lookup.
+
+        Input JSON: {"lat": float, "lon": float, "buffer": optional float (degrees)}
+        Returns canonical parcel fields without exposing WMS internals.
+        """
+        if not self._check_rate_limit():
+            return
+
+        body = self._read_json_payload()
+        if body is None:
+            return
+
+        lat = body.get("lat")
+        lon = body.get("lon")
+        if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "lat/lon numerici richiesti."})
+            return
+        lat, lon = float(lat), float(lon)
+        if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "lat/lon fuori range."})
+            return
+
+        # Build a tiny bounding box around the point in EPSG:4326.
+        buf_raw = body.get("buffer", 0.0001)
+        buf = float(buf_raw) if isinstance(buf_raw, (int, float)) else 0.0001
+        buf = max(1e-6, min(buf, 1.0))  # clamp to sensible range
+
+        bbox_4326 = f"{lon - buf},{lat - buf},{lon + buf},{lat + buf}"
+        width, height = 101, 101   # odd → center pixel = (50, 50) = I=50, J=50
+
+        query: dict[str, list[str]] = {
+            "SERVICE":      ["WMS"],
+            "REQUEST":      ["GetFeatureInfo"],
+            "VERSION":      ["1.3.0"],
+            "LAYERS":       ["CP.CadastralParcel"],
+            "QUERY_LAYERS": ["CP.CadastralParcel"],
+            "STYLES":       [""],
+            "CRS":          ["EPSG:4326"],
+            "BBOX":         [bbox_4326],
+            "WIDTH":        [str(width)],
+            "HEIGHT":       [str(height)],
+            "I":            [str(width // 2)],
+            "J":            [str(height // 2)],
+            "INFO_FORMAT":  ["text/html"],
+            "FEATURE_COUNT": ["1"],
+            "TRANSPARENT":  ["true"],
+            "FORMAT":       ["image/png"],
+        }
+
+        self._filter_wms_params(query)
+        upstream_qs = urllib.parse.urlencode(query, doseq=True)
+        upstream_url = f"{UPSTREAM_WMS}?language=ita&{upstream_qs}"
+
+        req = urllib.request.Request(
+            upstream_url,
+            headers={
+                "User-Agent": "Planimeter-Local-Proxy/1.0",
+                "Accept": "text/html,text/*;q=0.9,*/*;q=0.2",
+            },
+        )
+
+        started_at = time.perf_counter()
+        try:
+            with self.fetch_upstream(req, timeout=self.get_upstream_timeout(),
+                                     retries=self.get_upstream_retries()) as response:
+                payload = response.read()
+                elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+
+                if self._looks_like_wms_xml_exception(payload, response.headers.get("Content-Type", "")):
+                    _log.warning("parcel-at-point WMS exception lat=%s lon=%s", lat, lon)
+                    self.send_json(HTTPStatus.BAD_GATEWAY, {
+                        "ok": False, "message": "WMS ServiceException.", "durationMs": elapsed_ms,
+                    })
+                    return
+
+                raw_fields = self._extract_featureinfo_fields_from_html(payload)
+                if not raw_fields:
+                    _log.info("parcel-at-point empty lat=%s lon=%s %dms", lat, lon, elapsed_ms)
+                    self.send_json(HTTPStatus.OK, {
+                        "type": "ParcelLookup",
+                        "point": [lat, lon],
+                        "parcel": None,
+                        "source": "wms",
+                        "durationMs": elapsed_ms,
+                    })
+                    return
+
+                canonical = self._to_canonical_parcel_fields(raw_fields)
+                _log.info("parcel-at-point OK lat=%s lon=%s fields=%s %dms",
+                          lat, lon, list(canonical.keys()), elapsed_ms)
+                self.send_json(HTTPStatus.OK, {
+                    "type": "ParcelLookup",
+                    "point": [lat, lon],
+                    "parcel": canonical,
+                    "raw": raw_fields,
+                    "source": "wms",
+                    "durationMs": elapsed_ms,
+                })
+
+        except UpstreamHTTPError as exc:
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            self.send_json(HTTPStatus.BAD_GATEWAY, {
+                "ok": False, "message": f"Upstream HTTP {exc.status_code}.", "durationMs": elapsed_ms,
+            })
+        except urllib.error.URLError as exc:
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            self.send_json(HTTPStatus.BAD_GATEWAY, {
+                "ok": False, "message": f"Errore rete upstream: {exc.reason}", "durationMs": elapsed_ms,
+            })
 
     def handle_proxy_health(self) -> None:
         started_at = time.perf_counter()
