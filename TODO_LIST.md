@@ -31,11 +31,13 @@
 - [x] Normalizzare il parser server-side in payload canonico (`parcel.id`, `parcel.label`, `parcel.namespace`, `parcel.local_id`) con diagnostica `raw`.
 - [x] Gestire contratto esplicito `parse_failed` quando l'HTML non produce campi affidabili.
 - [ ] Implementare endpoint semantico `POST /parcel-at-point` che nasconde i dettagli WMS al frontend.
+- [x] Implementare endpoint semantico `POST /parcel-at-point` che nasconde i dettagli WMS al frontend.
 
 ### P2 — Migrazione frontend parcel workflow
 - [x] Introdurre adapter/feature flag frontend per supportare sia risposta raw HTML sia risposta JSON normalizzata.
 - [x] Migrare progressivamente la query particella dal path raw al path JSON/semantico senza regressioni UX.
 - [ ] Preparare integrazione di `parcel_id` nel workflow applicativo come riferimento stabile.
+- [x] Preparare integrazione di `parcel_id` nel workflow applicativo come riferimento stabile.
 
 ### P3 — Data model e versioning
 - [ ] Evolvere data model feature con UUID stabile, bbox, timestamp, properties dinamiche e tags.

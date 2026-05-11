@@ -1759,6 +1759,12 @@ export default class Planimeter {
                 : await this.requestParcelInfoHtml(pixel);
             this.state.parcelInfoHtml = result.parcelInfoHtml ?? null;
             this.state.parcelInfoStatusKey = result.statusKey;
+            if (result.parcelId) {
+                this.state.lastParcelId = result.parcelId;
+                if (this.state.selectedFeature) {
+                    this.state.selectedFeature.set('parcel_id', result.parcelId);
+                }
+            }
         } catch (error) {
             console.error('Parcel info request failed:', error);
             this.state.parcelInfoHtml = null;
@@ -1788,13 +1794,14 @@ export default class Planimeter {
         }
 
         if (data?.error === 'parse_failed') {
-            return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty' };
+            return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty', parcelId: null };
         }
         if (!data?.parcel || !Object.keys(data.parcel).length) {
-            return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty' };
+            return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty', parcelId: null };
         }
 
-        return { parcelInfoHtml: this._buildParcelHtmlFromJson(data), statusKey: 'parcelInfo.ready' };
+        const parcelId = data.parcel?.id ?? data.parcel?.local_id ?? null;
+        return { parcelInfoHtml: this._buildParcelHtmlFromJson(data), statusKey: 'parcelInfo.ready', parcelId };
     }
 
     _buildParcelHtmlFromJson(data) {
@@ -1819,13 +1826,14 @@ export default class Planimeter {
             return { parcelInfoHtml: null, statusKey: 'parcelInfo.unsupported' };
         }
         if (!response.ok) {
-            return { parcelInfoHtml: null, statusKey: 'parcelInfo.error' };
+            return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty', parcelId: null };
         }
 
-        const rawHtml = this.extractFeatureInfoHtmlPage(payload);
+            return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty', parcelId: null };
         if (!rawHtml) {
             return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty' };
-        }
+        const parcelId = data.parcel?.id ?? data.parcel?.local_id ?? null;
+        return { parcelInfoHtml: this._buildParcelHtmlFromJson(data), statusKey: 'parcelInfo.ready', parcelId };
 
         return { parcelInfoHtml: rawHtml, statusKey: 'parcelInfo.ready' };
     }
@@ -1833,6 +1841,12 @@ export default class Planimeter {
     extractFeatureInfoHtmlPage(payload) {
         const html = String(payload || '');
         if (!html) return null;
+            if (result.parcelId) {
+                this.state.lastParcelId = result.parcelId;
+                if (this.state.selectedFeature) {
+                    this.state.selectedFeature.set('parcel_id', result.parcelId);
+                }
+            }
         if (/no\s+features\s+were\s+found/i.test(html)) return null;
         if (!/<table[\s\S]*<\/table>/i.test(html)) return null;
 
