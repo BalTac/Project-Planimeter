@@ -5,6 +5,27 @@ const geoJsonFormat = new GeoJSON();
 const kmlFormat     = new KML({ extractStyles: false });
 
 /**
+ * Trigger a browser download for a Blob payload.
+ *
+ * Keeping the object URL alive for a short time avoids flaky failures with
+ * larger files in some browser engines/headless modes.
+ *
+ * @param {Blob} blob
+ * @param {string} filename
+ */
+function triggerBlobDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+/**
  * Build export payload and metadata for the given features and format.
  *
  * @param {import('ol').Feature[]} features
@@ -51,12 +72,7 @@ export function buildExportConfig(features, format) {
  */
 export function triggerDownload(payload, mimeType, filename) {
     const blob = new Blob([payload], { type: mimeType });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    triggerBlobDownload(blob, filename);
 }
 
 /**
@@ -104,10 +120,8 @@ export async function requestBackendExport(format, viewportData, features = []) 
     }
 
     const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `planimeter-${new Date().toISOString().slice(0, 10)}.${format === 'geotiff' ? 'tif' : 'zip'}`;
-    a.click();
-    URL.revokeObjectURL(url);
+    triggerBlobDownload(
+        blob,
+        `planimeter-${new Date().toISOString().slice(0, 10)}.${format === 'geotiff' ? 'tif' : 'zip'}`,
+    );
 }

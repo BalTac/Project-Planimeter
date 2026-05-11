@@ -2,6 +2,75 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [2026-05-11] — Refresh tile WMS singolo da menu contestuale
+
+### Added
+- [src/planimeter.js](src/planimeter.js) aggiunge `canRefreshWmsTile()` e `refreshTileAtPixel(pixel)`: reset dello stato tile a `IDLE` e `tile.load()` per ogni tile visibile dei layer `catastoOfficial` sotto il cursore, senza ricaricare l'intera mappa.
+- [src/ui/context-menu.js](src/ui/context-menu.js) espone la voce "Ricarica tile WMS" nel menu contestuale (modalità Navigate) quando almeno un layer catasto ufficiale è attivo e visibile.
+- [src/i18n/it.js](src/i18n/it.js) aggiunge chiave `ctx.refreshTile` con traduzione italiana.
+- [src/i18n/en.js](src/i18n/en.js) aggiunge chiave `ctx.refreshTile` con traduzione inglese.
+
+### Validation
+- Nessuna regressione su `get_errors` per tutti e 4 i file modificati.
+
+## [2026-05-11] — Bypass automatico rate-limit per connessioni localhost
+
+### Added
+- [server.py](server.py) aggiunge metodo statico `_is_localhost(ip)` che riconosce `127.0.0.1`, `::1`, `::ffff:127.0.0.1` come loopback.
+- [server.py](server.py) aggiunge early-return in `_check_rate_limit()`: le richieste da localhost bypassano interamente il limiter senza consumare quota.
+- [tests/test_server_smoke.py](tests/test_server_smoke.py) aggiunge `test_localhost_bypass_ignores_limit` che verifica il bypass per IP loopback noti.
+
+### Validation
+- Backend smoke: `22 passed`.
+
+## [2026-05-11] — Rate-limit dinamico locale su concorrenza in-flight
+
+### Changed
+- [server.py](server.py) evolve il rate limiter da soglia fissa a soglia dinamica per IP, calcolata in base alle richieste proxy contemporanee in-flight (`/wms-proxy`, `/wms-tile`, `/parcel-at-point`), mantenendo lock thread-safe e finestra scorrevole.
+- [server.py](server.py) aggiunge contatore thread-safe di richieste in-flight e usa il valore corrente nel check `429` per ridurre falsi positivi su burst locali.
+
+### Added
+- [tests/test_server_smoke.py](tests/test_server_smoke.py) aggiunge test su scaling dinamico del budget e rispetto del cap massimo.
+
+### Validation
+- Eseguiti test backend target: `30 passed` (`tests/test_server_smoke.py`, `tests/test_server_parcel_at_point.py`).
+
+## [2026-05-11] — P4 geometria/analytics: intersection engine e cache geometrie catastali
+
+### Added
+- [src/geometry/intersection.js](src/geometry/intersection.js) introduce un motore UI-agnostic per calcolo area di intersezione e coverage ratio tra poligoni, con supporto a Polygon/MultiPolygon e output parametrizzabile (`ratioBase`).
+- [src/geometry/intersection.js](src/geometry/intersection.js) introduce una cache in-memory per geometrie catastali normalizzate, con metriche `hits/misses` e helper per riuso delle geometrie tra confronti ripetuti.
+- [tests/test_p4_intersection_engine.py](tests/test_p4_intersection_engine.py) valida calcolo intersezione su poligoni sovrapposti e riuso cache geometria catastale.
+
+### Changed
+- [TODO_LIST.md](TODO_LIST.md) marca completate le due task P4 su engine di intersezione e strategia di caching geometrie catastali.
+
+### Validation
+- Suite completa test repository: `79 passed`.
+
+## [2026-05-11] — P0 validazioni UI/cache: responsive, accessibilita e runtime config
+
+### Added
+- [tests/test_e2e_p0.py](tests/test_e2e_p0.py) aggiunge test esplicito sul vincolo globale layer: massimo 2 attivi totali (1 base + 1 admin), oltre alla mutua esclusione nei gruppi.
+- [tests/test_e2e_p0_extended.py](tests/test_e2e_p0_extended.py) aggiunge test responsive desktop/mobile per toolbar senza overflow orizzontale.
+- [tests/test_e2e_p0_extended.py](tests/test_e2e_p0_extended.py) aggiunge test su hint hover IT/EN e operabilita keyboard dei pulsanti tool (`Enter` su elemento in focus).
+- [tests/test_e2e_p0_extended.py](tests/test_e2e_p0_extended.py) aggiunge test integrazione cache WMS su `/wms-tile`: primo caricamento `MISS`, secondo `HIT`, incluso scenario con layer differente.
+- [tests/test_e2e_p0_extended.py](tests/test_e2e_p0_extended.py) aggiunge test su `Settings > Cache` per applicazione runtime di `TTL/MB` e verifica lato backend tramite `GET /cache-config`.
+- [tests/test_e2e_p0_extended.py](tests/test_e2e_p0_extended.py) aggiunge test clear cache da settings con verifica metriche azzerate (`count=0`, `size_bytes=0`).
+- [tests/test_e2e_p0_extended.py](tests/test_e2e_p0_extended.py) estende i test export backend con validazione contenuti reali: firma TIFF, struttura ZIP PGW (`.png` + `.pgw`), struttura ZIP bundle (`image.tif`, `areas.geojson`, `meta.json`).
+
+### Changed
+- [TODO_LIST.md](TODO_LIST.md) aggiorna lo stato P0 marcando completate le verifiche validate dai nuovi test (responsive, hint/accessibilita keyboard, vincoli layer, restore preferenze layer, clear cache, apply runtime cache config).
+- [TODO_LIST.md](TODO_LIST.md) marca completata anche la verifica compatibilita importmap cross-browser (target Chrome/Firefox/Safari) dopo smoke test su Chromium/Firefox/WebKit.
+- [src/planimeter.js](src/planimeter.js) corregge export raster dalla toolbar: conversione extent da `EPSG:3857` a `EPSG:4326` (compatibile OpenLayers) evitando errore runtime `getCode` su proiezione non registrata.
+- [src/io/export.js](src/io/export.js) rende piu robusto il download blob (`a` temporaneo nel DOM + revoke URL differito) per payload export più pesanti.
+- [TODO_LIST.md](TODO_LIST.md) marca completate le 3 verifiche residue P0 su export toolbar (GeoTIFF, PNG+PGW, Bundle).
+
+### Validation
+- Eseguita suite completa test repository: `77 passed`.
+- Eseguiti smoke test cross-browser su Firefox/WebKit: `6 passed` (titolo pagina, render mappa, assenza JS errors).
+- Validazione runtime toolbar export (Chromium Playwright script): chiamate reali `POST /export-geotiff`, `POST /export-pgw`, `POST /export-bundle` tutte con HTTP 200 e messaggi UI di successo.
+
 ## [2026-05-08] — README ripulito e riallineato al progetto
 
 ### Changed

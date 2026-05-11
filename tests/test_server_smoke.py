@@ -125,6 +125,27 @@ class TestRateLimiter(unittest.TestCase):
         time.sleep(0.06)
         self.assertTrue(rl.is_allowed("5.5.5.5"))
 
+    def test_localhost_bypass_ignores_limit(self):
+        # The bypass lives in PlanimeterHandler._is_localhost, not in the limiter.
+        self.assertTrue(Handler._is_localhost("127.0.0.1"))
+        self.assertTrue(Handler._is_localhost("::1"))
+        self.assertTrue(Handler._is_localhost("::ffff:127.0.0.1"))
+        self.assertFalse(Handler._is_localhost("192.168.1.1"))
+        self.assertFalse(Handler._is_localhost("10.0.0.1"))
+
+    def test_dynamic_limit_scales_with_concurrency(self):
+        rl = _RateLimiter(window_s=60, max_req=2, per_conn_bonus_req=2, max_dynamic_req=10)
+        # With 3 concurrent requests the effective limit becomes 6.
+        for _ in range(6):
+            self.assertTrue(rl.is_allowed("1.2.3.4", concurrent_requests=3))
+        self.assertFalse(rl.is_allowed("1.2.3.4", concurrent_requests=3))
+
+    def test_dynamic_limit_respects_cap(self):
+        rl = _RateLimiter(window_s=60, max_req=2, per_conn_bonus_req=10, max_dynamic_req=5)
+        for _ in range(5):
+            self.assertTrue(rl.is_allowed("1.2.3.4", concurrent_requests=10))
+        self.assertFalse(rl.is_allowed("1.2.3.4", concurrent_requests=10))
+
 
 # ---------------------------------------------------------------------------
 # TileCache (in-memory via temp dir)

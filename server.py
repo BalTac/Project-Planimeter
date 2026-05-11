@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import io
 import json
 import logging
@@ -59,20 +60,37 @@ _WMS_ALLOWED_PARAMS: frozenset[str] = frozenset({
 # Rate limiter: max requests per window per client IP on proxy endpoints.
 _RATE_LIMIT_WINDOW_S = 60
 _RATE_LIMIT_MAX_REQ  = 120  # 2 req/s avg
+_RATE_LIMIT_BONUS_PER_CONN_REQ = 30
+_RATE_LIMIT_DYNAMIC_CAP_REQ = 600
 
 
 class _RateLimiter:
     """Sliding-window rate limiter, thread-safe."""
 
-    def __init__(self, window_s: float = _RATE_LIMIT_WINDOW_S, max_req: int = _RATE_LIMIT_MAX_REQ) -> None:
+    def __init__(
+        self,
+        window_s: float = _RATE_LIMIT_WINDOW_S,
+        max_req: int = _RATE_LIMIT_MAX_REQ,
+        per_conn_bonus_req: int = 0,
+        max_dynamic_req: int | None = None,
+    ) -> None:
         self._window = window_s
         self._max = max_req
+        self._per_conn_bonus = max(0, int(per_conn_bonus_req))
+        self._max_dynamic = max_req if max_dynamic_req is None else max(max_req, int(max_dynamic_req))
         self._hits: dict[str, list[float]] = {}
         self._lock = threading.Lock()
 
-    def is_allowed(self, client_ip: str) -> bool:
+    def _effective_limit(self, concurrent_requests: int | None) -> int:
+        if concurrent_requests is None or concurrent_requests <= 1 or self._per_conn_bonus <= 0:
+            return self._max
+        computed = self._max + (concurrent_requests - 1) * self._per_conn_bonus
+        return min(self._max_dynamic, computed)
+
+    def is_allowed(self, client_ip: str, concurrent_requests: int | None = None) -> bool:
         now = time.monotonic()
         cutoff = now - self._window
+        effective_limit = self._effective_limit(concurrent_requests)
         with self._lock:
             hits = self._hits.get(client_ip)
             if hits is None:
@@ -80,7 +98,7 @@ class _RateLimiter:
                 return True
             # Prune old entries
             hits = [t for t in hits if t > cutoff]
-            if len(hits) >= self._max:
+            if len(hits) >= effective_limit:
                 self._hits[client_ip] = hits
                 return False
             hits.append(now)
@@ -88,7 +106,33 @@ class _RateLimiter:
             return True
 
 
-_rate_limiter = _RateLimiter()
+class _InFlightCounter:
+    """Thread-safe counter for concurrent in-flight requests."""
+
+    def __init__(self) -> None:
+        self._value = 0
+        self._lock = threading.Lock()
+
+    def increment(self) -> int:
+        with self._lock:
+            self._value += 1
+            return self._value
+
+    def decrement(self) -> int:
+        with self._lock:
+            self._value = max(0, self._value - 1)
+            return self._value
+
+    def snapshot(self) -> int:
+        with self._lock:
+            return self._value
+
+
+_rate_limiter = _RateLimiter(
+    per_conn_bonus_req=_RATE_LIMIT_BONUS_PER_CONN_REQ,
+    max_dynamic_req=_RATE_LIMIT_DYNAMIC_CAP_REQ,
+)
+_rate_limited_in_flight = _InFlightCounter()
 HEALTHCHECK_QUERY = {
     "SERVICE": "WMS",
     "REQUEST": "GetCapabilities",
@@ -214,12 +258,32 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
     # Security helpers
     # ------------------------------------------------------------------
 
+    @contextlib.contextmanager
+    def _rate_limited_scope(self):
+        _rate_limited_in_flight.increment()
+        try:
+            yield
+        finally:
+            _rate_limited_in_flight.decrement()
+
+    @staticmethod
+    def _is_localhost(ip: str) -> bool:
+        return ip in {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
+
     def _check_rate_limit(self) -> bool:
         """Return True if request is allowed; send 429 and return False otherwise."""
         client_ip = self.client_address[0]
-        if _rate_limiter.is_allowed(client_ip):
+        if self._is_localhost(client_ip):
             return True
-        _log.warning("rate-limit client=%s path=%s", client_ip, self.path)
+        concurrent_requests = max(1, _rate_limited_in_flight.snapshot())
+        if _rate_limiter.is_allowed(client_ip, concurrent_requests=concurrent_requests):
+            return True
+        _log.warning(
+            "rate-limit client=%s path=%s in_flight=%d",
+            client_ip,
+            self.path,
+            concurrent_requests,
+        )
         self.send_response(HTTPStatus.TOO_MANY_REQUESTS)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Retry-After", str(int(_RATE_LIMIT_WINDOW_S)))
@@ -260,10 +324,12 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             self.handle_proxy_health()
             return
         if parsed.path in {"/wms-proxy", "/wms-proxy/"}:
-            self.handle_wms_proxy(parsed.query)
+            with self._rate_limited_scope():
+                self.handle_wms_proxy(parsed.query)
             return
         if parsed.path in {"/wms-tile", "/wms-tile/"}:
-            self.handle_wms_tile(parsed.query)
+            with self._rate_limited_scope():
+                self.handle_wms_tile(parsed.query)
             return
         if parsed.path in {"/cache-stats", "/cache-stats/"}:
             self.handle_cache_stats()
@@ -291,7 +357,8 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             self.handle_export_bundle()
             return
         if parsed.path in {"/parcel-at-point", "/parcel-at-point/"}:
-            self.handle_parcel_at_point()
+            with self._rate_limited_scope():
+                self.handle_parcel_at_point()
             return
         self.send_response(HTTPStatus.METHOD_NOT_ALLOWED)
         self.end_headers()
@@ -359,7 +426,7 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         buf = max(1e-6, min(buf, 1.0))  # clamp to sensible range
 
         bbox_4326 = f"{lon - buf},{lat - buf},{lon + buf},{lat + buf}"
-        width, height = 101, 101   # odd → center pixel = (50, 50) = I=50, J=50
+        width, height = 101, 101   # odd -> center pixel = (50, 50) = I=50, J=50
 
         query: dict[str, list[str]] = {
             "SERVICE":      ["WMS"],

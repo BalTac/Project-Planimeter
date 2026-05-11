@@ -103,6 +103,27 @@ class TestLayerGroups:
         assert not osm.is_checked() or not catasto.is_checked(), \
             "Both OSM and Catasto checked simultaneously"
 
+    def test_total_active_layers_never_exceed_two(self, page: Page, planimeter_base_url: str):
+        """At any point there can be max 1 base + max 1 admin layer enabled."""
+        self._goto(page, planimeter_base_url)
+
+        base_ids = ["#layer-sat", "#layer-open-topo", "#layer-esri-topo", "#layer-esri-relief"]
+        admin_ids = ["#layer-osm", "#layer-catasto"]
+
+        for base_id in base_ids:
+            page.locator(base_id).click()
+            page.wait_for_timeout(120)
+            for admin_id in admin_ids:
+                page.locator(admin_id).click()
+                page.wait_for_timeout(120)
+
+                active_base = sum(page.locator(sel).is_checked() for sel in base_ids)
+                active_admin = sum(page.locator(sel).is_checked() for sel in admin_ids)
+                assert active_base <= 1, f"More than one base layer active: {active_base}"
+                assert active_admin <= 1, f"More than one admin layer active: {active_admin}"
+                assert (active_base + active_admin) <= 2, \
+                    f"More than two total layers active: base={active_base} admin={active_admin}"
+
 
 # ---------------------------------------------------------------------------
 # Tool buttons

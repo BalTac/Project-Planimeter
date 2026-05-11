@@ -1,6 +1,8 @@
 """P0 E2E extended tests: cache stats/clear, export downloads, preferences restore."""
 
+import io
 import json
+import zipfile
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -65,6 +67,58 @@ class TestCacheSettings:
         page.click("#tab-settings")
         page.wait_for_timeout(300)
         expect(page.locator("#btn-cache-apply")).to_be_visible()
+
+    def test_wms_tile_cache_miss_then_hit(self, page: Page, planimeter_base_url: str):
+        """Same tile request should be MISS first, then HIT after caching."""
+        page.request.post(f"{planimeter_base_url}/cache-clear")
+
+        url = (
+            f"{planimeter_base_url}/wms-tile"
+            "?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0"
+            "&LAYERS=CP.CadastralParcel&STYLES="
+            "&CRS=EPSG:3857"
+            "&BBOX=1389388,5142231,1390388,5143231"
+            "&WIDTH=256&HEIGHT=256"
+            "&FORMAT=image/png&TRANSPARENT=true"
+        )
+
+        first = page.request.get(url)
+        if first.status != 200:
+            pytest.skip(f"WMS tile unavailable for cache test (status={first.status})")
+
+        first_cache = first.headers.get("x-tile-cache", "")
+        assert first_cache.upper() == "MISS", f"Expected MISS, got '{first_cache}'"
+
+        second = page.request.get(url)
+        assert second.status == 200
+        second_cache = second.headers.get("x-tile-cache", "")
+        assert second_cache.upper() == "HIT", f"Expected HIT, got '{second_cache}'"
+
+    def test_wms_tile_cache_miss_then_hit_on_second_layer(self, page: Page, planimeter_base_url: str):
+        """Cache should behave consistently also on a different WMS layer."""
+        page.request.post(f"{planimeter_base_url}/cache-clear")
+
+        url = (
+            f"{planimeter_base_url}/wms-tile"
+            "?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0"
+            "&LAYERS=CP.CadastralZoning&STYLES="
+            "&CRS=EPSG:3857"
+            "&BBOX=1389388,5142231,1390388,5143231"
+            "&WIDTH=256&HEIGHT=256"
+            "&FORMAT=image/png&TRANSPARENT=true"
+        )
+
+        first = page.request.get(url)
+        if first.status != 200:
+            pytest.skip(f"Secondary layer unavailable for cache test (status={first.status})")
+
+        first_cache = first.headers.get("x-tile-cache", "")
+        assert first_cache.upper() == "MISS", f"Expected MISS, got '{first_cache}'"
+
+        second = page.request.get(url)
+        assert second.status == 200
+        second_cache = second.headers.get("x-tile-cache", "")
+        assert second_cache.upper() == "HIT", f"Expected HIT, got '{second_cache}'"
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +191,8 @@ class TestExportFormats:
         if resp.status == 200:
             ct = resp.headers.get("content-type", "")
             assert "tiff" in ct or "octet" in ct, f"Unexpected Content-Type: {ct}"
+            payload = resp.body()
+            assert payload[:2] in (b"II", b"MM"), "GeoTIFF endpoint body has invalid TIFF signature"
 
     def test_export_pgw_endpoint_responds(self, page: Page, planimeter_base_url: str):
         resp = page.request.post(
@@ -148,11 +204,32 @@ class TestExportFormats:
         if resp.status == 200:
             ct = resp.headers.get("content-type", "")
             assert "zip" in ct, f"Unexpected Content-Type: {ct}"
+            zip_bytes = resp.body()
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+                names = set(zf.namelist())
+                assert "planimeter-export.png" in names
+                assert "planimeter-export.pgw" in names
+                png_header = zf.read("planimeter-export.png")[:8]
+                assert png_header == b"\x89PNG\r\n\x1a\n"
+                world_lines = zf.read("planimeter-export.pgw").decode("utf-8").strip().splitlines()
+                assert len(world_lines) == 6
 
     def test_export_bundle_endpoint_responds(self, page: Page, planimeter_base_url: str):
         payload = dict(self.VALID_BBOX_PAYLOAD)
         payload["features"] = json.dumps(
-            {"type": "FeatureCollection", "features": []}
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {"name": "sample"},
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [[[12.4, 41.8], [12.41, 41.8], [12.41, 41.81], [12.4, 41.81], [12.4, 41.8]]],
+                        },
+                    }
+                ],
+            }
         )
         resp = page.request.post(
             f"{planimeter_base_url}/export-bundle",
@@ -163,7 +240,20 @@ class TestExportFormats:
         if resp.status == 200:
             ct = resp.headers.get("content-type", "")
             assert "zip" in ct, f"Unexpected Content-Type: {ct}"
-
+            zip_bytes = resp.body()
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+                names = set(zf.namelist())
+                assert "image.tif" in names
+                assert "areas.geojson" in names
+                assert "meta.json" in names
+                tif_header = zf.read("image.tif")[:4]
+                assert tif_header[:2] in (b"II", b"MM")
+                geo = json.loads(zf.read("areas.geojson").decode("utf-8"))
+                assert geo.get("type") == "FeatureCollection"
+                assert len(geo.get("features", [])) >= 1
+                meta = json.loads(zf.read("meta.json").decode("utf-8"))
+                for key in ("bbox", "crs", "width", "height", "layers", "timestamp"):
+                    assert key in meta
 
 # ---------------------------------------------------------------------------
 # Preferences: layer/tool state restored after reload
@@ -196,3 +286,106 @@ class TestPreferencesRestore:
         tab_text = page.locator("#tab-operate").inner_text()
         assert "Operativo" not in tab_text, \
             f"Language preference (EN) not restored after reload: '{tab_text}'"
+
+
+# ---------------------------------------------------------------------------
+# Responsive + accessibility
+# ---------------------------------------------------------------------------
+
+class TestResponsiveAndAccessibility:
+    def test_toolbar_desktop_no_overflow(self, page: Page, planimeter_base_url: str):
+        page.set_viewport_size({"width": 1366, "height": 768})
+        go(page, planimeter_base_url)
+
+        toolbar = page.locator("#app-toolbar")
+        expect(toolbar).to_be_visible()
+        box = toolbar.bounding_box()
+        assert box is not None
+        assert box["x"] >= 0
+        assert box["y"] >= 0
+        assert box["x"] + box["width"] <= 1366 + 1
+        assert box["y"] + box["height"] <= 768 + 1
+
+        no_horizontal_overflow = page.evaluate(
+            "() => document.documentElement.scrollWidth <= document.documentElement.clientWidth"
+        )
+        assert no_horizontal_overflow, "Desktop page has horizontal overflow"
+
+    def test_toolbar_mobile_no_overflow(self, page: Page, planimeter_base_url: str):
+        page.set_viewport_size({"width": 390, "height": 844})
+        go(page, planimeter_base_url)
+
+        toolbar = page.locator("#app-toolbar")
+        expect(toolbar).to_be_visible()
+        box = toolbar.bounding_box()
+        assert box is not None
+        assert box["x"] >= 0
+        assert box["x"] + box["width"] <= 390 + 1
+
+        no_horizontal_overflow = page.evaluate(
+            "() => document.documentElement.scrollWidth <= document.documentElement.clientWidth"
+        )
+        assert no_horizontal_overflow, "Mobile page has horizontal overflow"
+
+    def test_tool_hints_update_between_it_and_en(self, page: Page, planimeter_base_url: str):
+        go(page, planimeter_base_url)
+        draw = page.locator("[data-mode='draw']")
+
+        hint_it = draw.get_attribute("title")
+        assert hint_it and len(hint_it) > 2
+
+        page.select_option("#lang-switcher", "en")
+        page.wait_for_timeout(300)
+        hint_en = draw.get_attribute("title")
+        assert hint_en and len(hint_en) > 2
+        assert hint_en != hint_it, "IT/EN hover hint did not change"
+
+    def test_tool_buttons_are_keyboard_operable(self, page: Page, planimeter_base_url: str):
+        go(page, planimeter_base_url)
+        draw = page.locator("[data-mode='draw']")
+        navigate = page.locator("[data-mode='navigate']")
+
+        draw.focus()
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(150)
+
+        expect(draw).to_have_attribute("aria-pressed", "true")
+        expect(navigate).to_have_attribute("aria-pressed", "false")
+
+
+# ---------------------------------------------------------------------------
+# Cache runtime settings: apply + clear metrics
+# ---------------------------------------------------------------------------
+
+class TestCacheRuntimeSettings:
+    def test_apply_cache_runtime_config_from_settings(self, page: Page, planimeter_base_url: str):
+        go(page, planimeter_base_url)
+        page.click("#tab-settings")
+        page.wait_for_timeout(300)
+
+        page.fill("#settings-cache-ttl-days", "45")
+        page.fill("#settings-cache-size-mb", "256")
+        page.click("#btn-cache-apply")
+        page.wait_for_timeout(500)
+
+        resp = page.request.get(f"{planimeter_base_url}/cache-config")
+        assert resp.ok
+        body = resp.json()
+        assert body["enabled"] is True
+        assert body["ttl_days"] == 45
+        assert body["max_size_mb"] == 256
+
+    def test_clear_cache_resets_metrics(self, page: Page, planimeter_base_url: str):
+        go(page, planimeter_base_url)
+        page.click("#tab-settings")
+        page.wait_for_timeout(300)
+
+        page.click("#btn-cache-clear")
+        page.wait_for_timeout(500)
+
+        resp = page.request.get(f"{planimeter_base_url}/cache-stats")
+        assert resp.ok
+        stats = resp.json()
+        assert stats["enabled"] is True
+        assert stats["count"] == 0
+        assert stats["size_bytes"] == 0

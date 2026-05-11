@@ -171,6 +171,7 @@ export default {
     'ctx.editFeature':       'Modifica feature',
     'ctx.deleteFeature':     'Elimina feature',
     'ctx.queryParcel':       'Info catastali qui',
+    'ctx.refreshTile':       'Ricarica tile WMS',
     'ctx.exportView':        'Export view',
     'ctx.exportSelection':   'Export selection',
     'ctx.exportAreas':       'Export areas',

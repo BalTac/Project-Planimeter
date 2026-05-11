@@ -19,6 +19,8 @@ import { t } from '../i18n/i18n.js';
  *   exportView?:        () => void,
  *   exportSelection?:   () => void,
  *   exportAreas?:       () => void,
+ *   canRefreshWmsTile?: () => boolean,
+ *   refreshTileAtPixel?: (pixel: number[]) => void,
  *   getSpecialContextMenu?: (ctx: {
  *     event: MouseEvent,
  *     pixel: number[],
@@ -44,6 +46,8 @@ export function initContextMenu({
     exportView,
     exportSelection,
     exportAreas,
+    canRefreshWmsTile,
+    refreshTileAtPixel,
     getSpecialContextMenu,
 }) {
     const { contextMenu } = elements;
@@ -81,7 +85,7 @@ export function initContextMenu({
             return;
         }
 
-        const items = buildMenuItems({ mode, isDrawing, feature, canQueryParcel });
+        const items = buildMenuItems({ mode, isDrawing, feature, canQueryParcel, canRefreshWmsTile });
         if (!items.length) return;
 
         renderMenu(contextMenu, items, {
@@ -89,6 +93,7 @@ export function initContextMenu({
             editFeature:        () => editFeature(feature),
             deleteFeature:      () => deleteFeature(feature),
             queryParcelAtPixel: () => queryParcelAtPixel(pixel),
+            refreshTileAtPixel: () => refreshTileAtPixel?.(pixel),
             exportView,
             exportSelection,
             exportAreas,
@@ -117,7 +122,7 @@ export function initContextMenu({
  * Determine which menu items to show based on current application state.
  * @returns {Array<{key: string, action: string, danger?: boolean}>}
  */
-function buildMenuItems({ mode, isDrawing, feature, canQueryParcel }) {
+function buildMenuItems({ mode, isDrawing, feature, canQueryParcel, canRefreshWmsTile }) {
     // During active drawing: single "cancel" item
     if (isDrawing && (mode === 'draw' || mode === 'measure-straight' || mode === 'measure-polyline')) {
         return [{ key: 'ctx.cancelDraw', action: 'abortActiveDraw' }];
@@ -132,6 +137,9 @@ function buildMenuItems({ mode, isDrawing, feature, canQueryParcel }) {
         }
         if (canQueryParcel()) {
             items.push({ key: 'ctx.queryParcel', action: 'queryParcelAtPixel' });
+        }
+        if (canRefreshWmsTile?.()) {
+            items.push({ key: 'ctx.refreshTile', action: 'refreshTileAtPixel' });
         }
         items.push({ key: 'ctx.exportView', action: 'exportView' });
         items.push({ key: 'ctx.exportSelection', action: 'exportSelection' });

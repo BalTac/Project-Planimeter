@@ -171,6 +171,7 @@ export default {
     'ctx.editFeature':       'Edit feature',
     'ctx.deleteFeature':     'Delete feature',
     'ctx.queryParcel':       'Cadastral info here',
+    'ctx.refreshTile':       'Reload WMS tile',
     'ctx.exportView':        'Export view',
     'ctx.exportSelection':   'Export selection',
     'ctx.exportAreas':       'Export areas',

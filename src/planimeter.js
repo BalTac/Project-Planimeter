@@ -83,6 +83,8 @@ export default class Planimeter {
             editFeature:     (feature) => this.editFeatureFromContext(feature),
             deleteFeature:   (feature) => this.deleteFeatureFromContext(feature),
             queryParcelAtPixel: (pixel) => this.fetchParcelInfoAtPixel(pixel),
+            canRefreshWmsTile: () => this.canRefreshWmsTile(),
+            refreshTileAtPixel: (pixel) => this.refreshTileAtPixel(pixel),
             exportView:      () => this.exportViewSnapshot(),
             exportSelection: () => this.startSelectionExportMode(),
             exportAreas:     () => this.exportFeatures(),
@@ -673,7 +675,8 @@ export default class Planimeter {
                     throw new Error('Map size unavailable');
                 }
                 const extent = this.map.getView().calculateExtent(size);
-                const [west, south, east, north] = transformExtent(extent, 'EPSG:3857', 'EPSG:4258');
+                // OpenLayers ships EPSG:4326 by default; use it for bbox conversion.
+                const [west, south, east, north] = transformExtent(extent, 'EPSG:3857', 'EPSG:4326');
 
                 await requestBackendExport(
                     /** @type {'geotiff'|'pgw'|'bundle'} */ (fmt),
@@ -1717,6 +1720,38 @@ export default class Planimeter {
             this.elements.layerCatasto.checked &&
             this.state.mode === 'navigate' &&
             this.state.catastoWmsLayerSettings.parcels?.visible;
+    }
+
+    canRefreshWmsTile() {
+        return this.state.catastoSource === 'official' &&
+            this.elements.layerCatasto.checked &&
+            Object.values(this.layers.catastoOfficial).some((l) => l.getVisible());
+    }
+
+    refreshTileAtPixel(pixel) {
+        const view = this.map.getView();
+        const coord = this.map.getCoordinateFromPixel(pixel);
+        const resolution = view.getResolution();
+        const projection = view.getProjection();
+        const pixelRatio = window.devicePixelRatio || 1;
+
+        let refreshed = 0;
+        for (const layer of Object.values(this.layers.catastoOfficial)) {
+            if (!layer.getVisible()) continue;
+            const source = layer.getSource();
+            const tileGrid = source.getTileGridForProjection(projection);
+            const tileCoord = tileGrid.getTileCoordForCoordAndResolution(coord, resolution);
+            const [z, x, y] = tileCoord;
+            const tile = source.getTile(z, x, y, pixelRatio, projection);
+            if (tile) {
+                tile.state = 0; // IDLE — forces re-fetch on next render
+                tile.load();
+                refreshed += 1;
+            }
+        }
+        if (refreshed > 0) {
+            this.map.render();
+        }
     }
 
     editFeatureFromContext(feature) {
