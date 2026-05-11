@@ -49,7 +49,7 @@
 - [x] Valutare caching geometrie catastali o strategia equivalente per workload ripetuti.
 
 ### P5 — DSL e form dinamiche
-- [ ] Definire DSL categorie indipendente dal dominio (`name`, `label`, `fields`, validation rules).
+- [x] Definire DSL categorie indipendente dal dominio (`name`, `label`, `fields`, validation rules).
 - [ ] Implementare loader categorie e modalita strict/flexible.
 - [ ] Generare form dinamiche legate a `feature.properties` in base alla categoria selezionata.
 
