@@ -27,6 +27,12 @@ export function decorateFeature(feature, state, existingCount) {
         if (!isArea && !feature.get('measurementType')) {
             feature.set('measurementType', 'polyline');
         }
+        feature.set('uuid',      crypto.randomUUID());
+        feature.set('createdAt', new Date().toISOString());
+        feature.set('version',   1);
+        if (!feature.get('links')) {
+            feature.set('links', { cadastral: [] });
+        }
         state.nextFeatureId += 1;
         return;
     }

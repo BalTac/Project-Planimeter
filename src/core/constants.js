@@ -1,5 +1,5 @@
 export const LOCAL_STORAGE_KEY = 'planimeter.features.v1';
-export const LOCAL_STORAGE_SCHEMA_VERSION = 1;
+export const LOCAL_STORAGE_SCHEMA_VERSION = 2;
 export const SETTINGS_LOCAL_STORAGE_KEY = 'planimeter.settings.v1';
 export const SETTINGS_LOCAL_STORAGE_SCHEMA_VERSION = 1;
 export const PERSISTENCE_SAVE_DELAY_MS = 250;

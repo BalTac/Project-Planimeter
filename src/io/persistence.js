@@ -67,8 +67,15 @@ export function restorePersistedFeatures(state, vectorSource, view, onRestored) 
         if (!raw) return;
 
         const payload = JSON.parse(raw);
-        if (payload.version !== LOCAL_STORAGE_SCHEMA_VERSION || !payload.features) {
+        if (!payload.features || typeof payload.version !== 'number') {
             throw new Error('Incompatible persistence schema.');
+        }
+        // Migrate v1 → current schema in-place.
+        if (payload.version < LOCAL_STORAGE_SCHEMA_VERSION) {
+            payload.features = migrateFeatures(payload.features);
+            payload.version = LOCAL_STORAGE_SCHEMA_VERSION;
+        } else if (payload.version > LOCAL_STORAGE_SCHEMA_VERSION) {
+            throw new Error('Persistence schema too new — please reload.');
         }
 
         const restored = geoJsonFormat
@@ -97,4 +104,24 @@ export function restorePersistedFeatures(state, vectorSource, view, onRestored) 
         window.localStorage.removeItem(LOCAL_STORAGE_KEY);
         state.persistenceMuted = false;
     }
+}
+
+/**
+ * Upgrade a raw GeoJSON FeatureCollection from any previous schema version
+ * to the current one by back-filling missing fields on each feature.
+ *
+ * @param {object} featureCollection — raw GeoJSON object
+ * @returns {object}                 — mutated featureCollection
+ */
+function migrateFeatures(featureCollection) {
+    const now = new Date().toISOString();
+    for (const f of featureCollection?.features ?? []) {
+        const p = f.properties ?? {};
+        if (!p.uuid)      p.uuid      = crypto.randomUUID();
+        if (!p.createdAt) p.createdAt = now;
+        if (!p.version)   p.version   = 1;
+        if (!p.links)     p.links     = { cadastral: [] };
+        f.properties = p;
+    }
+    return featureCollection;
 }

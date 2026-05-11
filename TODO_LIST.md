@@ -41,8 +41,11 @@
 
 ### P3 — Data model e versioning
 - [ ] Evolvere data model feature con UUID stabile, bbox, timestamp, properties dinamiche e tags.
+- [x] Evolvere data model feature con UUID stabile, bbox, timestamp, properties dinamiche e tags.
 - [ ] Introdurre `links.cadastral[]` nel modello persistente con `parcel_id`, `intersection_area`, `coverage_ratio`.
+- [x] Introdurre `links.cadastral[]` nel modello persistente con `parcel_id`, `intersection_area`, `coverage_ratio`.
 - [ ] Implementare versioning append-only per mutazioni di geometria e proprieta.
+- [x] Implementare versioning append-only per mutazioni di geometria e proprieta.
 
 ### P4 — Geometria e analytics
 - [ ] Introdurre engine intersection area/ratio riusabile e UI-agnostic.

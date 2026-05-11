@@ -302,6 +302,11 @@ export default class Planimeter {
         ix.modify.on('modifyend', () => {
             this.updateSummary();
             this.setToolbarMessage(t('msg.editDone'));
+            const now = new Date().toISOString();
+            for (const f of this.interactions.select.getFeatures().getArray()) {
+                f.set('version',    (f.get('version') ?? 1) + 1);
+                f.set('modifiedAt', now);
+            }
         });
 
         document.addEventListener('keydown', (ev) => {
@@ -1763,6 +1768,11 @@ export default class Planimeter {
                 this.state.lastParcelId = result.parcelId;
                 if (this.state.selectedFeature) {
                     this.state.selectedFeature.set('parcel_id', result.parcelId);
+                    const links = this.state.selectedFeature.get('links') ?? { cadastral: [] };
+                    if (!links.cadastral.some((c) => c.parcel_id === result.parcelId)) {
+                        links.cadastral.push({ parcel_id: result.parcelId, linkedAt: new Date().toISOString() });
+                    }
+                    this.state.selectedFeature.set('links', links);
                 }
             }
         } catch (error) {
@@ -1826,14 +1836,13 @@ export default class Planimeter {
             return { parcelInfoHtml: null, statusKey: 'parcelInfo.unsupported' };
         }
         if (!response.ok) {
-            return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty', parcelId: null };
+            return { parcelInfoHtml: null, statusKey: 'parcelInfo.error' };
         }
 
-            return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty', parcelId: null };
+        const rawHtml = this.extractFeatureInfoHtmlPage(payload);
         if (!rawHtml) {
             return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty' };
-        const parcelId = data.parcel?.id ?? data.parcel?.local_id ?? null;
-        return { parcelInfoHtml: this._buildParcelHtmlFromJson(data), statusKey: 'parcelInfo.ready', parcelId };
+        }
 
         return { parcelInfoHtml: rawHtml, statusKey: 'parcelInfo.ready' };
     }
@@ -1841,12 +1850,6 @@ export default class Planimeter {
     extractFeatureInfoHtmlPage(payload) {
         const html = String(payload || '');
         if (!html) return null;
-            if (result.parcelId) {
-                this.state.lastParcelId = result.parcelId;
-                if (this.state.selectedFeature) {
-                    this.state.selectedFeature.set('parcel_id', result.parcelId);
-                }
-            }
         if (/no\s+features\s+were\s+found/i.test(html)) return null;
         if (!/<table[\s\S]*<\/table>/i.test(html)) return null;
 
