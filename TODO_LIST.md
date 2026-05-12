@@ -49,12 +49,13 @@
 - [x] Valutare caching geometrie catastali o strategia equivalente per workload ripetuti.
 
 ### P5 — DSL e form dinamiche
-- [x] Definire DSL categorie indipendente dal dominio (`name`, `label`, `fields`, validation rules).
+- [ ] Definire DSL categorie indipendente dal dominio (`name`, `label`, `fields`, validation rules).
 - [ ] Implementare loader categorie e modalita strict/flexible.
 - [ ] Generare form dinamiche legate a `feature.properties` in base alla categoria selezionata.
 
 ### P6 — UX e prodotto
 - [x] Aggiungere refresh tile WMS singolo da menu contestuale (tasto destro, modalità Navigate).
+- [x] Mostrare riferimento tile ricaricato (`layer:z/x/y`) nella toolbar dopo refresh WMS singolo.
 - [ ] Migliorare UX mobile: toggle snapping dedicato (senza Ctrl).
 - [ ] Aggiungere tema chiaro opzionale.
 - [ ] Aggiungere mini guida interattiva primo avvio.

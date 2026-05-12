@@ -80,10 +80,10 @@ export default class Planimeter {
             getMode:         () => this.state.mode,
             abortActiveDraw: () => this.abortActiveDraw(),
             canQueryParcel:  () => this.canQueryParcelFromContextMenu(),
+            canRefreshWmsTile: () => this.canRefreshWmsTile(),
             editFeature:     (feature) => this.editFeatureFromContext(feature),
             deleteFeature:   (feature) => this.deleteFeatureFromContext(feature),
             queryParcelAtPixel: (pixel) => this.fetchParcelInfoAtPixel(pixel),
-            canRefreshWmsTile: () => this.canRefreshWmsTile(),
             refreshTileAtPixel: (pixel) => this.refreshTileAtPixel(pixel),
             exportView:      () => this.exportViewSnapshot(),
             exportSelection: () => this.startSelectionExportMode(),
@@ -1725,32 +1725,65 @@ export default class Planimeter {
     canRefreshWmsTile() {
         return this.state.catastoSource === 'official' &&
             this.elements.layerCatasto.checked &&
-            Object.values(this.layers.catastoOfficial).some((l) => l.getVisible());
+            this.state.mode === 'navigate' &&
+            Object.values(this.layers.catastoOfficial).some((layer) => layer.getVisible());
     }
 
     refreshTileAtPixel(pixel) {
+        if (!this.canRefreshWmsTile() || !Array.isArray(pixel) || pixel.length < 2) return;
+
         const view = this.map.getView();
-        const coord = this.map.getCoordinateFromPixel(pixel);
+        const coordinate = this.map.getCoordinateFromPixel(pixel);
         const resolution = view.getResolution();
         const projection = view.getProjection();
-        const pixelRatio = window.devicePixelRatio || 1;
+        if (!coordinate || typeof resolution !== 'number') return;
 
+        const pixelRatio = this.map.getPixelRatio?.() ?? window.devicePixelRatio ?? 1;
         let refreshed = 0;
-        for (const layer of Object.values(this.layers.catastoOfficial)) {
+        const refreshedRefs = [];
+
+        for (const [layerKey, layer] of Object.entries(this.layers.catastoOfficial)) {
             if (!layer.getVisible()) continue;
+
             const source = layer.getSource();
-            const tileGrid = source.getTileGridForProjection(projection);
-            const tileCoord = tileGrid.getTileCoordForCoordAndResolution(coord, resolution);
+            const tileGrid = source?.getTileGridForProjection?.(projection);
+            if (!tileGrid) continue;
+
+            const tileCoord = tileGrid.getTileCoordForCoordAndResolution(coordinate, resolution);
+            if (!tileCoord) continue;
+
             const [z, x, y] = tileCoord;
             const tile = source.getTile(z, x, y, pixelRatio, projection);
-            if (tile) {
-                tile.state = 0; // IDLE — forces re-fetch on next render
+            const image = tile?.getImage?.();
+            if (image instanceof HTMLImageElement && image.src) {
+                const cacheBuster = `__refresh_ts=${Date.now()}`;
+                const joiner = image.src.includes('?') ? '&' : '?';
+                image.addEventListener('load', () => {
+                    layer.changed();
+                    this.map.renderSync();
+                }, { once: true });
+                image.addEventListener('error', () => {
+                    layer.changed();
+                    this.map.renderSync();
+                }, { once: true });
+                image.src = `${image.src}${joiner}${cacheBuster}`;
+                refreshed += 1;
+                refreshedRefs.push(`${layerKey}:${z}/${x}/${y}`);
+            } else if (tile && typeof tile.load === 'function') {
+                // Fallback for non-image tiles.
                 tile.load();
                 refreshed += 1;
+                refreshedRefs.push(`${layerKey}:${z}/${x}/${y}`);
             }
+
+            layer.changed();
         }
+
+        this.map.render();
         if (refreshed > 0) {
-            this.map.render();
+            const refs = refreshedRefs.slice(0, 2).join(', ');
+            const more = refreshedRefs.length > 2 ? ` (+${refreshedRefs.length - 2})` : '';
+            this.setToolbarMessage(`WMS tile refresh ${refreshed}: ${refs}${more}`);
         }
     }
 

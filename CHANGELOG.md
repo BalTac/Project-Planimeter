@@ -10,6 +10,12 @@ Tutte le modifiche rilevanti del progetto Project Planimeter.
 - [src/i18n/it.js](src/i18n/it.js) aggiunge chiave `ctx.refreshTile` con traduzione italiana.
 - [src/i18n/en.js](src/i18n/en.js) aggiunge chiave `ctx.refreshTile` con traduzione inglese.
 
+### Fixed
+- [src/ui/context-menu.js](src/ui/context-menu.js) rende robusto il click handler delle azioni contestuali (`try/finally`): il menu ora si chiude sempre anche in caso di errore runtime dell'azione.
+- [src/planimeter.js](src/planimeter.js) corregge il refresh tile singolo con strategia cache-buster per il solo `img.src` della tile sotto cursore (`__refresh_ts=...`), evitando path fragili che potevano lasciare la voce apparentemente non operativa.
+- [src/planimeter.js](src/planimeter.js) forza il repaint immediato quando il tile ricaricato completa (`load`/`error`) usando `layer.changed()` + `map.renderSync()`, evitando il caso in cui il nuovo tile compariva solo dopo zoom/pan.
+- [src/planimeter.js](src/planimeter.js) aggiunge feedback toolbar con riferimento del tile ricaricato (`layer:z/x/y`) per debug rapido del refresh puntuale.
+
 ### Validation
 - Nessuna regressione su `get_errors` per tutti e 4 i file modificati.
 

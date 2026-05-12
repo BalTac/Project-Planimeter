@@ -76,6 +76,7 @@ export function initContextMenu({
                 editFeature:        () => editFeature(feature),
                 deleteFeature:      () => deleteFeature(feature),
                 queryParcelAtPixel: () => queryParcelAtPixel(pixel),
+                refreshTileAtPixel: () => refreshTileAtPixel?.(pixel),
                 exportView,
                 exportSelection,
                 exportAreas,
@@ -169,8 +170,13 @@ function renderMenu(menu, items, actions) {
         btn.className   = 'context-menu-item' + (item.danger ? ' context-menu-item--danger' : '');
         btn.textContent = t(item.key);
         btn.addEventListener('click', () => {
-            actions[item.action]?.();
-            menu.hidden = true;
+            try {
+                actions[item.action]?.();
+            } catch (error) {
+                console.error('Context menu action failed:', item.action, error);
+            } finally {
+                menu.hidden = true;
+            }
         });
         li.appendChild(btn);
         list.appendChild(li);
