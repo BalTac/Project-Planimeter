@@ -172,6 +172,7 @@ export default {
     'ctx.deleteFeature':     'Delete feature',
     'ctx.queryParcel':       'Cadastral info here',
     'ctx.refreshTile':       'Reload WMS tile',
+    'ctx.copyCoordinates':   'Copy coordinates',
     'ctx.exportView':        'Export view',
     'ctx.exportSelection':   'Export selection',
     'ctx.exportAreas':       'Export areas',
@@ -185,6 +186,8 @@ export default {
     'a11y.exportFmtLabel':   'Choose export format',
     'a11y.langSwitcher':     'Language / Lingua',
     'a11y.unitSystem':       'Unit system',
+    'coords.label':          'Coordinates',
+    'coords.placeholder':    '--, --',
 
     'msg.navigateActive':          'Navigate mode. Drag to explore the map. Right-click for context actions.',
     'msg.drawActive':             'Draw mode active. Click on the map to start a new area.',
@@ -227,6 +230,8 @@ export default {
     'msg.clearDone':              'All areas removed.',
     'msg.nothingToClear':         'No areas to clear.',
     'msg.locationFound':          'Location found — map view updated.',
+    'msg.coordinatesCopied':      'Coordinates copied: {coords}',
+    'msg.coordinatesCopyFailed':  'Failed to copy coordinates.',
     'msg.layerError':             'Official layer unavailable. Start server.py and try the substitute source if needed.',
 
     'alert.noExport':              'No areas to export.',

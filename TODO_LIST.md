@@ -56,6 +56,8 @@
 ### P6 — UX e prodotto
 - [x] Aggiungere refresh tile WMS singolo da menu contestuale (tasto destro, modalità Navigate).
 - [x] Mostrare riferimento tile ricaricato (`layer:z/x/y`) nella toolbar dopo refresh WMS singolo.
+- [x] Aggiungere attribution/licenze cartografiche persistenti in basso a destra, con scala metrica visibile.
+- [x] Aggiungere widget coordinate live in modalità Navigate e voce menu contestuale per copia coordinate.
 - [ ] Migliorare UX mobile: toggle snapping dedicato (senza Ctrl).
 - [ ] Aggiungere tema chiaro opzionale.
 - [ ] Aggiungere mini guida interattiva primo avvio.
