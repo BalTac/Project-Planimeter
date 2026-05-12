@@ -2,6 +2,21 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [2026-05-12] — Attribution+scala persistenti e coordinate live con copia da menu
+
+### Added
+- [src/planimeter.js](src/planimeter.js) estende i controlli OpenLayers con `ScaleLine` metrica e `attributionOptions` non collassabili, mantenendo attribution e scala sempre visibili.
+- [planimeter.html](planimeter.html), [styles.css](styles.css) e [src/planimeter.js](src/planimeter.js) introducono widget overlay coordinate in basso a destra, aggiornato in tempo reale in modalità `Navigate` nel formato `lon, lat` (6 decimali).
+- [src/ui/context-menu.js](src/ui/context-menu.js), [src/planimeter.js](src/planimeter.js), [src/i18n/it.js](src/i18n/it.js) e [src/i18n/en.js](src/i18n/en.js) aggiungono la voce contestuale `Copy coordinates` / `Copia coordinate` con copia negli appunti del punto selezionato con click destro.
+
+### Changed
+- [styles.css](styles.css) rifinisce il layout di attribution e scala in basso a destra con estetica coerente al tema e senza sovrapposizione al nuovo widget coordinate.
+- [src/ui/context-menu.js](src/ui/context-menu.js) rende il click handler compatibile con azioni asincrone (`Promise.resolve(...).finally(...)`) garantendo chiusura menu anche su callback async.
+- [TODO_LIST.md](TODO_LIST.md) marca completate le due nuove task UX su attribution/scala e coordinate live+copia.
+
+### Validation
+- Eseguiti check sintassi JavaScript (`node --check`) e suite test Python (`unittest discover`).
+
 ## [2026-05-11] — Refresh tile WMS singolo da menu contestuale
 
 ### Added

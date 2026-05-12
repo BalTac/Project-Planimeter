@@ -365,8 +365,86 @@ input[type="checkbox"] {
 }
 
 .ol-attribution {
-    background: rgba(6, 16, 12, 0.78) !important;
-    border-radius: 12px 0 0 0 !important;
+    right: 0;
+    left: auto;
+    bottom: 0;
+    max-width: calc(100vw - 60px);
+    padding: 3px 10px;
+    background: rgba(6, 16, 12, 0.82) !important;
+    border-radius: 10px 0 0 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+    border-left: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.ol-attribution ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    color: #9cb7aa;
+    font-size: 0.72rem;
+    line-height: 1.5;
+}
+
+.ol-attribution ul a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.ol-attribution ul a:hover {
+    text-decoration: underline;
+}
+
+.ol-attribution button {
+    display: none;
+}
+
+.ol-scale-line {
+    left: auto !important;
+    right: 0;
+    bottom: 36px;
+    background: rgba(6, 16, 12, 0.82);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px 0 0 0;
+    padding: 4px 10px;
+}
+
+.ol-scale-line-inner {
+    border-color: rgba(223, 247, 236, 0.95);
+    color: #dff7ec;
+    font-weight: 600;
+}
+
+.pointer-coordinates {
+    position: absolute;
+    right: 0;
+    bottom: 72px;
+    z-index: 1060;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 174px;
+    padding: 8px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px 0 0 0;
+    border-right: none;
+    border-bottom: none;
+    background: rgba(6, 16, 12, 0.84);
+    color: #dff7ec;
+    pointer-events: none;
+    backdrop-filter: blur(10px);
+}
+
+.pointer-coordinates__label {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.pointer-coordinates__value {
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
 }
 
 /* Context menu */
@@ -557,6 +635,24 @@ input[type="checkbox"] {
 @media (max-width: 640px) {
     .floating-toolbar {
         padding: 16px;
+    }
+
+    .pointer-coordinates {
+        right: 0;
+        bottom: 68px;
+        min-width: 158px;
+        padding: 7px 8px;
+    }
+
+    .ol-scale-line {
+        right: 0;
+        bottom: 32px;
+    }
+
+    .ol-attribution {
+        right: 0;
+        bottom: 0;
+        font-size: 0.64rem;
     }
 
     .action-grid,

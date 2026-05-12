@@ -172,6 +172,7 @@ export default {
     'ctx.deleteFeature':     'Elimina feature',
     'ctx.queryParcel':       'Info catastali qui',
     'ctx.refreshTile':       'Ricarica tile WMS',
+    'ctx.copyCoordinates':   'Copia coordinate',
     'ctx.exportView':        'Export view',
     'ctx.exportSelection':   'Export selection',
     'ctx.exportAreas':       'Export areas',
@@ -185,6 +186,8 @@ export default {
     'a11y.exportFmtLabel':   'Scegli il formato di esportazione',
     'a11y.langSwitcher':     'Lingua / Language',
     'a11y.unitSystem':       'Sistema di misura',
+    'coords.label':          'Coordinate',
+    'coords.placeholder':    '--, --',
 
     'msg.navigateActive':          'Modalità navigazione. Trascina per esplorare la mappa. Tasto destro per azioni contestuali.',
     'msg.drawActive':             'Modalità disegno attiva. Clicca sulla mappa per tracciare una nuova area.',
@@ -227,6 +230,8 @@ export default {
     'msg.clearDone':              'Tutte le aree sono state rimosse.',
     'msg.nothingToClear':         'Nessuna area da eliminare.',
     'msg.locationFound':          'Posizione trovata e vista aggiornata.',
+    'msg.coordinatesCopied':      'Coordinate copiate: {coords}',
+    'msg.coordinatesCopyFailed':  'Copia coordinate non riuscita.',
     'msg.layerError':             'Layer ufficiale non disponibile. Avvia server.py e prova la sorgente sostitutiva se necessario.',
 
     'alert.noExport':              'Non ci sono aree da esportare.',

@@ -1,6 +1,7 @@
 import Map          from 'ol/Map.js';
 import View         from 'ol/View.js';
 import VectorSource from 'ol/source/Vector.js';
+import ScaleLine    from 'ol/control/ScaleLine.js';
 import { defaults as defaultControls } from 'ol/control.js';
 import { fromLonLat, toLonLat, transformExtent } from 'ol/proj.js';
 
@@ -73,6 +74,7 @@ export default class Planimeter {
 
         // ── UI bindings ───────────────────────────────────────────────────────
         this.bindUI();
+        this.bindPointerCoordinatesOverlay();
         initContextMenu({
             map:             this.map,
             elements:        this.elements,
@@ -85,6 +87,7 @@ export default class Planimeter {
             deleteFeature:   (feature) => this.deleteFeatureFromContext(feature),
             queryParcelAtPixel: (pixel) => this.fetchParcelInfoAtPixel(pixel),
             refreshTileAtPixel: (pixel) => this.refreshTileAtPixel(pixel),
+            copyCoordinatesAtPixel: (pixel) => this.copyCoordinatesAtPixel(pixel),
             exportView:      () => this.exportViewSnapshot(),
             exportSelection: () => this.startSelectionExportMode(),
             exportAreas:     () => this.exportFeatures(),
@@ -180,6 +183,8 @@ export default class Planimeter {
             cacheStatsDisplay:         document.getElementById('cache-stats-display'),
             btnCacheApply:             document.getElementById('btn-cache-apply'),
             btnCacheClear:             document.getElementById('btn-cache-clear'),
+            pointerCoordinatesPanel:   document.getElementById('pointer-coordinates'),
+            pointerCoordinatesValue:   document.getElementById('pointer-coordinates-value'),
         };
     }
 
@@ -206,7 +211,16 @@ export default class Planimeter {
                 this.layers.vector,
             ],
             view: this.view,
-            controls: defaultControls({ zoom: false, rotate: false }),
+            controls: defaultControls({
+                zoom: false,
+                rotate: false,
+                attributionOptions: {
+                    collapsed: false,
+                    collapsible: false,
+                },
+            }).extend([
+                new ScaleLine({ units: 'metric', minWidth: 96 }),
+            ]),
         });
 
         Object.values(this.layers.catastoOfficial).forEach((layer) => {
@@ -496,6 +510,7 @@ export default class Planimeter {
         }
 
         this.setToolbarMessage(t(modeMsg[mode] ?? 'msg.navigateActive'));
+        this.updatePointerCoordinatesVisibility();
         this.renderParcelInfo();
     }
 
@@ -1495,6 +1510,7 @@ export default class Planimeter {
         this.layers.vector.changed();
         this.updateSummary();
         this.syncPreferenceControls();
+        this.updatePointerCoordinatesVisibility();
         this.renderParcelInfo();
     }
 
@@ -1502,6 +1518,72 @@ export default class Planimeter {
 
     setToolbarMessage(message) {
         this.elements.status.textContent = message;
+    }
+
+    bindPointerCoordinatesOverlay() {
+        const panel = this.elements.pointerCoordinatesPanel;
+        if (!panel) return;
+
+        this.updatePointerCoordinatesVisibility();
+        this.map.on('pointermove', (event) => {
+            if (event.dragging || this.state.mode !== 'navigate') return;
+            const lonLat = toLonLat(event.coordinate);
+            this.elements.pointerCoordinatesValue.textContent = `${lonLat[0].toFixed(6)}, ${lonLat[1].toFixed(6)}`;
+        });
+
+        this.map.getViewport().addEventListener('mouseleave', () => {
+            if (this.state.mode === 'navigate') {
+                this.elements.pointerCoordinatesValue.textContent = t('coords.placeholder');
+            }
+        });
+    }
+
+    updatePointerCoordinatesVisibility() {
+        const panel = this.elements.pointerCoordinatesPanel;
+        const value = this.elements.pointerCoordinatesValue;
+        if (!panel || !value) return;
+
+        const visible = this.state.mode === 'navigate';
+        panel.hidden = !visible;
+        if (!visible) {
+            value.textContent = t('coords.placeholder');
+        }
+    }
+
+    async copyCoordinatesAtPixel(pixel) {
+        if (this.state.mode !== 'navigate' || !Array.isArray(pixel) || pixel.length < 2) return;
+
+        const coordinate = this.map.getCoordinateFromPixel(pixel);
+        if (!coordinate) return;
+
+        const lonLat = toLonLat(coordinate);
+        const text = `${lonLat[0].toFixed(6)}, ${lonLat[1].toFixed(6)}`;
+
+        try {
+            await this.writeTextToClipboard(text);
+            this.setToolbarMessage(t('msg.coordinatesCopied', { coords: text }));
+        } catch {
+            this.setToolbarMessage(t('msg.coordinatesCopyFailed'));
+        }
+    }
+
+    async writeTextToClipboard(text) {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            return;
+        }
+
+        const helper = document.createElement('textarea');
+        helper.value = text;
+        helper.style.position = 'fixed';
+        helper.style.opacity = '0';
+        helper.style.left = '-9999px';
+        document.body.appendChild(helper);
+        helper.focus();
+        helper.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(helper);
+        if (!ok) throw new Error('copy failed');
     }
 
     setToolbarPanel(panelKey) {

@@ -21,6 +21,7 @@ import { t } from '../i18n/i18n.js';
  *   exportAreas?:       () => void,
  *   canRefreshWmsTile?: () => boolean,
  *   refreshTileAtPixel?: (pixel: number[]) => void,
+ *   copyCoordinatesAtPixel?: (pixel: number[]) => void | Promise<void>,
  *   getSpecialContextMenu?: (ctx: {
  *     event: MouseEvent,
  *     pixel: number[],
@@ -48,6 +49,7 @@ export function initContextMenu({
     exportAreas,
     canRefreshWmsTile,
     refreshTileAtPixel,
+    copyCoordinatesAtPixel,
     getSpecialContextMenu,
 }) {
     const { contextMenu } = elements;
@@ -77,6 +79,7 @@ export function initContextMenu({
                 deleteFeature:      () => deleteFeature(feature),
                 queryParcelAtPixel: () => queryParcelAtPixel(pixel),
                 refreshTileAtPixel: () => refreshTileAtPixel?.(pixel),
+                copyCoordinatesAtPixel: () => copyCoordinatesAtPixel?.(pixel),
                 exportView,
                 exportSelection,
                 exportAreas,
@@ -86,7 +89,14 @@ export function initContextMenu({
             return;
         }
 
-        const items = buildMenuItems({ mode, isDrawing, feature, canQueryParcel, canRefreshWmsTile });
+        const items = buildMenuItems({
+            mode,
+            isDrawing,
+            feature,
+            canQueryParcel,
+            canRefreshWmsTile,
+            canCopyCoordinates: typeof copyCoordinatesAtPixel === 'function',
+        });
         if (!items.length) return;
 
         renderMenu(contextMenu, items, {
@@ -95,6 +105,7 @@ export function initContextMenu({
             deleteFeature:      () => deleteFeature(feature),
             queryParcelAtPixel: () => queryParcelAtPixel(pixel),
             refreshTileAtPixel: () => refreshTileAtPixel?.(pixel),
+            copyCoordinatesAtPixel: () => copyCoordinatesAtPixel?.(pixel),
             exportView,
             exportSelection,
             exportAreas,
@@ -123,7 +134,7 @@ export function initContextMenu({
  * Determine which menu items to show based on current application state.
  * @returns {Array<{key: string, action: string, danger?: boolean}>}
  */
-function buildMenuItems({ mode, isDrawing, feature, canQueryParcel, canRefreshWmsTile }) {
+function buildMenuItems({ mode, isDrawing, feature, canQueryParcel, canRefreshWmsTile, canCopyCoordinates }) {
     // During active drawing: single "cancel" item
     if (isDrawing && (mode === 'draw' || mode === 'measure-straight' || mode === 'measure-polyline')) {
         return [{ key: 'ctx.cancelDraw', action: 'abortActiveDraw' }];
@@ -141,6 +152,9 @@ function buildMenuItems({ mode, isDrawing, feature, canQueryParcel, canRefreshWm
         }
         if (canRefreshWmsTile?.()) {
             items.push({ key: 'ctx.refreshTile', action: 'refreshTileAtPixel' });
+        }
+        if (canCopyCoordinates) {
+            items.push({ key: 'ctx.copyCoordinates', action: 'copyCoordinatesAtPixel' });
         }
         items.push({ key: 'ctx.exportView', action: 'exportView' });
         items.push({ key: 'ctx.exportSelection', action: 'exportSelection' });
@@ -170,13 +184,13 @@ function renderMenu(menu, items, actions) {
         btn.className   = 'context-menu-item' + (item.danger ? ' context-menu-item--danger' : '');
         btn.textContent = t(item.key);
         btn.addEventListener('click', () => {
-            try {
-                actions[item.action]?.();
-            } catch (error) {
-                console.error('Context menu action failed:', item.action, error);
-            } finally {
-                menu.hidden = true;
-            }
+            Promise.resolve(actions[item.action]?.())
+                .catch((error) => {
+                    console.error('Context menu action failed:', item.action, error);
+                })
+                .finally(() => {
+                    menu.hidden = true;
+                });
         });
         li.appendChild(btn);
         list.appendChild(li);

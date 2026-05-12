@@ -184,7 +184,16 @@ Saranno valutate per tracking Git quando il progetto sara piu maturo.
 
 ## Attribuzioni
 
-- OpenLayers: https://openlayers.org
-- OpenStreetMap: https://www.openstreetmap.org
-- Esri World Imagery: https://www.esri.com/en-us/legal/terms/full-master-agreement
-- WMS Agenzia Entrate: https://wms.cartografia.agenziaentrate.gov.it/inspire/wms/ows01.php
+| Layer | Attribuzione completa |
+|---|---|
+| **Esri World Imagery** (`sat`) | Tiles © [Esri](https://www.esri.com/) — Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community |
+| **Esri World Topo Map** (`esriTopo`) | Tiles © [Esri](https://www.esri.com/) — Esri, HERE, Garmin, Intermap, increment P Corp., GEBCO, USGS, FAO, NPS, NRCAN, GeoBase, IGN, Kadaster NL, Ordnance Survey, Esri Japan, METI, Esri China (Hong Kong), and the GIS User Community |
+| **Esri World Shaded Relief** (`esriRelief`) | Tiles © [Esri](https://www.esri.com/) — Source: Esri |
+| **OpenStreetMap** (`osm`) | © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL) |
+| **OpenTopoMap** | Map data: © [OpenStreetMap](https://openstreetmap.org/copyright) contributors, [SRTM](https://viewfinderpanoramas.org) \| Map style: © [OpenTopoMap](https://opentopomap.org) ([CC-BY-SA](https://creativecommons.org/licenses/by-sa/3.0/)) |
+| **WMS Catasto** (`catastoOfficial`) | © [Agenzia delle Entrate](https://www.agenziaentrate.gov.it/) — [WMS endpoint](https://wms.cartografia.agenziaentrate.gov.it/inspire/wms/ows01.php) |
+| **Esri Reference** (`catastoFallback`) | Tiles © [Esri](https://www.esri.com/) |
+
+Librerie:
+
+- **OpenLayers 8.2.0**: https://openlayers.org (BSD-2-Clause)

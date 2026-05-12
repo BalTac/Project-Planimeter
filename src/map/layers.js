@@ -6,6 +6,10 @@ import TileWMS    from 'ol/source/TileWMS.js';
 
 import { CATASTO_WMS_LAYER_DEFS } from '../core/constants.js';
 
+const BANNER_ATTRIBUTION =
+    'OpenLayers · OpenStreetMap · Esri · Agenzia delle Entrate | ' +
+    '<a href="https://github.com/BalTac/Project-Planimeter">Planimeter</a>';
+
 /**
  * Build and return all map layers used by the application.
  *
@@ -19,6 +23,7 @@ export function buildLayers(vectorSource, featureStyleFn) {
             url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
             crossOrigin: 'anonymous',
             maxZoom: 19,
+            attributions: BANNER_ATTRIBUTION,
         }),
         visible: true,
         zIndex: 1,
@@ -29,11 +34,7 @@ export function buildLayers(vectorSource, featureStyleFn) {
             url: 'https://tile.opentopomap.org/{z}/{x}/{y}.png',
             crossOrigin: 'anonymous',
             maxZoom: 17,
-            attributions:
-                'Map data: © <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> contributors, ' +
-                '<a href="https://viewfinderpanoramas.org">SRTM</a> | Map style: ' +
-                '© <a href="https://opentopomap.org">OpenTopoMap</a> ' +
-                '(<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)',
+            attributions: BANNER_ATTRIBUTION,
         }),
         visible: false,
         zIndex: 1,
@@ -44,6 +45,7 @@ export function buildLayers(vectorSource, featureStyleFn) {
             url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
             crossOrigin: 'anonymous',
             maxZoom: 19,
+            attributions: BANNER_ATTRIBUTION,
         }),
         visible: false,
         zIndex: 1,
@@ -54,13 +56,14 @@ export function buildLayers(vectorSource, featureStyleFn) {
             url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Shaded_Relief/MapServer/tile/{z}/{y}/{x}',
             crossOrigin: 'anonymous',
             maxZoom: 13,
+            attributions: BANNER_ATTRIBUTION,
         }),
         visible: false,
         zIndex: 1,
     });
 
     const osm = new TileLayer({
-        source: new OSM({ crossOrigin: 'anonymous' }),
+        source: new OSM({ crossOrigin: 'anonymous', attributions: BANNER_ATTRIBUTION }),
         visible: false,
         zIndex: 2,
         opacity: 0.82,
@@ -81,6 +84,7 @@ export function buildLayers(vectorSource, featureStyleFn) {
                     },
                     serverType: 'mapserver',
                     transition:  0,
+                    attributions: BANNER_ATTRIBUTION,
                 }),
                 visible: false,
                 zIndex: 3 + index,
@@ -96,6 +100,7 @@ export function buildLayers(vectorSource, featureStyleFn) {
             url: 'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
             crossOrigin: 'anonymous',
             maxZoom: 19,
+            attributions: BANNER_ATTRIBUTION,
         }),
         visible: false,
         zIndex: 3,
