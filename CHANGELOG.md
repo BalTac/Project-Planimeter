@@ -2,6 +2,16 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [2026-05-14] — Semantic report nel bundle export DSL
+
+### Added
+- [src/io/export.js](src/io/export.js) estende `requestBackendExport()` con parametro opzionale `semanticReport` per il formato bundle.
+- [src/planimeter.js](src/planimeter.js) genera il semantic report nel `exportFeatures()` prima di inviare il bundle: calcolo aggregazione DSL per categoria con totali area, conteggi, dominio, timestamp.
+- [server.py](server.py) estende `handle_export_bundle()` per estrarre `semanticReport` dal payload e scriverlo nel ZIP come `semantic-report.json` (con formattazione prettificata).
+
+### Changed
+- Bundle export ZIP ora contiene (quando DSL pronto): `image.tif`, `areas.geojson`, `meta.json`, **`semantic-report.json`** con dati aggregati DSL per categoria.
+
 ## [2026-05-14] — Form dinamica per campi DSL con bind su feature.properties.dsl.values
 
 ### Added

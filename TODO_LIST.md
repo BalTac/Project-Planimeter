@@ -67,7 +67,7 @@
 - [ ] Aggiungere editor UX per dominio/categorie (crea, rinomina, elimina, aggiungi campi enum/number/text/color).
 - [x] Aggiungere assegnazione categoria alla feature selezionata (context menu + pannello Operativo).
 - [x] Generare form dinamica dalla categoria selezionata e bind su `feature.properties.dsl`.
-- [ ] Aggiornare bundle export con report semantico per categoria (totali, percentuali, anno/stagione).
+- [x] Aggiornare bundle export con report semantico per categoria (totali, percentuali, anno/stagione).
 
 #### UX wiring DSL (prossimi step)
 - [x] Context menu: voce "Assegna categoria" su feature poligonale selezionata → apre pannello/modal di selezione categoria.

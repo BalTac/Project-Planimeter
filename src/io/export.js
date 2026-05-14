@@ -81,8 +81,9 @@ export function triggerDownload(payload, mimeType, filename) {
  * @param {'geotiff'|'pgw'|'bundle'} format
  * @param {{ bbox: number[], width: number, height: number, layers?: string[] }} viewportData
  * @param {import('ol').Feature[]} features
+ * @param {object} [semanticReport] - optional DSL semantic report for bundle export
  */
-export async function requestBackendExport(format, viewportData, features = []) {
+export async function requestBackendExport(format, viewportData, features = [], semanticReport = null) {
     const formatMap = {
         geotiff: '/export-geotiff',
         pgw: '/export-pgw',
@@ -107,6 +108,9 @@ export async function requestBackendExport(format, viewportData, features = []) 
             featureProjection: 'EPSG:3857',
             decimals: 6,
         });
+        if (semanticReport) {
+            payload.semanticReport = semanticReport;
+        }
     }
 
     const response = await fetch(endpoint, {

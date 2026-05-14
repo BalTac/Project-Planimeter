@@ -1066,6 +1066,23 @@ export default class Planimeter {
                 // OpenLayers ships EPSG:4326 by default; use it for bbox conversion.
                 const [west, south, east, north] = transformExtent(extent, 'EPSG:3857', 'EPSG:4326');
 
+                let semanticReport = null;
+                if (fmt === 'bundle' && this.state.dslReady) {
+                    const domain = getDomain(this.state.dslActiveDomainId);
+                    if (domain) {
+                        const aggs = aggregateByCategory(features, domain, this.map.getView().getProjection());
+                        const totalArea = totalAggArea(aggs);
+                        semanticReport = {
+                            domainId: domain.id,
+                            domainLabel: domain.label,
+                            domainVersion: domain.version,
+                            aggregations: aggs,
+                            totalAreaM2: totalArea,
+                            timestamp: new Date().toISOString(),
+                        };
+                    }
+                }
+
                 await requestBackendExport(
                     /** @type {'geotiff'|'pgw'|'bundle'} */ (fmt),
                     {
@@ -1075,6 +1092,7 @@ export default class Planimeter {
                         layers: this.getVisibleCatastoWmsLayerNames(),
                     },
                     features,
+                    semanticReport,
                 );
                 this.setToolbarMessage(t(`export.done.${fmt}`));
             } catch (error) {

@@ -1227,6 +1227,10 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             return
         bbox, width, height, layers, features = parsed
         try:
+            # Extract semantic report from payload (optional)
+            payload = self._read_json_payload()
+            semantic_report = payload.get("semanticReport") if payload else None
+
             png_payload = self._fetch_wms_png(bbox, width, height, layers)
             tiff_payload = self._to_tiff(png_payload)
             meta = {
@@ -1243,6 +1247,8 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
                 zf.writestr("image.tif", tiff_payload)
                 zf.writestr("areas.geojson", features.encode("utf-8"))
                 zf.writestr("meta.json", json.dumps(meta, ensure_ascii=False, indent=2).encode("utf-8"))
+                if semantic_report:
+                    zf.writestr("semantic-report.json", json.dumps(semantic_report, ensure_ascii=False, indent=2).encode("utf-8"))
             payload = archive.getvalue()
 
             self.send_response(HTTPStatus.OK)
