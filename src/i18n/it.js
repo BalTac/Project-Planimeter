@@ -238,6 +238,7 @@ export default {
     'alert.noDuplicate':           "Seleziona prima un'area da duplicare.",
     'alert.duplicatePolygonOnly':  'La duplicazione è disponibile solo per aree poligonali.',
     'alert.noSelection':           'Seleziona prima un poligono oppure entra in modalità elimina.',
+    'alert.requiredFieldMissing':  'Campo obbligatorio non compilato: {{field}}',
     'alert.importFail':            'Import non riuscito. Verifica che il file sia un GeoJSON o KML valido con feature Polygon o MultiPolygon.',
     'alert.noGeolocation':         'Questo browser non supporta la geolocalizzazione.',
     'alert.locationFail':          'Impossibile ottenere la posizione. Verifica i permessi del browser.',

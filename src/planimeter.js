@@ -839,6 +839,20 @@ export default class Planimeter {
             return;
         }
 
+        // Validate required fields
+        const formContainer = this.elements.dslFieldsForm;
+        if (formContainer) {
+            const requiredInputs = formContainer.querySelectorAll('[required]');
+            for (const input of requiredInputs) {
+                if (!input.value || (input.type === 'checkbox' && !input.checked)) {
+                    const fieldLabel = input.previousElementSibling?.textContent || input.id;
+                    this.setToolbarMessage(t('alert.requiredFieldMissing', { field: fieldLabel }) ?? `Campo obbligatorio: ${fieldLabel}`);
+                    input.focus();
+                    return;
+                }
+            }
+        }
+
         const basePayload = buildDslPayload(domain.id, categoryId, domain.fields ?? []);
         const existing = feature.get('dsl');
         if (existing && existing.domainId === domain.id && existing.values && typeof existing.values === 'object') {
@@ -872,12 +886,13 @@ export default class Planimeter {
         let input;
         if (field.type === 'boolean') {
             const container = document.createElement('label');
-            container.className = 'dsl-field-wrapper dsl-field-boolean';
+            container.className = 'dsl-field-wrapper dsl-field-boolean' + (isRequired ? ' dsl-field-required' : '');
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
             checkbox.id = `dsl-field-${fieldId}`;
             checkbox.checked = Boolean(currentValue);
             checkbox.dataset.fieldId = fieldId;
+            if (isRequired) checkbox.required = true;
             checkbox.addEventListener('change', (e) => this.updateFeatureDslFieldValue(fieldId, e.target.checked));
             container.appendChild(checkbox);
             const labelSpan = document.createElement('span');
@@ -887,7 +902,7 @@ export default class Planimeter {
             return container;
         } else if (field.type === 'enum') {
             const container = document.createElement('div');
-            container.className = 'dsl-field-wrapper dsl-field-enum';
+            container.className = 'dsl-field-wrapper dsl-field-enum' + (isRequired ? ' dsl-field-required' : '');
             const labelEl = document.createElement('label');
             labelEl.htmlFor = `dsl-field-${fieldId}`;
             labelEl.className = 'dsl-field-label';
@@ -897,6 +912,7 @@ export default class Planimeter {
             input.id = `dsl-field-${fieldId}`;
             input.className = 'dsl-field-input';
             input.dataset.fieldId = fieldId;
+            if (isRequired) input.required = true;
             const emptyOpt = document.createElement('option');
             emptyOpt.value = '';
             emptyOpt.textContent = '— ' + (label ?? 'Select') + ' —';
@@ -913,7 +929,7 @@ export default class Planimeter {
             return container;
         } else if (field.type === 'number') {
             const container = document.createElement('div');
-            container.className = 'dsl-field-wrapper dsl-field-number';
+            container.className = 'dsl-field-wrapper dsl-field-number' + (isRequired ? ' dsl-field-required' : '');
             const labelEl = document.createElement('label');
             labelEl.htmlFor = `dsl-field-${fieldId}`;
             labelEl.className = 'dsl-field-label';
@@ -925,6 +941,7 @@ export default class Planimeter {
             input.className = 'dsl-field-input';
             input.dataset.fieldId = fieldId;
             input.step = 'any';
+            if (isRequired) input.required = true;
             if (currentValue !== null && currentValue !== undefined && currentValue !== '') {
                 input.value = String(currentValue);
             }
@@ -937,7 +954,7 @@ export default class Planimeter {
         } else {
             // type === 'string' or default
             const container = document.createElement('div');
-            container.className = 'dsl-field-wrapper dsl-field-string';
+            container.className = 'dsl-field-wrapper dsl-field-string' + (isRequired ? ' dsl-field-required' : '');
             const labelEl = document.createElement('label');
             labelEl.htmlFor = `dsl-field-${fieldId}`;
             labelEl.className = 'dsl-field-label';
@@ -948,6 +965,7 @@ export default class Planimeter {
             input.id = `dsl-field-${fieldId}`;
             input.className = 'dsl-field-input';
             input.dataset.fieldId = fieldId;
+            if (isRequired) input.required = true;
             if (currentValue) input.value = String(currentValue);
             input.addEventListener('change', (e) => this.updateFeatureDslFieldValue(fieldId, e.target.value));
             container.appendChild(input);

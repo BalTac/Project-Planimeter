@@ -977,6 +977,17 @@ input[type="checkbox"] {
     font-family: 'Monaco', 'Courier New', monospace;
 }
 
+/* ─── Required field indicators ────────────────────────────────────────── */
+
+.dsl-field-required .dsl-field-label {
+    color: var(--brand);
+}
+
+.dsl-field-input:invalid {
+    border-color: #e74c3c;
+    background: rgba(231, 76, 60, 0.05);
+}
+
 .dsl-legend {
     display: flex;
     flex-wrap: wrap;

@@ -238,6 +238,7 @@ export default {
     'alert.noDuplicate':           'Select an area first.',
     'alert.duplicatePolygonOnly':  'Duplication is only available for polygon areas.',
     'alert.noSelection':           'Select a polygon first or switch to Delete mode.',
+    'alert.requiredFieldMissing':  'Required field not filled: {{field}}',
     'alert.importFail':            'Import failed. Verify the file is a valid GeoJSON or KML with Polygon or MultiPolygon features.',
     'alert.noGeolocation':         'This browser does not support geolocation.',
     'alert.locationFail':          'Unable to retrieve location. Check browser permissions.',
