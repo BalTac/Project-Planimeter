@@ -14,6 +14,7 @@ import { t } from '../i18n/i18n.js';
  *   abortActiveDraw:    () => void,
  *   canQueryParcel:     () => boolean,
  *   editFeature:        (feature: import('ol/Feature').default) => void,
+ *   assignCategory?:    (feature: import('ol/Feature').default) => void,
  *   deleteFeature:      (feature: import('ol/Feature').default) => void,
  *   queryParcelAtPixel: (pixel: number[]) => void,
  *   exportView?:        () => void,
@@ -42,6 +43,7 @@ export function initContextMenu({
     abortActiveDraw,
     canQueryParcel,
     editFeature,
+    assignCategory,
     deleteFeature,
     queryParcelAtPixel,
     exportView,
@@ -76,6 +78,7 @@ export function initContextMenu({
                 ...specialMenu.actions,
                 abortActiveDraw,
                 editFeature:        () => editFeature(feature),
+                assignCategory:     () => assignCategory?.(feature),
                 deleteFeature:      () => deleteFeature(feature),
                 queryParcelAtPixel: () => queryParcelAtPixel(pixel),
                 refreshTileAtPixel: () => refreshTileAtPixel?.(pixel),
@@ -102,6 +105,7 @@ export function initContextMenu({
         renderMenu(contextMenu, items, {
             abortActiveDraw,
             editFeature:        () => editFeature(feature),
+            assignCategory:     () => assignCategory?.(feature),
             deleteFeature:      () => deleteFeature(feature),
             queryParcelAtPixel: () => queryParcelAtPixel(pixel),
             refreshTileAtPixel: () => refreshTileAtPixel?.(pixel),
@@ -144,7 +148,12 @@ function buildMenuItems({ mode, isDrawing, feature, canQueryParcel, canRefreshWm
     if (mode === 'navigate') {
         const items = [];
         if (feature) {
+            const type = feature.getGeometry?.()?.getType?.();
+            const isPolygon = type === 'Polygon' || type === 'MultiPolygon';
             items.push({ key: 'ctx.editFeature',   action: 'editFeature' });
+            if (isPolygon) {
+                items.push({ key: 'ctx.assignCategory', action: 'assignCategory' });
+            }
             items.push({ key: 'ctx.deleteFeature', action: 'deleteFeature', danger: true });
         }
         if (canQueryParcel()) {

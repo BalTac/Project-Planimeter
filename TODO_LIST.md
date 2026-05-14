@@ -49,9 +49,32 @@
 - [x] Valutare caching geometrie catastali o strategia equivalente per workload ripetuti.
 
 ### P5 — DSL e form dinamiche
-- [ ] Definire DSL categorie indipendente dal dominio (`name`, `label`, `fields`, validation rules).
-- [ ] Implementare loader categorie e modalita strict/flexible.
-- [ ] Generare form dinamiche legate a `feature.properties` in base alla categoria selezionata.
+#### Decision matrix approvata — step progressivi
+- [x] DM1 Snapshot annuali completi: archiviare per campagna/anno geometrie + assegnazioni semantiche; abilitare query storiche `history_at_point` e `history_at_parcel`.
+- [x] DM2 DSL estensibile/editabile: schema base multi-dominio con categorie e sottocategorie modificabili da UX (ID stabili, label editabili).
+- [x] DM3 Aggregazione semantica filtrabile: riepiloghi per categoria/anno/sottocategoria con filtri di visualizzazione configurabili.
+- [ ] DM4 Geometria utente primaria + pertinenze dinamiche: set pertinenze selezionabile su reticolo WMS e modificabile nel tempo (aggiunta/rimozione anche dopo setup iniziale).
+- [ ] DM5 Single-user locale: mantenere architettura locale con schema versionato e percorsi pronti a futura estensione.
+
+- [x] Definire schema DSL v1 domain-agnostic (`domainId`, `version`, `categories[]`, `fields[]`, regole di validazione, palette colore).
+- [x] Introdurre registry domini (`domains/default/*.json`) con dominio iniziale `agriculture` e categorie colture base.
+- [x] Definire modalita validazione per dominio: `strict` (blocca salvataggio) e `flexible` (warning non bloccante).
+- [x] Implementare loader DSL con merge stratificato: base di sistema + override utente (localStorage).
+- [x] Estendere style engine: colore area/stroke derivato da categoria (fallback al tema attuale se categoria assente).
+- [x] Aggiungere legenda live (colore -> categoria) filtrata sulle categorie effettivamente presenti nel progetto.
+- [x] Aggiungere tabella riepilogo per categoria con somma superfici (m2/ha) e conteggio feature.
+- [x] Estendere persistence con metadati DSL (`dslActiveDomainId` nel snapshot campagna, `dsl` nel history record).
+- [ ] Aggiungere editor UX per dominio/categorie (crea, rinomina, elimina, aggiungi campi enum/number/text/color).
+- [x] Aggiungere assegnazione categoria alla feature selezionata (context menu + pannello Operativo).
+- [x] Generare form dinamica dalla categoria selezionata e bind su `feature.properties.dsl`.
+- [ ] Aggiornare bundle export con report semantico per categoria (totali, percentuali, anno/stagione).
+
+#### UX wiring DSL (prossimi step)
+- [x] Context menu: voce "Assegna categoria" su feature poligonale selezionata → apre pannello/modal di selezione categoria.
+- [x] Pannello Operativo: sezione "Assegnazione categoria" con select dominio + dropdown categoria + campi fields dinamici per la feature selezionata.
+- [x] Feedback visivo immediato: al cambio categoria la feature si ri-colora senza reload pagina.
+- [ ] Filtro visibilità categorie: toggle per nascondere/mostrare categorie specifiche nella mappa e nella tabella riepilogo.
+- [ ] Export bundle: includere report semantico per categoria nel pacchetto TIFF+GeoJSON+metadata.
 
 ### P6 — UX e prodotto
 - [x] Aggiungere refresh tile WMS singolo da menu contestuale (tasto destro, modalità Navigate).

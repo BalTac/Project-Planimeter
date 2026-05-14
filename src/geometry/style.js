@@ -5,6 +5,73 @@ import OLText from 'ol/style/Text.js';
 import Point from 'ol/geom/Point.js';
 import { calculateArea, calculatePerimeter, calculateLength } from './calculations.js';
 import { t } from '../i18n/i18n.js';
+import { getDomain } from '../dsl/loader.js';
+import { getCategoryById } from '../dsl/schema.js';
+
+// ─── Color helpers ────────────────────────────────────────────────────────────
+/**
+ * Parse a CSS hex color (`#rrggbb` or `#rgb`) into an rgba() string.
+ * Returns null if hex is invalid.
+ * @param {string} hex
+ * @param {number} alpha — 0..1
+ * @returns {string|null}
+ */
+function hexToRgba(hex, alpha) {
+    if (!hex || typeof hex !== 'string') return null;
+    const h = hex.replace('#', '');
+    let r, g, b;
+    if (h.length === 3) {
+        r = parseInt(h[0] + h[0], 16);
+        g = parseInt(h[1] + h[1], 16);
+        b = parseInt(h[2] + h[2], 16);
+    } else if (h.length === 6) {
+        r = parseInt(h.slice(0, 2), 16);
+        g = parseInt(h.slice(2, 4), 16);
+        b = parseInt(h.slice(4, 6), 16);
+    } else {
+        return null;
+    }
+    if (isNaN(r) || isNaN(g) || isNaN(b)) return null;
+    return `rgba(${r},${g},${b},${alpha})`;
+}
+
+/**
+ * Resolve fill and stroke colors for a feature, preferring DSL category colors.
+ * @param {import('ol').Feature} feature
+ * @param {boolean} isSelected
+ * @param {boolean} isArea
+ * @param {boolean} isLine
+ * @returns {{ fill: string, stroke: string }}
+ */
+function resolveColors(feature, isSelected, isArea, isLine) {
+    // Selected highlight always overrides
+    if (isSelected) {
+        return {
+            fill:   isArea ? 'rgba(255,227,138,0.20)' : 'rgba(0,0,0,0)',
+            stroke: '#ffe38a',
+        };
+    }
+
+    // Try DSL category color
+    if (isArea) {
+        const dsl = feature.get('dsl');
+        if (dsl?.categoryId && dsl?.domainId) {
+            const domain = getDomain(dsl.domainId);
+            if (domain) {
+                const cat = getCategoryById(domain, dsl.categoryId);
+                if (cat?.color) {
+                    const fill   = hexToRgba(cat.color, 0.30) ?? 'rgba(19,74,55,0.28)';
+                    const stroke = cat.stroke ?? (hexToRgba(cat.color, 0.85) ?? '#73f0bf');
+                    return { fill, stroke };
+                }
+            }
+        }
+        return { fill: 'rgba(19,74,55,0.28)', stroke: '#73f0bf' };
+    }
+
+    // Lines
+    return { fill: 'rgba(0,0,0,0)', stroke: '#7bc7ff' };
+}
 
 /**
  * Return a geometry suitable for placing a label on a feature.
@@ -63,18 +130,13 @@ export function buildFeatureStyle(feature, selectedFeature, projection, unitSyst
         : lengthLabel;
 
     const labelGeom = getFeatureLabelGeometry(feature);
+    const { fill, stroke } = resolveColors(feature, isSelected, isArea, isLine);
 
     const styles = [
         new OLStyle({
-            fill: new Fill({
-                color: isArea
-                    ? (isSelected ? 'rgba(255,227,138,0.20)' : 'rgba(19,74,55,0.28)')
-                    : 'rgba(0,0,0,0)',
-            }),
+            fill: new Fill({ color: fill }),
             stroke: new Stroke({
-                color: isLine
-                    ? (isSelected ? '#ffe38a' : '#7bc7ff')
-                    : (isSelected ? '#ffe38a' : '#73f0bf'),
+                color: stroke,
                 width: isSelected ? 4 : 3,
                 lineDash: isLine ? [8, 6] : undefined,
             }),

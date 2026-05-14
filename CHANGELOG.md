@@ -2,6 +2,70 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [2026-05-14] — Form dinamica per campi DSL con bind su feature.properties.dsl.values
+
+### Added
+- [planimeter.html](planimeter.html) aggiunge container `#dsl-fields-form` nella sezione assegnazione categoria.
+- [src/planimeter.js](src/planimeter.js) implementa:
+  - `buildFieldControl(field, currentValue)`: factory per generare elementi HTML in base al tipo di campo (boolean/enum/string/number).
+  - `renderDslFieldForm(feature, domain, categoryId)`: popola il form con i campi della categoria selezionata, preserver i valori esistenti.
+  - `updateFeatureDslFieldValue(fieldId, value)`: handler per aggiornare `feature.dsl.values[fieldId]` e persistere la modifica (schedulePersistenceSync).
+  - Integrazione in `updateDslAssignmentControls()`: renderizza il form quando categoria scelta, cancella quando vuoto.
+- [styles.css](styles.css) aggiunge stili `.dsl-fields-form`, `.dsl-field-wrapper`, `.dsl-field-label`, `.dsl-field-input` con supporto per checkbox, select, input text/number con focus states.
+- [src/planimeter.js](src/planimeter.js) aggiunge `dslFieldsForm` a `collectElements()`.
+
+### Changed
+- [src/planimeter.js](src/planimeter.js) `updateDslAssignmentControls()` ora renderizza la form dinamica quando feature + categoria sono valide.
+- Form dinamica integrata end-to-end: selezione categoria → rendering campi → fill/update campi → persist automatico su change.
+
+## [2026-05-14] — UX wiring assegnazione categoria (context menu + pannello Operativo)
+
+### Added
+- [src/ui/context-menu.js](src/ui/context-menu.js) supporta azione opzionale `assignCategory(feature)` e voce contestuale `ctx.assignCategory` visibile solo su feature poligonali in modalità Navigate.
+- [planimeter.html](planimeter.html) introduce sezione `#section-dsl-assignment` nel pannello Operativo con dominio attivo, feature selezionata, select categoria e bottone applicazione.
+- [styles.css](styles.css) aggiunge classi `.dsl-assignment-grid`, `.dsl-assignment-meta` e stato disabled del bottone assegnazione.
+- [src/planimeter.js](src/planimeter.js) aggiunge flusso end-to-end:
+  - `openCategoryAssignmentFromContext(feature)` apre il pannello Operativo e prepara i controlli sulla feature target.
+  - `updateDslAssignmentControls()` sincronizza dominio/feature/categoria selezionata e hint UX.
+  - `applySelectedFeatureCategory()` scrive `feature.properties.dsl`, preserva valori field esistenti quando possibile, aggiorna `version`/`modifiedAt`, forza repaint e refresh riepilogo.
+- [src/i18n/it.js](src/i18n/it.js), [src/i18n/en.js](src/i18n/en.js) estendono le stringhe `section.dsl.assignment.*`, `dsl.assign.*`, `msg.categoryPanelReady`, `msg.categoryAssigned`.
+
+### Changed
+- [src/planimeter.js](src/planimeter.js) integra il callback `assignCategory` in `initContextMenu(...)` e mantiene i controlli DSL aggiornati a ogni `updateSummary()`.
+- [TODO_LIST.md](TODO_LIST.md) marca completati i task UX su context menu assegnazione, pannello operativo assegnazione e feedback visivo immediato.
+
+## [2026-05-13] — DM3 style engine da categoria + legenda live + tabella riepilogo
+
+### Added
+- [src/dsl/aggregation.js](src/dsl/aggregation.js) — `aggregateByCategory()` computa totali area/count per categoria DSL; helper `totalAggArea()`; bucket "non assegnata" per feature senza DSL.
+- [src/geometry/style.js](src/geometry/style.js) — `resolveColors()` legge `feature.dsl.categoryId` → cerca dominio/categoria nel registry → usa `cat.color`/`cat.stroke`; helper `hexToRgba()`; fallback al tema verde se nessuna categoria.
+- [planimeter.html](planimeter.html) — sezione `#section-dsl-categories` (nascosta finché DSL non pronto) con `#dsl-legend` e `#dsl-category-table`.
+- [styles.css](styles.css) — classi `.dsl-legend`, `.dsl-legend-item`, `.dsl-legend-swatch`, `.dsl-table`, `.dsl-table-swatch`, `.dsl-row-unassigned`, `tfoot` highlight.
+- [src/planimeter.js](src/planimeter.js) — import `initDsl`/`getDomain`, `aggregateByCategory`/`totalAggArea`; `initDsl()` async al boot (non bloccante); `renderDslSummary()` richiamata da `updateSummary()`: popola legenda e tabella.
+- [src/io/persistence.js](src/io/persistence.js) — `buildActiveCampaign` include `dslActiveDomainId`; `toHistoryRecord` include `dsl` payload.
+- [src/i18n/it.js](src/i18n/it.js), [src/i18n/en.js](src/i18n/en.js) — chiavi `section.dsl.*`, `dsl.table.*`.
+
+### Added
+- [src/dsl/schema.js](src/dsl/schema.js) — schema DSL domain-agnostic con validatori `validateDomain`, `validateFeatureDsl`, helper `getCategoryById`, `buildDslPayload`; supporto modalità `strict`/`flexible`.
+- [src/dsl/loader.js](src/dsl/loader.js) — loader con registry in-memory, fetch domini da `/domains/<id>.json`, merge override utente da localStorage, `initDsl()` per startup, `registerDomain()` per import runtime.
+- [domains/agriculture.json](domains/agriculture.json) — dominio starter agricoltura con 13 categorie (grano tenero, grano duro, orzo, sorgo, favino, girasole, prato, vigna, oliveto, frutteto, orto, maggese, riposo) e campi `irrigated`, `fertilization`, `variety`, `expected_yield_q_ha`, `notes`.
+- [src/core/state.js](src/core/state.js) aggiunge stato DSL (`dslActiveDomainId`, `dslValidationMode`, `dslReady`).
+- [src/geometry/decorate.js](src/geometry/decorate.js) aggiunge placeholder `dsl: null` alle nuove feature.
+- [src/i18n/it.js](src/i18n/it.js), [src/i18n/en.js](src/i18n/en.js) — chiavi i18n per `dsl.*`, `ctx.assignCategory`.
+
+### Added
+- [src/io/persistence.js](src/io/persistence.js) introduce persistenza a snapshot per campagna (`campaigns[]`) con metadati `id/year/season/savedAt` e supporto query storiche `historyAtPoint(lonLat)` / `historyAtParcel(parcelId)`.
+- [src/planimeter.js](src/planimeter.js) espone metodi applicativi `historyAtPoint`, `historyAtPointFromPixel`, `historyAtParcel` per recuperare storico geometrie/assegnazioni tra campagne.
+- [src/core/state.js](src/core/state.js) aggiunge stato campagna attiva (`activeCampaignId`, `activeCampaignYear`, `activeCampaignSeason`).
+
+### Changed
+- [src/core/constants.js](src/core/constants.js) aggiorna `LOCAL_STORAGE_SCHEMA_VERSION` da `2` a `3` per supportare lo store a campagne.
+- [src/io/persistence.js](src/io/persistence.js) migra automaticamente payload legacy (schema v1/v2 con `features`) al nuovo formato campaign-based senza perdita dei feature metadata.
+- [src/main.js](src/main.js) espone `window.planimeterApp` per accesso diretto alle nuove query storiche da console/debug.
+
+### Validation
+- Eseguito controllo sintassi JavaScript (`node --check`) sui file modificati.
+
 ## [2026-05-12] — Attribution+scala persistenti e coordinate live con copia da menu
 
 ### Added

@@ -16,6 +16,8 @@ import { UnitSystem }                    from './units/units.js';
 import { ProxyHealthMonitor }            from './ui/proxy-health.js';
 import { initContextMenu }               from './ui/context-menu.js';
 import {
+    historyAtParcel,
+    historyAtPoint,
     schedulePersistenceSync,
     restorePersistedFeatures,
 } from './io/persistence.js';
@@ -23,6 +25,9 @@ import { buildExportConfig, triggerDownload, requestBackendExport } from './io/e
 import { detectImportFormat, readImportedFeatures } from './io/import.js';
 import { loadPreferences, savePreferences } from './io/preferences.js';
 import { CATASTO_WMS_LAYER_DEFS, DEFAULT_CATASTO_WMS_LAYER_SETTINGS } from './core/constants.js';
+import { initDsl, getDomain } from './dsl/loader.js';
+import { aggregateByCategory, totalAggArea } from './dsl/aggregation.js';
+import { buildDslPayload } from './dsl/schema.js';
 
 const BASE_LAYER_KEYS = ['sat', 'openTopoMap', 'esriTopo', 'esriRelief'];
 const ADMIN_LAYER_KEYS = ['osm', 'catasto'];
@@ -84,6 +89,7 @@ export default class Planimeter {
             canQueryParcel:  () => this.canQueryParcelFromContextMenu(),
             canRefreshWmsTile: () => this.canRefreshWmsTile(),
             editFeature:     (feature) => this.editFeatureFromContext(feature),
+            assignCategory:  (feature) => this.openCategoryAssignmentFromContext(feature),
             deleteFeature:   (feature) => this.deleteFeatureFromContext(feature),
             queryParcelAtPixel: (pixel) => this.fetchParcelInfoAtPixel(pixel),
             refreshTileAtPixel: (pixel) => this.refreshTileAtPixel(pixel),
@@ -117,6 +123,16 @@ export default class Planimeter {
                 this.fitToFeatures();
             },
         );
+
+        // ── DSL init (async, non-blocking) ────────────────────────────────────
+        initDsl().then(() => {
+            this.state.dslReady = true;
+            this.layers.vector.changed();
+            this.updateSummary();
+            this.updateDslAssignmentControls();
+        }).catch((err) => {
+            console.warn('[DSL] init failed:', err);
+        });
 
         this.updateSummary();
         this.setMode('navigate');
@@ -185,6 +201,16 @@ export default class Planimeter {
             btnCacheClear:             document.getElementById('btn-cache-clear'),
             pointerCoordinatesPanel:   document.getElementById('pointer-coordinates'),
             pointerCoordinatesValue:   document.getElementById('pointer-coordinates-value'),
+            dslCategoriesSection:      document.getElementById('section-dsl-categories'),
+            dslLegend:                 document.getElementById('dsl-legend'),
+            dslCategoryTbody:          document.getElementById('dsl-category-tbody'),
+            dslAssignSection:          document.getElementById('section-dsl-assignment'),
+            dslAssignDomainValue:      document.getElementById('dsl-assign-domain-value'),
+            dslAssignFeatureValue:     document.getElementById('dsl-assign-feature-value'),
+            dslCategorySelect:         document.getElementById('dsl-category-select'),
+            dslFieldsForm:             document.getElementById('dsl-fields-form'),
+            dslAssignButton:           document.getElementById('btn-dsl-assign'),
+            dslAssignHint:             document.getElementById('dsl-assign-hint'),
         };
     }
 
@@ -368,6 +394,8 @@ export default class Planimeter {
         this.elements.importButton.addEventListener('click',  () => this.elements.importInput.click());
         this.elements.duplicateSelectedButton.addEventListener('click', () => this.duplicateSelectedArea());
         this.elements.deleteSelectedButton.addEventListener('click',    () => this.deleteSelectedFeature());
+        this.elements.dslAssignButton?.addEventListener('click',        () => this.applySelectedFeatureCategory());
+        this.elements.dslCategorySelect?.addEventListener('change',      () => this.updateDslAssignmentControls(false));
         this.elements.importInput.addEventListener('change', (ev) => this.importFeatures(ev));
         this.elements.parcelInfoCloseButton?.addEventListener('click', (ev) => {
             ev.stopPropagation();
@@ -617,6 +645,351 @@ export default class Planimeter {
         this.elements.statTotalPerimeter.textContent = this.unitSystem.formatPerimeter(totalPerim);
         this.elements.statSelectedArea.textContent   = selectedMeasure;
         this.elements.statZoom.textContent           = (this.view?.getZoom() ?? 0).toFixed(1);
+
+        this.renderDslSummary(areaFeatures);
+        this.updateDslAssignmentControls();
+    }
+
+    /**
+     * Render the DSL categories section: legend swatches + aggregation table.
+     * Shows the section only when DSL is ready and there are polygon features.
+     * @param {import('ol').Feature[]} [areaFeatures]
+     */
+    renderDslSummary(areaFeatures) {
+        const section = this.elements.dslCategoriesSection;
+        if (!section) return;
+
+        if (!this.state.dslReady) {
+            section.hidden = true;
+            return;
+        }
+
+        const features = areaFeatures ?? this.vectorSource.getFeatures().filter((f) => {
+            const type = f.getGeometry()?.getType();
+            return type === 'Polygon' || type === 'MultiPolygon';
+        });
+
+        if (features.length === 0) {
+            section.hidden = true;
+            return;
+        }
+
+        const domain  = getDomain(this.state.dslActiveDomainId);
+        const proj    = this.view?.getProjection();
+        const rows    = aggregateByCategory(features, domain, proj);
+        const grandTotal = totalAggArea(rows);
+
+        section.hidden = false;
+
+        // ── Legend ────────────────────────────────────────────────────────────
+        const legend = this.elements.dslLegend;
+        if (legend) {
+            legend.innerHTML = '';
+            for (const row of rows) {
+                const label = row.label ?? t('dsl.category.unassigned');
+                const item  = document.createElement('div');
+                item.className = 'dsl-legend-item';
+                item.setAttribute('role', 'listitem');
+                item.innerHTML = `<span class="dsl-legend-swatch" style="background:${row.color};border-color:${row.stroke ?? row.color}"></span><span>${label}</span>`;
+                legend.appendChild(item);
+            }
+        }
+
+        // ── Table ─────────────────────────────────────────────────────────────
+        const tbody = this.elements.dslCategoryTbody;
+        if (tbody) {
+            tbody.innerHTML = '';
+            for (const row of rows) {
+                const label   = row.label ?? t('dsl.category.unassigned');
+                const pct     = grandTotal > 0 ? ((row.areaM2 / grandTotal) * 100).toFixed(1) : '0.0';
+                const areaStr = this.unitSystem.formatArea(row.areaM2);
+                const tr      = document.createElement('tr');
+                if (row.categoryId === null) tr.className = 'dsl-row-unassigned';
+                tr.innerHTML = `
+                    <td><div class="dsl-table-cat"><span class="dsl-table-swatch" style="background:${row.color};border-color:${row.stroke ?? row.color}"></span>${label}</div></td>
+                    <td>${areaStr}</td>
+                    <td>${pct}%</td>
+                    <td>${row.count}</td>`;
+                tbody.appendChild(tr);
+            }
+
+            // Total row via tfoot
+            let tfoot = section.querySelector('tfoot');
+            if (!tfoot) {
+                tfoot = document.createElement('tfoot');
+                section.querySelector('table')?.appendChild(tfoot);
+            }
+            tfoot.innerHTML = `<tr><td>${t('dsl.table.total')}</td><td>${this.unitSystem.formatArea(grandTotal)}</td><td>100%</td><td>${features.length}</td></tr>`;
+        }
+    }
+
+    /**
+     * Render/refresh controls used to assign a DSL category
+     * to the currently selected polygon feature.
+     *
+     * @param {boolean} [rebuildOptions=true]
+     */
+    updateDslAssignmentControls(rebuildOptions = true) {
+        const section = this.elements.dslAssignSection;
+        const select = this.elements.dslCategorySelect;
+        const button = this.elements.dslAssignButton;
+        if (!section || !select || !button) return;
+
+        const domain = this.state.dslReady ? getDomain(this.state.dslActiveDomainId) : null;
+        if (!domain) {
+            section.hidden = true;
+            return;
+        }
+
+        section.hidden = false;
+        if (this.elements.dslAssignDomainValue) {
+            this.elements.dslAssignDomainValue.textContent = domain.label ?? domain.id;
+        }
+
+        const feature = this.state.selectedFeature;
+        const featureIsPolygon = this.isPolygonFeature(feature);
+        const currentDsl = featureIsPolygon ? feature.get('dsl') : null;
+
+        if (rebuildOptions) {
+            select.innerHTML = '';
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = t('dsl.assign.selectCategory');
+            select.appendChild(placeholder);
+
+            for (const cat of domain.categories ?? []) {
+                const opt = document.createElement('option');
+                opt.value = cat.id;
+                opt.textContent = cat.label ?? cat.id;
+                select.appendChild(opt);
+            }
+        }
+
+        const selectedCategoryId = (featureIsPolygon && currentDsl?.domainId === domain.id)
+            ? String(currentDsl?.categoryId ?? '')
+            : '';
+
+        if (rebuildOptions || !select.value) {
+            select.value = selectedCategoryId;
+        }
+
+        const selectedLabel = featureIsPolygon
+            ? String(feature.get('featureName') || feature.get('featureId') || '-')
+            : t('dsl.assign.noFeature');
+
+        if (this.elements.dslAssignFeatureValue) {
+            this.elements.dslAssignFeatureValue.textContent = selectedLabel;
+        }
+
+        const categoryChosen = Boolean(select.value);
+        select.disabled = !featureIsPolygon;
+        button.disabled = !featureIsPolygon || !categoryChosen;
+        button.textContent = selectedCategoryId ? t('dsl.category.change') : t('dsl.category.assign');
+
+        if (this.elements.dslAssignHint) {
+            this.elements.dslAssignHint.textContent = featureIsPolygon
+                ? (categoryChosen ? t('dsl.assign.hintReady') : t('dsl.assign.hintSelect'))
+                : t('dsl.assign.hintNoFeature');
+        }
+
+        // Render dynamic field form if category is chosen and feature is valid
+        if (featureIsPolygon && categoryChosen) {
+            this.renderDslFieldForm(feature, domain, select.value);
+        } else {
+            this.renderDslFieldForm(null, null, null);
+        }
+    }
+
+    isPolygonFeature(feature) {
+        const type = feature?.getGeometry?.()?.getType?.();
+        return type === 'Polygon' || type === 'MultiPolygon';
+    }
+
+    openCategoryAssignmentFromContext(feature) {
+        if (!this.isPolygonFeature(feature)) return;
+        this.state.selectedFeature = feature;
+        this.interactions.select.getFeatures().clear();
+        this.interactions.select.getFeatures().push(feature);
+        this.setToolbarPanel('operate');
+        this.layers.vector.changed();
+        this.updateSummary();
+        this.updateDslAssignmentControls();
+        this.elements.dslCategorySelect?.focus();
+        this.setToolbarMessage(t('msg.categoryPanelReady', {
+            name: feature.get('featureName') || feature.get('featureId') || '-',
+        }));
+    }
+
+    applySelectedFeatureCategory() {
+        const feature = this.state.selectedFeature;
+        if (!this.isPolygonFeature(feature)) {
+            alert(t('alert.noSelection'));
+            return;
+        }
+
+        const domain = getDomain(this.state.dslActiveDomainId);
+        if (!domain) {
+            this.setToolbarMessage(t('dsl.domain.none'));
+            return;
+        }
+
+        const categoryId = String(this.elements.dslCategorySelect?.value || '').trim();
+        if (!categoryId) {
+            this.setToolbarMessage(t('dsl.assign.hintSelect'));
+            return;
+        }
+
+        const basePayload = buildDslPayload(domain.id, categoryId, domain.fields ?? []);
+        const existing = feature.get('dsl');
+        if (existing && existing.domainId === domain.id && existing.values && typeof existing.values === 'object') {
+            for (const field of domain.fields ?? []) {
+                if (Object.prototype.hasOwnProperty.call(existing.values, field.id)) {
+                    basePayload.values[field.id] = existing.values[field.id];
+                }
+            }
+        }
+
+        feature.set('dsl', basePayload);
+        feature.set('version', (feature.get('version') ?? 1) + 1);
+        feature.set('modifiedAt', new Date().toISOString());
+
+        const categoryLabel = domain.categories?.find((cat) => cat.id === categoryId)?.label ?? categoryId;
+        this.layers.vector.changed();
+        this.updateSummary();
+        this.updateDslAssignmentControls(false);
+        this.setToolbarMessage(t('msg.categoryAssigned', {
+            category: categoryLabel,
+            name: feature.get('featureName') || feature.get('featureId') || '-',
+        }));
+    }
+
+    buildFieldControl(field, currentValue = null, featureDsl = null) {
+        const fieldId = field.id;
+        const label = field.label ?? fieldId;
+        const isRequired = field.required ?? false;
+        const requiredMark = isRequired ? ' *' : '';
+
+        let input;
+        if (field.type === 'boolean') {
+            const container = document.createElement('label');
+            container.className = 'dsl-field-wrapper dsl-field-boolean';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.id = `dsl-field-${fieldId}`;
+            checkbox.checked = Boolean(currentValue);
+            checkbox.dataset.fieldId = fieldId;
+            checkbox.addEventListener('change', (e) => this.updateFeatureDslFieldValue(fieldId, e.target.checked));
+            container.appendChild(checkbox);
+            const labelSpan = document.createElement('span');
+            labelSpan.className = 'dsl-field-label';
+            labelSpan.textContent = label + requiredMark;
+            container.appendChild(labelSpan);
+            return container;
+        } else if (field.type === 'enum') {
+            const container = document.createElement('div');
+            container.className = 'dsl-field-wrapper dsl-field-enum';
+            const labelEl = document.createElement('label');
+            labelEl.htmlFor = `dsl-field-${fieldId}`;
+            labelEl.className = 'dsl-field-label';
+            labelEl.textContent = label + requiredMark;
+            container.appendChild(labelEl);
+            input = document.createElement('select');
+            input.id = `dsl-field-${fieldId}`;
+            input.className = 'dsl-field-input';
+            input.dataset.fieldId = fieldId;
+            const emptyOpt = document.createElement('option');
+            emptyOpt.value = '';
+            emptyOpt.textContent = '— ' + (label ?? 'Select') + ' —';
+            input.appendChild(emptyOpt);
+            for (const option of field.options ?? []) {
+                const opt = document.createElement('option');
+                opt.value = option;
+                opt.textContent = option;
+                input.appendChild(opt);
+            }
+            if (currentValue) input.value = String(currentValue);
+            input.addEventListener('change', (e) => this.updateFeatureDslFieldValue(fieldId, e.target.value));
+            container.appendChild(input);
+            return container;
+        } else if (field.type === 'number') {
+            const container = document.createElement('div');
+            container.className = 'dsl-field-wrapper dsl-field-number';
+            const labelEl = document.createElement('label');
+            labelEl.htmlFor = `dsl-field-${fieldId}`;
+            labelEl.className = 'dsl-field-label';
+            labelEl.textContent = label + requiredMark;
+            container.appendChild(labelEl);
+            input = document.createElement('input');
+            input.type = 'number';
+            input.id = `dsl-field-${fieldId}`;
+            input.className = 'dsl-field-input';
+            input.dataset.fieldId = fieldId;
+            input.step = 'any';
+            if (currentValue !== null && currentValue !== undefined && currentValue !== '') {
+                input.value = String(currentValue);
+            }
+            input.addEventListener('change', (e) => {
+                const val = e.target.value ? parseFloat(e.target.value) : null;
+                this.updateFeatureDslFieldValue(fieldId, val);
+            });
+            container.appendChild(input);
+            return container;
+        } else {
+            // type === 'string' or default
+            const container = document.createElement('div');
+            container.className = 'dsl-field-wrapper dsl-field-string';
+            const labelEl = document.createElement('label');
+            labelEl.htmlFor = `dsl-field-${fieldId}`;
+            labelEl.className = 'dsl-field-label';
+            labelEl.textContent = label + requiredMark;
+            container.appendChild(labelEl);
+            input = document.createElement('input');
+            input.type = 'text';
+            input.id = `dsl-field-${fieldId}`;
+            input.className = 'dsl-field-input';
+            input.dataset.fieldId = fieldId;
+            if (currentValue) input.value = String(currentValue);
+            input.addEventListener('change', (e) => this.updateFeatureDslFieldValue(fieldId, e.target.value));
+            container.appendChild(input);
+            return container;
+        }
+    }
+
+    renderDslFieldForm(feature, domain, categoryId) {
+        const formContainer = this.elements.dslFieldsForm;
+        if (!formContainer) return;
+
+        formContainer.innerHTML = '';
+
+        if (!feature || !domain || !categoryId) return;
+
+        const currentDsl = feature.get('dsl');
+        const fields = domain.fields ?? [];
+
+        if (fields.length === 0) return;
+
+        for (const field of fields) {
+            const currentValue = currentDsl?.values?.[field.id] ?? null;
+            const control = this.buildFieldControl(field, currentValue, currentDsl);
+            formContainer.appendChild(control);
+        }
+    }
+
+    updateFeatureDslFieldValue(fieldId, value) {
+        const feature = this.state.selectedFeature;
+        if (!this.isPolygonFeature(feature)) return;
+
+        let dsl = feature.get('dsl');
+        if (!dsl || typeof dsl !== 'object' || !dsl.values || typeof dsl.values !== 'object') {
+            return;
+        }
+
+        dsl.values[fieldId] = value;
+        feature.set('dsl', dsl);
+        feature.set('version', (feature.get('version') ?? 1) + 1);
+        feature.set('modifiedAt', new Date().toISOString());
+
+        schedulePersistenceSync();
     }
 
     // ── Feature actions ──────────────────────────────────────────────────────────
@@ -2209,5 +2582,20 @@ export default class Planimeter {
         } catch {
             this.setToolbarMessage(t('cache.clearError'));
         }
+    }
+
+    historyAtPoint(lon, lat) {
+        return historyAtPoint([lon, lat]);
+    }
+
+    historyAtPointFromPixel(pixel) {
+        const coordinate = this.map?.getCoordinateFromPixel(pixel);
+        if (!coordinate) return [];
+        const [lon, lat] = toLonLat(coordinate);
+        return historyAtPoint([lon, lat]);
+    }
+
+    historyAtParcel(parcelId) {
+        return historyAtParcel(parcelId);
     }
 }

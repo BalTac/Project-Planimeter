@@ -159,6 +159,51 @@
                     <input type="file" id="file-import" accept=".geojson,.json,.kml,application/json,application/geo+json,application/vnd.google-earth.kml+xml,application/xml,text/xml" hidden>
                 </section>
 
+                <section id="section-dsl-assignment" class="toolbar-section" aria-labelledby="dsl-assignment-title" hidden>
+                    <div class="section-heading">
+                        <h2 id="dsl-assignment-title" data-i18n="section.dsl.assignment">Assegnazione categoria</h2>
+                        <span class="section-kicker" data-i18n="section.dsl.assignment.kicker">Feature</span>
+                    </div>
+                    <div class="dsl-assignment-grid">
+                        <div class="dsl-assignment-meta">
+                            <strong data-i18n="dsl.assign.domain">Dominio</strong>
+                            <span id="dsl-assign-domain-value">-</span>
+                        </div>
+                        <div class="dsl-assignment-meta">
+                            <strong data-i18n="dsl.assign.feature">Feature selezionata</strong>
+                            <span id="dsl-assign-feature-value" data-i18n="dsl.assign.noFeature">Nessuna feature poligonale selezionata</span>
+                        </div>
+                        <label class="settings-field" for="dsl-category-select">
+                            <span data-i18n="dsl.category.label">Categoria</span>
+                            <select id="dsl-category-select" class="layer-source-select" aria-label="Categoria DSL">
+                                <option value="" data-i18n="dsl.assign.selectCategory">Seleziona categoria...</option>
+                            </select>
+                        </label>
+                        <div id="dsl-fields-form" class="dsl-fields-form" role="group" aria-labelledby="dsl-fields-title"></div>
+                        <button type="button" id="btn-dsl-assign" class="action-button icon-button" data-i18n="dsl.category.assign" data-icon="🏷">Assegna categoria</button>
+                    </div>
+                    <p id="dsl-assign-hint" class="section-help" data-i18n="dsl.assign.hintNoFeature">Seleziona una feature poligonale per assegnare una categoria.</p>
+                </section>
+
+                <section id="section-dsl-categories" class="toolbar-section" aria-labelledby="dsl-categories-title" hidden>
+                    <div class="section-heading">
+                        <h2 id="dsl-categories-title" data-i18n="section.dsl.categories">Colture</h2>
+                        <span class="section-kicker" data-i18n="section.dsl.categories.kicker">Piano</span>
+                    </div>
+                    <div id="dsl-legend" class="dsl-legend" role="list" aria-label="Legenda categorie colture"></div>
+                    <table id="dsl-category-table" class="dsl-table" aria-label="Riepilogo superfici per categoria">
+                        <thead>
+                            <tr>
+                                <th data-i18n="dsl.table.category">Categoria</th>
+                                <th data-i18n="dsl.table.area">Superficie</th>
+                                <th data-i18n="dsl.table.pct">%</th>
+                                <th data-i18n="dsl.table.count">N.</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dsl-category-tbody"></tbody>
+                    </table>
+                </section>
+
                 <section class="toolbar-section" aria-labelledby="summary-title">
                     <div class="section-heading">
                         <h2 id="summary-title" data-i18n="section.summary">Riepilogo</h2>

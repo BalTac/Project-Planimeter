@@ -878,3 +878,181 @@ input[type="checkbox"] {
     font-weight: 700;
     overflow-wrap: anywhere;
 }
+
+/* ─── DSL Assignment / Legend / Category Table ───────────────────────────── */
+
+.dsl-assignment-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+}
+
+.dsl-assignment-meta {
+    border: 1px solid var(--stroke);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    padding: 9px 12px;
+}
+
+.dsl-assignment-meta strong {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.dsl-assignment-meta span {
+    font-size: 0.9rem;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+#btn-dsl-assign[disabled] {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+/* ─── DSL Dynamic Fields Form ─────────────────────────────────────────────── */
+
+.dsl-fields-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding: 10px 0;
+    border-top: 1px dashed rgba(255, 255, 255, 0.15);
+    border-bottom: 1px dashed rgba(255, 255, 255, 0.15);
+}
+
+.dsl-field-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.dsl-field-wrapper.dsl-field-boolean {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+}
+
+.dsl-field-wrapper.dsl-field-boolean input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.dsl-field-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    display: block;
+}
+
+.dsl-field-wrapper.dsl-field-boolean .dsl-field-label {
+    color: var(--text-body);
+    font-weight: normal;
+    cursor: pointer;
+}
+
+.dsl-field-input {
+    padding: 7px 10px;
+    border: 1px solid var(--stroke);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-body);
+    font-size: 0.9rem;
+    font-family: inherit;
+    transition: border-color 0.2s, background-color 0.2s;
+}
+
+.dsl-field-input:focus {
+    outline: none;
+    border-color: var(--brand);
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.dsl-field-input[type="number"] {
+    font-family: 'Monaco', 'Courier New', monospace;
+}
+
+.dsl-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    margin-bottom: 12px;
+}
+
+.dsl-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 0.84rem;
+    color: var(--text-main);
+    line-height: 1;
+}
+
+.dsl-legend-swatch {
+    width: 13px;
+    height: 13px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.dsl-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.84rem;
+}
+
+.dsl-table th {
+    text-align: left;
+    color: var(--text-muted);
+    font-weight: 600;
+    padding: 0 4px 8px;
+    border-bottom: 1px solid var(--stroke);
+    white-space: nowrap;
+}
+
+.dsl-table th:not(:first-child),
+.dsl-table td:not(:first-child) {
+    text-align: right;
+}
+
+.dsl-table td {
+    padding: 7px 4px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    vertical-align: middle;
+}
+
+.dsl-table tr:last-child td {
+    border-bottom: none;
+}
+
+.dsl-table-cat {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.dsl-table-swatch {
+    width: 11px;
+    height: 11px;
+    border-radius: 2px;
+    flex-shrink: 0;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.dsl-table tr.dsl-row-unassigned td {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.dsl-table tfoot td {
+    padding-top: 10px;
+    border-top: 1px solid var(--stroke);
+    font-weight: 700;
+    color: var(--accent);
+}

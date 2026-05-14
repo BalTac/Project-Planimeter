@@ -1,0 +1,55 @@
+{
+  "id": "agriculture",
+  "version": "1.0.0",
+  "label": "Agricoltura",
+  "defaultCategoryId": "riposo",
+  "validationMode": "flexible",
+  "categories": [
+    { "id": "grano_tenero",  "label": "Grano tenero",  "color": "#f5e642", "stroke": "#bfad0a" },
+    { "id": "grano_duro",    "label": "Grano duro",    "color": "#e8b400", "stroke": "#a07a00" },
+    { "id": "orzo",          "label": "Orzo",          "color": "#d4c87a", "stroke": "#8a7f30" },
+    { "id": "sorgo",         "label": "Sorgo",         "color": "#e07b3a", "stroke": "#a04010" },
+    { "id": "favino",        "label": "Favino",        "color": "#7ac47a", "stroke": "#3a803a" },
+    { "id": "girasole",      "label": "Girasole",      "color": "#ffd040", "stroke": "#c09000" },
+    { "id": "prato",         "label": "Prato",         "color": "#4caf50", "stroke": "#1b5e20" },
+    { "id": "vigna",         "label": "Vigna",         "color": "#9c27b0", "stroke": "#4a0072" },
+    { "id": "oliveto",       "label": "Oliveto",       "color": "#8bc34a", "stroke": "#33691e" },
+    { "id": "frutteto",      "label": "Frutteto",      "color": "#ff7043", "stroke": "#bf360c" },
+    { "id": "orto",          "label": "Orto",          "color": "#26c6da", "stroke": "#00838f" },
+    { "id": "maggese",       "label": "Maggese",       "color": "#bcaaa4", "stroke": "#6d4c41" },
+    { "id": "riposo",        "label": "Riposo/Set-aside", "color": "#b0bec5", "stroke": "#607d8b" }
+  ],
+  "fields": [
+    {
+      "id": "irrigated",
+      "type": "boolean",
+      "label": "Irriguo",
+      "required": false
+    },
+    {
+      "id": "fertilization",
+      "type": "enum",
+      "label": "Metodo coltivazione",
+      "options": ["convenzionale", "integrata", "biologica"],
+      "required": false
+    },
+    {
+      "id": "variety",
+      "type": "string",
+      "label": "Varietà / Cultivar",
+      "required": false
+    },
+    {
+      "id": "expected_yield_q_ha",
+      "type": "number",
+      "label": "Resa prevista (q/ha)",
+      "required": false
+    },
+    {
+      "id": "notes",
+      "type": "string",
+      "label": "Note",
+      "required": false
+    }
+  ]
+}

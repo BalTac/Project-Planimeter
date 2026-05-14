@@ -33,6 +33,9 @@ export function decorateFeature(feature, state, existingCount) {
         if (!feature.get('links')) {
             feature.set('links', { cadastral: [] });
         }
+        if (feature.get('dsl') === undefined) {
+            feature.set('dsl', null);
+        }
         state.nextFeatureId += 1;
         return;
     }
