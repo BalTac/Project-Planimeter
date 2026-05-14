@@ -1072,11 +1072,16 @@ export default class Planimeter {
                     if (domain) {
                         const aggs = aggregateByCategory(features, domain, this.map.getView().getProjection());
                         const totalArea = totalAggArea(aggs);
+                        // Add percentage to each aggregation row
+                        const aggregationsWithPercentages = aggs.map(row => ({
+                            ...row,
+                            percentageArea: totalArea > 0 ? Math.round((row.areaM2 / totalArea) * 10000) / 100 : 0,
+                        }));
                         semanticReport = {
                             domainId: domain.id,
                             domainLabel: domain.label,
                             domainVersion: domain.version,
-                            aggregations: aggs,
+                            aggregations: aggregationsWithPercentages,
                             totalAreaM2: totalArea,
                             timestamp: new Date().toISOString(),
                         };
