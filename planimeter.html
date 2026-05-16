@@ -28,6 +28,10 @@
     <a class="skip-link" href="#app-toolbar">Vai ai controlli</a>
     <main class="app-shell">
         <div id="map" class="map-canvas" aria-label="Mappa interattiva per misurare superfici"></div>
+        <div id="m3-busy-indicator" class="m3-busy-indicator" role="status" aria-live="polite" hidden>
+            <span class="m3-busy-spinner" aria-hidden="true"></span>
+            <span id="m3-busy-label" data-i18n="m3.wait">Please wait…</span>
+        </div>
 
         <aside id="app-toolbar" class="floating-toolbar" aria-label="Toolbar del planimetro">
             <header class="toolbar-header">
@@ -113,6 +117,24 @@
                         </select>
                         <p id="catasto-hint" class="section-help" data-i18n="layer.catasto.hint.official">La sorgente ufficiale usa il WMS dell'Agenzia delle Entrate.</p>
                     </div>
+
+                    <p class="section-help" data-i18n="layer.groupPertenenze">Gruppo C (Pertinenze): proprietà/affitto/commissioni dell'utente (calcolato da rilevamento automatico).</p>
+                    <div class="toggle-grid">
+                        <label class="toggle-card" for="layer-user-areas">
+                            <input type="checkbox" id="layer-user-areas" checked data-layer-group="user-areas" data-layer-key="user">
+                            <span>
+                                <strong data-i18n="layer.userAreas">Aree disegnate</strong>
+                                <small data-i18n="layer.userAreas.sub">Visibilita delle aree create/importate dall'utente</small>
+                            </span>
+                        </label>
+                        <label class="toggle-card" for="layer-pertenenze">
+                            <input type="checkbox" id="layer-pertenenze" data-layer-group="pertenenze" data-layer-key="pertenenze">
+                            <span>
+                                <strong data-i18n="layer.pertenenze">Pertinenze</strong>
+                                <small data-i18n="layer.pertenenze.sub">Layer editable dei confini proprietà</small>
+                            </span>
+                        </label>
+                    </div>
                 </section>
 
                 <section class="toolbar-section" aria-labelledby="tools-title">
@@ -127,6 +149,13 @@
                         <button type="button" class="tool-button icon-button" data-mode="delete" aria-pressed="false" data-i18n="tool.delete" data-i18n-title="hint.tool.delete" data-icon="🗑">Elimina</button>
                         <button type="button" class="tool-button icon-button" data-mode="measure-straight" aria-pressed="false" data-i18n="tool.measureStraight" data-i18n-title="hint.tool.measureStraight" data-icon="📏">Retta</button>
                         <button type="button" class="tool-button icon-button" data-mode="measure-polyline" aria-pressed="false" data-i18n="tool.measurePolyline" data-i18n-title="hint.tool.measurePolyline" data-icon="📐">Polyline</button>
+                    </div>
+                    <div class="layer-source-wrap">
+                        <label for="editing-layer-select" data-i18n="tool.editingLayerLabel">Editing layer</label>
+                        <select id="editing-layer-select" class="layer-source-select" aria-label="Scegli quale layer modificare">
+                            <option value="user" selected data-i18n="tool.editingLayer.user">Aree disegnate</option>
+                            <option value="pertenenze" data-i18n="tool.editingLayer.pertenenze">Pertinenze</option>
+                        </select>
                     </div>
                     <p id="snap-status" class="section-help" data-i18n="snap.on">Magnete: ON. Tieni premuto Ctrl per disattivarlo temporaneamente.</p>
                     <p class="section-help" data-i18n="snap.hint">Retta misura distanza tra due punti. Polyline misura percorso a vertici multipli (doppio clic per chiudere).</p>
@@ -179,6 +208,10 @@
                                 <option value="" data-i18n="dsl.assign.selectCategory">Seleziona categoria...</option>
                             </select>
                         </label>
+                        <div class="dsl-assignment-meta dsl-links-box">
+                            <strong data-i18n="dsl.links.title">Pertinenze catastali</strong>
+                            <div id="dsl-cadastral-links" class="dsl-cadastral-links"></div>
+                        </div>
                         <div id="dsl-fields-form" class="dsl-fields-form" role="group" aria-labelledby="dsl-fields-title"></div>
                         <button type="button" id="btn-dsl-assign" class="action-button icon-button" data-i18n="dsl.category.assign" data-icon="🏷">Assegna categoria</button>
                     </div>
@@ -189,6 +222,10 @@
                     <div class="section-heading">
                         <h2 id="dsl-categories-title" data-i18n="section.dsl.categories">Colture</h2>
                         <span class="section-kicker" data-i18n="section.dsl.categories.kicker">Piano</span>
+                    </div>
+                    <div class="dsl-category-filters-wrap">
+                        <strong data-i18n="dsl.filters.title">Filtra visibilita categorie</strong>
+                        <div id="dsl-category-filters" class="dsl-category-filters" role="group" aria-label="Filtri categorie DSL"></div>
                     </div>
                     <div id="dsl-legend" class="dsl-legend" role="list" aria-label="Legenda categorie colture"></div>
                     <table id="dsl-category-table" class="dsl-table" aria-label="Riepilogo superfici per categoria">
@@ -307,6 +344,10 @@
                         <label class="settings-check">
                             <input type="checkbox" id="settings-parcel-info-enabled">
                             <span data-i18n="settings.parcelInfoEnabled">Interroga particelle dal menu contestuale in Navigate (solo catasto ufficiale).</span>
+                        </label>
+                        <label class="settings-field" for="settings-pertenenze-color">
+                            <span data-i18n="settings.pertenenzeColor">Colore layer pertinenze (M3)</span>
+                            <input type="color" id="settings-pertenenze-color" value="#8a9199">
                         </label>
                     </div>
                     <p class="section-help" data-i18n="settings.parcelInfoHint">Quando attivo, in modalità Navigate usa il menu contestuale della mappa per interrogare i dati catastali della particella.</p>

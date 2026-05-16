@@ -2,6 +2,96 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [2026-05-15] — DM4 M3 hardening: fix runtime, nomenclatura pertinenze, stile dedicato, bordo esterno
+
+### Fixed
+- [src/planimeter.js](src/planimeter.js) corretto crash runtime in `detectParcelM3AtPixel` (`this.calculateFeatureArea` non esistente) usando `calculateArea(...)` con unit formatting coerente nel toast.
+- [src/i18n/it.js](src/i18n/it.js), [src/i18n/en.js](src/i18n/en.js) corretta interpolazione `m3.success.detected` da doppie parentesi a placeholder compatibili (`{area}`, `{vertices}`).
+
+### Changed
+- [src/geometry/decorate.js](src/geometry/decorate.js), [src/core/state.js](src/core/state.js) nomenclatura separata per pertinenze (`Pertinenza N`, `featureId=pert-N`) con contatore dedicato `nextPertenenzaId`.
+- [src/geometry/style.js](src/geometry/style.js), [src/planimeter.js](src/planimeter.js), [src/io/preferences.js](src/io/preferences.js), [planimeter.html](planimeter.html) stile pertinenze separato e neutro (non confondibile con aree utente), con colore customizzabile in Settings (`settings-pertenenze-color`) e persistenza locale.
+- [server.py](server.py) M3 contour extraction aggiornata per includere il bordo nero esterno tramite espansione controllata della mask prima di `findContours`.
+
+### Validation
+- `node --check src/planimeter.js`
+- `node --check src/geometry/decorate.js`
+- `node --check src/geometry/style.js`
+- `node --check src/i18n/it.js`
+- `node --check src/i18n/en.js`
+- `python -m py_compile server.py`
+
+## [2026-05-15] — DM4 UX: layer Pertinenze separato, editabile e persistente
+
+### Added
+- [planimeter.html](planimeter.html) aggiunti Gruppo C "Pertinenze" nella sezione layer e selector toolbar del layer in modifica (Aree disegnate vs Pertinenze).
+- [src/map/layers.js](src/map/layers.js), [src/map/interactions.js](src/map/interactions.js) introducono un secondo layer vettoriale dedicato alle pertinenze, posizionato tra WMS/catasto e layer utente.
+
+### Changed
+- [src/planimeter.js](src/planimeter.js) draw, edit, delete, duplicate, import, fit view e selezione ora lavorano sul layer di editing attivo, con supporto coerente a feature provenienti da entrambi i source.
+- [src/io/persistence.js](src/io/persistence.js) persistenza locale estesa a entrambi i source vettoriali, con ripristino distribuito in base a `overlayLayer`.
+- [src/core/state.js](src/core/state.js), [src/io/preferences.js](src/io/preferences.js) aggiunto stato/preferenze per `activeEditingLayer` e visibilita pertinenze.
+- [src/i18n/it.js](src/i18n/it.js), [src/i18n/en.js](src/i18n/en.js) aggiornate copy e hint per Gruppo C e per la possibilita di lasciare spenti tutti i layer base/amministrativi.
+
+### Validation
+- `get_errors` su `src/planimeter.js`, `src/io/persistence.js`, `src/map/interactions.js`, `src/map/layers.js`, `planimeter.html`, `src/i18n/it.js`, `src/i18n/en.js`
+
+## [2026-05-14] — Fix restore aree salvate (localStorage legacy/campagna attiva vuota)
+
+### Fixed
+- [src/io/persistence.js](src/io/persistence.js) `migrateLegacyPayload()` ora supporta anche payload legacy senza `version` esplicita e formato `FeatureCollection` diretto, evitando scarti silenziosi di dati storici salvati con versioni precedenti.
+- [src/io/persistence.js](src/io/persistence.js) `resolveActiveCampaign()` ora preferisce automaticamente la campagna piu recente non vuota se la campagna attiva non contiene feature, evitando l'effetto "mappa vuota" quando esistono snapshot storici validi.
+
+### Validation
+- `node --check src/io/persistence.js`
+- `node --check src/planimeter.js`
+
+## [2026-05-14] — DM4 incremento: pertinenze catastali dinamiche per feature
+
+### Added
+- [planimeter.html](planimeter.html) sezione "Pertinenze catastali" nel pannello assegnazione categoria, con lista link per la feature poligonale selezionata.
+- [src/planimeter.js](src/planimeter.js) rendering dinamico dei link `links.cadastral` e azione di unlink puntuale direttamente dalla UI (modifica persistita con bump `version`/`modifiedAt`).
+
+### Changed
+- [src/planimeter.js](src/planimeter.js) quando una query particella restituisce `parcelId` su feature selezionata, il link viene salvato in formato esteso (`parcel_id`, `intersection_area`, `coverage_ratio`, `linkedAt`) per allineamento con modello P3/DM4.
+- [src/i18n/it.js](src/i18n/it.js), [src/i18n/en.js](src/i18n/en.js), [styles.css](styles.css) estese con copy e stili dedicati alla gestione pertinenze.
+
+### Validation
+- `node --check src/planimeter.js`
+- `node --check src/i18n/it.js`
+- `node --check src/i18n/en.js`
+
+## [2026-05-14] — DSL UX: filtro visibilita categorie (mappa + tabella)
+
+### Added
+- [planimeter.html](planimeter.html) nuova area filtri categorie nel pannello riepilogo DSL con toggle per categoria.
+- [styles.css](styles.css) stile chip/checkbox per controllo visibilita categorie.
+
+### Changed
+- [src/planimeter.js](src/planimeter.js) applicata visibilita per categoria direttamente nella funzione stile feature (categorie nascoste non renderizzate in mappa).
+- [src/planimeter.js](src/planimeter.js) tabella/legenda DSL ora rispettano i filtri attivi e ricalcolano totali/percentuali solo sulle categorie visibili.
+- [src/core/state.js](src/core/state.js) introdotto stato runtime `dslHiddenCategoryKeys`.
+- [src/i18n/it.js](src/i18n/it.js), [src/i18n/en.js](src/i18n/en.js) aggiunta label i18n per sezione filtri.
+
+### Validation
+- `node --check src/planimeter.js`
+- `node --check src/core/state.js`
+- `node --check src/i18n/it.js`
+- `node --check src/i18n/en.js`
+
+## [2026-05-14] — DM4 metriche pertinenze: intersection/coverage al linking
+
+### Added
+- [server.py](server.py) `POST /parcel-at-point` ora puo includere geometria particella (`includeGeometry`) quando disponibile da GetFeatureInfo JSON.
+
+### Changed
+- [src/planimeter.js](src/planimeter.js) `requestParcelInfoJson()` usa endpoint semantico `parcel-at-point` con fallback al path proxy JSON precedente.
+- [src/planimeter.js](src/planimeter.js) al collegamento di una particella su feature poligonale, calcola e salva automaticamente `intersection_area` e `coverage_ratio` (quando la geometria e disponibile), eliminando i valori `n/a` nei casi supportati.
+
+### Validation
+- `node --check src/planimeter.js`
+- `get_errors` su `src/planimeter.js`, `server.py`, `TODO_LIST.md`
+
 ## [2026-05-14] — Semantic report nel bundle export DSL
 
 ### Added

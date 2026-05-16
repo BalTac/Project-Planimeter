@@ -13,11 +13,12 @@ const BANNER_ATTRIBUTION =
 /**
  * Build and return all map layers used by the application.
  *
- * @param {import('ol/source/Vector').default} vectorSource
+ * @param {import('ol/source/Vector').default} vectorSource - user-drawn areas
+ * @param {import('ol/source/Vector').default} pertenenzaSource - pertinenze (property bounds)
  * @param {function} featureStyleFn — style function forwarded to VectorLayer
- * @returns {{ sat, openTopoMap, esriTopo, esriRelief, osm, catastoOfficial: Record<string, TileLayer>, catastoFallback, vector }}
+ * @returns {{ sat, openTopoMap, esriTopo, esriRelief, osm, catastoOfficial: Record<string, TileLayer>, catastoFallback, vector, pertenenza }}
  */
-export function buildLayers(vectorSource, featureStyleFn) {
+export function buildLayers(vectorSource, pertenenzaSource, featureStyleFn) {
     const sat = new TileLayer({
         source: new XYZ({
             url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
@@ -113,5 +114,12 @@ export function buildLayers(vectorSource, featureStyleFn) {
         zIndex: 10,
     });
 
-    return { sat, openTopoMap, esriTopo, esriRelief, osm, catastoOfficial, catastoFallback, vector };
+    const pertenenza = new VectorLayer({
+        source: pertenenzaSource,
+        style:  featureStyleFn,
+        visible: false,
+        zIndex: 5,
+    });
+
+    return { sat, openTopoMap, esriTopo, esriRelief, osm, catastoOfficial, catastoFallback, vector, pertenenza };
 }

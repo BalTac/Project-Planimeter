@@ -43,12 +43,21 @@ function hexToRgba(hex, alpha) {
  * @param {boolean} isLine
  * @returns {{ fill: string, stroke: string }}
  */
-function resolveColors(feature, isSelected, isArea, isLine) {
+function resolveColors(feature, isSelected, isArea, isLine, options = {}) {
     // Selected highlight always overrides
     if (isSelected) {
         return {
             fill:   isArea ? 'rgba(255,227,138,0.20)' : 'rgba(0,0,0,0)',
             stroke: '#ffe38a',
+        };
+    }
+
+    const overlayLayer = feature.get('overlayLayer') ?? 'user';
+    if (isArea && overlayLayer === 'pertenenze') {
+        const base = options.pertenenzeColor ?? '#8a9199';
+        return {
+            fill: hexToRgba(base, 0.24) ?? 'rgba(138,145,153,0.24)',
+            stroke: hexToRgba(base, 0.95) ?? 'rgba(138,145,153,0.95)',
         };
     }
 
@@ -71,6 +80,21 @@ function resolveColors(feature, isSelected, isArea, isLine) {
 
     // Lines
     return { fill: 'rgba(0,0,0,0)', stroke: '#7bc7ff' };
+}
+
+function getPropertyScopeLabel(feature) {
+    const explicit = String(feature.get('parcelNumber') || '').trim();
+    if (explicit) return explicit;
+
+    const name = String(feature.get('featureName') || '').trim();
+    const nameMatch = /^(?:Pertinenza|Boundary|Parcel)?\s*(\d+)$/i.exec(name);
+    if (nameMatch) return nameMatch[1];
+
+    const featureId = String(feature.get('featureId') || '').trim();
+    const idMatch = /^pert-(\d+)$/i.exec(featureId);
+    if (idMatch) return idMatch[1];
+
+    return name || featureId || '-';
 }
 
 /**
@@ -115,22 +139,28 @@ export function getFeatureLabelGeometry(feature) {
  * @param {import('../units/units.js').UnitSystem} unitSystem
  * @returns {OLStyle[]}
  */
-export function buildFeatureStyle(feature, selectedFeature, projection, unitSystem) {
+export function buildFeatureStyle(feature, selectedFeature, projection, unitSystem, options = {}) {
     const isSelected = selectedFeature === feature;
     const type = feature.getGeometry()?.getType();
     const isArea = type === 'Polygon' || type === 'MultiPolygon';
     const isLine = type === 'LineString' || type === 'MultiLineString';
+    const overlayLayer = feature.get('overlayLayer') ?? 'user';
+    const isPropertyScope = isArea && overlayLayer === 'pertenenze';
 
-    const nameLabel    = feature.get('featureName') || t('feature.area');
+    const nameLabel    = isPropertyScope
+        ? getPropertyScopeLabel(feature)
+        : (feature.get('featureName') || t('feature.area'));
     const areaLabel    = unitSystem.formatArea(calculateArea(feature, projection));
     const perimLabel   = unitSystem.formatPerimeter(calculatePerimeter(feature, projection));
     const lengthLabel  = unitSystem.formatLength(calculateLength(feature, projection));
-    const measureLabel = isArea
+    const measureLabel = isPropertyScope
+        ? nameLabel
+        : (isArea
         ? `${areaLabel}\n${t('feature.perimPrefix')}${perimLabel}`
-        : lengthLabel;
+        : lengthLabel);
 
     const labelGeom = getFeatureLabelGeometry(feature);
-    const { fill, stroke } = resolveColors(feature, isSelected, isArea, isLine);
+    const { fill, stroke } = resolveColors(feature, isSelected, isArea, isLine, options);
 
     const styles = [
         new OLStyle({
@@ -147,10 +177,12 @@ export function buildFeatureStyle(feature, selectedFeature, projection, unitSyst
         styles.push(new OLStyle({
             geometry: labelGeom,
             text: new OLText({
-                text: `${nameLabel}\n${measureLabel}`,
+                text: isPropertyScope ? nameLabel : `${nameLabel}\n${measureLabel}`,
                 textAlign: 'center',
                 justify: 'center',
-                font: '700 14px Aptos, "Segoe UI Variable", sans-serif',
+                font: isPropertyScope
+                    ? '800 17px Aptos, "Segoe UI Variable", sans-serif'
+                    : '700 14px Aptos, "Segoe UI Variable", sans-serif',
                 fill: new Fill({ color: '#ffffff' }),
                 stroke: new Stroke({ color: 'rgba(4,12,10,0.95)', width: 4 }),
             }),
