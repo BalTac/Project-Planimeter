@@ -147,6 +147,7 @@
 - [x] 1.21: Switch user-facing parcel metadata flows to proxy-first lookup to suppress recurring `/parcel-at-point` 502 console noise
 - [x] 1.22: Add visible floating spinner/message during M3 detect so wait state stays visible even on slow requests
 - [x] 1.23: Reuse same floating busy overlay for map tile loading and hide it when all tiles finish loading
+- [x] 1.24: Allineare README.md alle feature M3/Pertinenze/Resync, endpoint aggiornati e dipendenze Python correnti
 - [ ] **Testing**: Right-click WMS parcel in Navigate mode → "Rileva particella (M3)" → spinner → "2,500 m², 12 vertici" → feature appears on map in pertinenze layer with distinctive color
 
 #### Phase 2: "Promote Parcel" UI Workflow

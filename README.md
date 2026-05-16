@@ -13,12 +13,19 @@ Web app standalone per misurare superfici e distanze su mappa, con supporto GIS 
 ## Cosa fa
 
 - Disegno e modifica poligoni
+- Editing vertici con marker dedicati (vuoto/pieno) e rimozione vertice con tasto destro o Canc
 - Misura distanze (linea retta e polyline)
 - Calcolo area e perimetro geodetici
 - Export/Import GeoJSON e KML
 - Export raster: TIFF, PNG+PGW, bundle ZIP
 - Overlay catastale ufficiale Agenzia Entrate (con fallback)
 - Query particella via menu contestuale in modalita Navigate
+- Rilevamento particella M3 con auto-expand progressivo, preview live e conferma utente step-by-step
+- Layer Pertinenze separato dalle aree utente, con colore configurabile e toggle visibilita indipendente
+- Azione contestuale "Risincronizza metadati catastali" sulle pertinenze
+- Label pertinenze in mappa con numero particella; dettagli area/perimetro/localId nel riepilogo selezione
+- Lookup metadati catastali proxy-first con fallback robusto (riduce errori in caso di 502 su endpoint semantico)
+- Overlay busy flottante durante detect M3 e caricamento tile mappa
 - UI bilingue IT/EN e sistema unita metrico/imperiale
 
 ## Architettura
@@ -33,19 +40,19 @@ Web app standalone per misurare superfici e distanze su mappa, con supporto GIS 
 - [src/io](src/io): import/export/persistenza preferenze
 - [src/i18n](src/i18n): localizzazione IT/EN
 - [src/ui](src/ui): context menu e monitor proxy
-- [server.py](server.py): proxy WMS, cache tile, endpoint export
+- [server.py](server.py): proxy WMS, cache tile, endpoint export + lookup particella + detect M3
 - [app.js](app.js): file legacy non usato come entrypoint corrente
 
 ## Requisiti
 
 - Python 3.8+
 - Browser moderno con supporto importmap
-- Dipendenza Python: Pillow (PIL)
+- Dipendenze Python: Pillow, opencv-python, numpy
 
-Installazione dipendenza backend:
+Installazione dipendenze backend:
 
 ```bash
-python -m pip install Pillow
+python -m pip install -r requirements.txt
 ```
 
 ## Compatibilita browser
@@ -90,6 +97,8 @@ Launcher rapidi:
 - POST /export-geotiff
 - POST /export-pgw
 - POST /export-bundle
+- POST /parcel-at-point
+- POST /parcel-geometry-m3
 
 ## Opzioni CLI server
 
@@ -136,6 +145,13 @@ Controlli consigliati:
 ```bash
 python -m py_compile server.py
 python -m unittest discover -s tests
+```
+
+Smoke test M3 (coordinate note):
+
+```bash
+cd tests
+python test_smoke_parcel_402_methods.py --method3-only --lon 12.562264 --lat 43.013170 --radius 2
 ```
 
 Check sintassi JavaScript senza build:
