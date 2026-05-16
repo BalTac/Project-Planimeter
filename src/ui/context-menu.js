@@ -16,7 +16,9 @@ import { t } from '../i18n/i18n.js';
  *   editFeature:        (feature: import('ol/Feature').default) => void,
  *   assignCategory?:    (feature: import('ol/Feature').default) => void,
  *   deleteFeature:      (feature: import('ol/Feature').default) => void,
+ *   resyncParcelMetadata?: (feature: import('ol/Feature').default) => void | Promise<void>,
  *   queryParcelAtPixel: (pixel: number[]) => void,
+ *   detectParcelM3AtPixel?: (pixel: number[]) => void | Promise<void>,
  *   exportView?:        () => void,
  *   exportSelection?:   () => void,
  *   exportAreas?:       () => void,
@@ -45,7 +47,9 @@ export function initContextMenu({
     editFeature,
     assignCategory,
     deleteFeature,
+    resyncParcelMetadata,
     queryParcelAtPixel,
+    detectParcelM3AtPixel,
     exportView,
     exportSelection,
     exportAreas,
@@ -80,7 +84,9 @@ export function initContextMenu({
                 editFeature:        () => editFeature(feature),
                 assignCategory:     () => assignCategory?.(feature),
                 deleteFeature:      () => deleteFeature(feature),
+                resyncParcelMetadata: () => resyncParcelMetadata?.(feature),
                 queryParcelAtPixel: () => queryParcelAtPixel(pixel),
+                detectParcelM3AtPixel: () => detectParcelM3AtPixel?.(pixel),
                 refreshTileAtPixel: () => refreshTileAtPixel?.(pixel),
                 copyCoordinatesAtPixel: () => copyCoordinatesAtPixel?.(pixel),
                 exportView,
@@ -99,6 +105,7 @@ export function initContextMenu({
             canQueryParcel,
             canRefreshWmsTile,
             canCopyCoordinates: typeof copyCoordinatesAtPixel === 'function',
+            detectParcelM3AtPixel: typeof detectParcelM3AtPixel === 'function',
         });
         if (!items.length) return;
 
@@ -107,7 +114,9 @@ export function initContextMenu({
             editFeature:        () => editFeature(feature),
             assignCategory:     () => assignCategory?.(feature),
             deleteFeature:      () => deleteFeature(feature),
+            resyncParcelMetadata: () => resyncParcelMetadata?.(feature),
             queryParcelAtPixel: () => queryParcelAtPixel(pixel),
+            detectParcelM3AtPixel: () => detectParcelM3AtPixel?.(pixel),
             refreshTileAtPixel: () => refreshTileAtPixel?.(pixel),
             copyCoordinatesAtPixel: () => copyCoordinatesAtPixel?.(pixel),
             exportView,
@@ -138,7 +147,7 @@ export function initContextMenu({
  * Determine which menu items to show based on current application state.
  * @returns {Array<{key: string, action: string, danger?: boolean}>}
  */
-function buildMenuItems({ mode, isDrawing, feature, canQueryParcel, canRefreshWmsTile, canCopyCoordinates }) {
+function buildMenuItems({ mode, isDrawing, feature, canQueryParcel, canRefreshWmsTile, canCopyCoordinates, detectParcelM3AtPixel }) {
     // During active drawing: single "cancel" item
     if (isDrawing && (mode === 'draw' || mode === 'measure-straight' || mode === 'measure-polyline')) {
         return [{ key: 'ctx.cancelDraw', action: 'abortActiveDraw' }];
@@ -153,11 +162,17 @@ function buildMenuItems({ mode, isDrawing, feature, canQueryParcel, canRefreshWm
             items.push({ key: 'ctx.editFeature',   action: 'editFeature' });
             if (isPolygon) {
                 items.push({ key: 'ctx.assignCategory', action: 'assignCategory' });
+                if (feature.get('overlayLayer') === 'pertenenze') {
+                    items.push({ key: 'ctx.resyncParcelMetadata', action: 'resyncParcelMetadata' });
+                }
             }
             items.push({ key: 'ctx.deleteFeature', action: 'deleteFeature', danger: true });
         }
         if (canQueryParcel()) {
             items.push({ key: 'ctx.queryParcel', action: 'queryParcelAtPixel' });
+            if (detectParcelM3AtPixel) {
+                items.push({ key: 'ctx.detectParcelM3', action: 'detectParcelM3AtPixel' });
+            }
         }
         if (canRefreshWmsTile?.()) {
             items.push({ key: 'ctx.refreshTile', action: 'refreshTileAtPixel' });

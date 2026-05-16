@@ -15,16 +15,9 @@ const DRAW_LINE_STYLE = new OLStyle({
     stroke: new Stroke({ color: '#7bc7ff', lineDash: [8, 6], width: 3 }),
 });
 
-/**
- * Instantiate all OL interactions used by the application.
- *
- * @param {import('ol/source/Vector').default} vectorSource
- * @param {import('ol/layer/Vector').default}  vectorLayer
- * @returns {{ select, modify, draw, drawStraight, drawPolyline, snap }}
- */
-export function buildInteractions(vectorSource, vectorLayer) {
+function buildInteractionSet(source, layer) {
     const select = new Select({
-        layers: [vectorLayer],
+        layers: [layer],
         hitTolerance: 8,
     });
 
@@ -33,33 +26,50 @@ export function buildInteractions(vectorSource, vectorLayer) {
     });
 
     const draw = new Draw({
-        source:    vectorSource,
-        type:      'Polygon',
+        source,
+        type: 'Polygon',
         stopClick: true,
-        style:     DRAW_POLYGON_STYLE,
+        style: DRAW_POLYGON_STYLE,
     });
 
     const drawStraight = new Draw({
-        source:    vectorSource,
-        type:      'LineString',
+        source,
+        type: 'LineString',
         maxPoints: 2,
         stopClick: true,
-        style:     DRAW_LINE_STYLE,
+        style: DRAW_LINE_STYLE,
     });
 
     const drawPolyline = new Draw({
-        source:    vectorSource,
-        type:      'LineString',
+        source,
+        type: 'LineString',
         stopClick: true,
-        style:     DRAW_LINE_STYLE,
+        style: DRAW_LINE_STYLE,
     });
 
     const snap = new Snap({
-        source:         vectorSource,
-        edge:           true,
-        vertex:         true,
+        source,
+        edge: true,
+        vertex: true,
         pixelTolerance: 12,
     });
 
     return { select, modify, draw, drawStraight, drawPolyline, snap };
+}
+
+/**
+ * Instantiate all OL interactions used by the application.
+ * Returns one set for user-drawn areas and one for pertinenze.
+ *
+ * @param {import('ol/source/Vector').default} vectorSource
+ * @param {import('ol/source/Vector').default} pertenenzaSource
+ * @param {import('ol/layer/Vector').default} vectorLayer
+ * @param {import('ol/layer/Vector').default} pertenenzaLayer
+ * @returns {{ user: { select, modify, draw, drawStraight, drawPolyline, snap }, pertenenze: { select, modify, draw, drawStraight, drawPolyline, snap } }}
+ */
+export function buildInteractions(vectorSource, pertenenzaSource, vectorLayer, pertenenzaLayer) {
+    return {
+        user: buildInteractionSet(vectorSource, vectorLayer),
+        pertenenze: buildInteractionSet(pertenenzaSource, pertenenzaLayer),
+    };
 }

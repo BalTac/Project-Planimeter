@@ -15,15 +15,44 @@ export function decorateFeature(feature, state, existingCount) {
     const type        = feature.getGeometry()?.getType();
     const isArea      = type === 'Polygon' || type === 'MultiPolygon';
     const lineType    = feature.get('measurementType') || 'polyline';
+    const overlayLayer = feature.get('overlayLayer') ?? 'user';
+    const isPertenenzaArea = isArea && overlayLayer === 'pertenenze';
+    const nextCounterKey = isPertenenzaArea ? 'nextPertenenzaId' : 'nextFeatureId';
+    const idPrefix = isPertenenzaArea ? 'pert-' : 'area-';
 
-    const prefix = isArea
+    const derivePertenenzaLabel = (fallback) => {
+        const explicit = feature.get('parcelNumber');
+        if (explicit !== undefined && explicit !== null && String(explicit).trim()) {
+            return String(explicit).trim();
+        }
+
+        const currentName = String(feature.get('featureName') || '').trim();
+        const numericName = /^(?:Pertinenza|Boundary|Parcel)?\s*(\d+)$/i.exec(currentName);
+        if (numericName) return numericName[1];
+
+        const currentId = String(feature.get('featureId') || '').trim();
+        const numericId = /^pert-(\d+)$/i.exec(currentId);
+        if (numericId) return numericId[1];
+
+        return String(fallback);
+    };
+
+    const prefix = isPertenenzaArea
+        ? t('feature.pertenenza')
+        : (isArea
         ? t('feature.area')
-        : (lineType === 'straight' ? t('feature.straight') : t('feature.polyline'));
+        : (lineType === 'straight' ? t('feature.straight') : t('feature.polyline')));
 
     if (!existingId) {
         // Brand-new feature from draw interaction.
-        feature.set('featureId',   `area-${state.nextFeatureId}`);
-        feature.set('featureName', `${prefix} ${state.nextFeatureId}`);
+        const nextId = Number(state[nextCounterKey]) || 1;
+        feature.set('featureId',   `${idPrefix}${nextId}`);
+        if (isPertenenzaArea) {
+            feature.set('parcelNumber', String(nextId));
+            feature.set('featureName', String(nextId));
+        } else {
+            feature.set('featureName', `${prefix} ${nextId}`);
+        }
         if (!isArea && !feature.get('measurementType')) {
             feature.set('measurementType', 'polyline');
         }
@@ -36,23 +65,35 @@ export function decorateFeature(feature, state, existingCount) {
         if (feature.get('dsl') === undefined) {
             feature.set('dsl', null);
         }
-        state.nextFeatureId += 1;
+        state[nextCounterKey] = nextId + 1;
         return;
     }
 
     // Feature loaded from import or localStorage — preserve existing ID/name.
-    const parsedId = Number.parseInt(String(existingId).replace('area-', ''), 10);
+    const parsedId = Number.parseInt(String(existingId).replace(/^pert-|^area-/, ''), 10);
 
     if (!feature.get('featureName')) {
-        const idx = Number.isFinite(parsedId) ? parsedId : state.nextFeatureId;
-        feature.set('featureName', `${prefix} ${idx}`);
+        const idx = Number.isFinite(parsedId) ? parsedId : (Number(state[nextCounterKey]) || 1);
+        if (isPertenenzaArea) {
+            const parcelNumber = derivePertenenzaLabel(idx);
+            feature.set('parcelNumber', parcelNumber);
+            feature.set('featureName', parcelNumber);
+        } else {
+            feature.set('featureName', `${prefix} ${idx}`);
+        }
+    } else if (isPertenenzaArea) {
+        const parcelNumber = derivePertenenzaLabel(
+            Number.isFinite(parsedId) ? parsedId : (Number(state[nextCounterKey]) || 1),
+        );
+        feature.set('parcelNumber', parcelNumber);
+        feature.set('featureName', parcelNumber);
     }
     if (!isArea && !feature.get('measurementType')) {
         feature.set('measurementType', 'polyline');
     }
 
     // Advance nextFeatureId to avoid future collisions.
-    const nameMatch    = /^(?:Area|Retta|Line|Polyline)\s+(\d+)$/i.exec(
+    const nameMatch    = /^(?:Area|Pertinenza|Boundary|Parcel|Retta|Line|Polyline)?\s*(\d+)$/i.exec(
         String(feature.get('featureName') || ''),
     );
     const parsedNameId = nameMatch ? Number.parseInt(nameMatch[1], 10) : NaN;
@@ -61,5 +102,5 @@ export function decorateFeature(feature, state, existingCount) {
         Number.isFinite(parsedNameId) ? parsedNameId + 1 : 0,
         existingCount + 2,
     );
-    state.nextFeatureId = Math.max(state.nextFeatureId, next);
+    state[nextCounterKey] = Math.max(Number(state[nextCounterKey]) || 1, next);
 }

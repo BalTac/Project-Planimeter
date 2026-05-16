@@ -29,18 +29,18 @@ const DEFAULT_CAMPAIGN_SEASON = 'annual';
  */
 
 /**
- * Schedule a debounced save of vectorSource features to localStorage.
+ * Schedule a debounced save of vector sources to localStorage.
  * @param {object} state             — mutable app state slice
- * @param {import('ol/source/Vector').default} vectorSource
+ * @param {...import('ol/source/Vector').default} vectorSources
  */
-export function schedulePersistenceSync(state, vectorSource) {
+export function schedulePersistenceSync(state, ...vectorSources) {
     if (state.persistenceMuted) return;
     if (state.persistenceSaveTimeoutId) {
         window.clearTimeout(state.persistenceSaveTimeoutId);
     }
     state.persistenceSaveTimeoutId = window.setTimeout(() => {
         state.persistenceSaveTimeoutId = null;
-        persistFeatures(state, vectorSource);
+        persistFeatures(state, ...vectorSources);
     }, PERSISTENCE_SAVE_DELAY_MS);
 }
 
@@ -48,10 +48,10 @@ export function schedulePersistenceSync(state, vectorSource) {
  * Immediately serialise all features to localStorage.
  * No-op when persistenceMuted is true.
  */
-export function persistFeatures(state, vectorSource) {
+export function persistFeatures(state, ...vectorSources) {
     if (state.persistenceMuted) return;
     try {
-        const features = vectorSource.getFeatures();
+        const features = vectorSources.flatMap((source) => source?.getFeatures?.() ?? []);
         const featuresObject = geoJsonFormat.writeFeaturesObject(features, {
             dataProjection: 'EPSG:4326',
             featureProjection: 'EPSG:3857',
@@ -77,15 +77,16 @@ export function persistFeatures(state, vectorSource) {
 }
 
 /**
- * Restore features from localStorage into vectorSource.
+ * Restore features from localStorage into vector sources.
  * Calls onRestored(count) on success; silently removes corrupt data.
  *
  * @param {object} state
  * @param {import('ol/source/Vector').default} vectorSource
+ * @param {import('ol/source/Vector').default} pertenenzaSource
  * @param {import('ol/View').default} view            — used for fitToFeatures (passed to onRestored)
  * @param {(count: number) => void} onRestored
  */
-export function restorePersistedFeatures(state, vectorSource, view, onRestored) {
+export function restorePersistedFeatures(state, vectorSource, pertenenzaSource, view, onRestored) {
     try {
         const store = loadCampaignStore();
         if (!store.campaigns.length) return;
@@ -106,8 +107,21 @@ export function restorePersistedFeatures(state, vectorSource, view, onRestored) 
 
         state.persistenceMuted = true;
         try {
-            restored.forEach((f) => decorateFeature(f, state, vectorSource.getFeatures().length));
-            vectorSource.addFeatures(restored);
+            const userFeatures = [];
+            const pertenenzaFeatures = [];
+
+            restored.forEach((f, index) => {
+                const targetSource = f.get('overlayLayer') === 'pertenenze' ? pertenenzaSource : vectorSource;
+                decorateFeature(f, state, targetSource.getFeatures().length + index);
+                if (targetSource === pertenenzaSource) {
+                    pertenenzaFeatures.push(f);
+                } else {
+                    userFeatures.push(f);
+                }
+            });
+
+            vectorSource.addFeatures(userFeatures);
+            pertenenzaSource.addFeatures(pertenenzaFeatures);
         } finally {
             state.persistenceMuted = false;
         }
@@ -201,6 +215,24 @@ function migrateLegacyPayload(payload) {
     if (Array.isArray(payload.campaigns)) {
         return payload;
     }
+
+    // Legacy fallback: direct FeatureCollection payload (no wrapper/version).
+    if (payload.type === 'FeatureCollection' && Array.isArray(payload.features)) {
+        payload = {
+            version: 1,
+            savedAt: new Date().toISOString(),
+            features: payload,
+        };
+    }
+
+    // Legacy fallback: wrapped payload with features but without explicit version.
+    if (payload.features && typeof payload.version !== 'number') {
+        payload = {
+            ...payload,
+            version: 1,
+        };
+    }
+
     if (!payload.features || typeof payload.version !== 'number') {
         throw new Error('Incompatible persistence schema.');
     }
@@ -285,9 +317,17 @@ function resolveActiveCampaign(store, state) {
     const preferredId = state.activeCampaignId || store.activeCampaignId;
     if (preferredId) {
         const hit = store.campaigns.find((c) => c.id === preferredId);
-        if (hit) return hit;
+        if (hit && hasCampaignFeatures(hit)) return hit;
     }
+
+    const newestNonEmpty = [...store.campaigns].reverse().find((c) => hasCampaignFeatures(c));
+    if (newestNonEmpty) return newestNonEmpty;
+
     return store.campaigns.at(-1) ?? null;
+}
+
+function hasCampaignFeatures(campaign) {
+    return Array.isArray(campaign?.features?.features) && campaign.features.features.length > 0;
 }
 
 /**

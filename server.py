@@ -360,6 +360,10 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             with self._rate_limited_scope():
                 self.handle_parcel_at_point()
             return
+        if parsed.path in {"/parcel-geometry-m3", "/parcel-geometry-m3/"}:
+            with self._rate_limited_scope():
+                self.handle_parcel_geometry_m3()
+            return
         self.send_response(HTTPStatus.METHOD_NOT_ALLOWED)
         self.end_headers()
 
@@ -424,8 +428,15 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         buf_raw = body.get("buffer", 0.0001)
         buf = float(buf_raw) if isinstance(buf_raw, (int, float)) else 0.0001
         buf = max(1e-6, min(buf, 1.0))  # clamp to sensible range
+        include_geometry_raw = body.get("includeGeometry", False)
+        include_geometry = (
+            include_geometry_raw is True
+            or (isinstance(include_geometry_raw, (int, float)) and include_geometry_raw != 0)
+            or (isinstance(include_geometry_raw, str) and include_geometry_raw.strip().lower() in {"1", "true", "yes", "on"})
+        )
 
-        bbox_4326 = f"{lon - buf},{lat - buf},{lon + buf},{lat + buf}"
+        # WMS 1.3.0 + EPSG:4326: axis order is latitude/longitude (Y/X), so BBOX = lat_min,lon_min,lat_max,lon_max
+        bbox_4326 = f"{lat - buf},{lon - buf},{lat + buf},{lon + buf}"
         width, height = 101, 101   # odd -> center pixel = (50, 50) = I=50, J=50
 
         query: dict[str, list[str]] = {
@@ -447,6 +458,7 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             "FORMAT":       ["image/png"],
         }
 
+        self._normalize_wms_query(query)
         self._filter_wms_params(query)
         upstream_qs = urllib.parse.urlencode(query, doseq=True)
         upstream_url = f"{UPSTREAM_WMS}?language=ita&{upstream_qs}"
@@ -486,16 +498,24 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
                     return
 
                 canonical = self._to_canonical_parcel_fields(raw_fields)
+                parcel_geometry = None
+                parcel_geometry_crs = None
+                if include_geometry:
+                    parcel_geometry, parcel_geometry_crs = self._fetch_parcel_geometry_at_point(lat, lon, buf, canonical)
                 _log.info("parcel-at-point OK lat=%s lon=%s fields=%s %dms",
                           lat, lon, list(canonical.keys()), elapsed_ms)
-                self.send_json(HTTPStatus.OK, {
+                response_obj: dict[str, object] = {
                     "type": "ParcelLookup",
                     "point": [lat, lon],
                     "parcel": canonical,
                     "raw": raw_fields,
                     "source": "wms",
                     "durationMs": elapsed_ms,
-                })
+                }
+                if parcel_geometry:
+                    response_obj["parcelGeometry"] = parcel_geometry
+                    response_obj["parcelGeometryCrs"] = parcel_geometry_crs or "EPSG:4326"
+                self.send_json(HTTPStatus.OK, response_obj)
 
         except UpstreamHTTPError as exc:
             elapsed_ms = int((time.perf_counter() - started_at) * 1000)
@@ -507,6 +527,257 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             self.send_json(HTTPStatus.BAD_GATEWAY, {
                 "ok": False, "message": f"Errore rete upstream: {exc.reason}", "durationMs": elapsed_ms,
             })
+
+    def handle_parcel_geometry_m3(self) -> None:
+        """POST /parcel-geometry-m3 — M3 raster segmentation to detect parcel boundaries.
+
+        Input JSON: {"lat": float, "lon": float, "radius": optional int}
+        Returns: {"ok": true, "ring": [[lon, lat], ...], "debug": {...}} or error
+
+        Detects cadastral parcel boundaries by:
+        1. Fetching a mosaic of WMS tiles around the coordinate
+        2. Masking out red logo pixels
+        3. Detecting black borders (cadastral boundaries)
+        4. Flood-filling from center to extract the region containing the point
+        5. Converting boundary to lon/lat ring
+        """
+        if not self._check_rate_limit():
+            return
+
+        body = self._read_json_payload()
+        if body is None:
+            return
+
+        lat = body.get("lat")
+        lon = body.get("lon")
+        if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "lat/lon numerici richiesti."})
+            return
+        lat, lon = float(lat), float(lon)
+        if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "lat/lon fuori range."})
+            return
+
+        radius = body.get("radius", 2)
+        radius = max(0, int(radius)) if isinstance(radius, (int, float)) else 2
+        radius = min(radius, 5)  # clamp to 5 to avoid excessive tile fetching
+
+        started_at = time.perf_counter()
+        try:
+            ring, debug_info = self._m3_detect_parcel_boundary(lon, lat, radius)
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            
+            if ring is None:
+                self.send_json(HTTPStatus.OK, {
+                    "ok": False,
+                    "message": f"Impossibile rilevare particella: {debug_info.get('reason', 'unknown')}",
+                    "debug": debug_info,
+                    "durationMs": elapsed_ms,
+                })
+                return
+
+            self.send_json(HTTPStatus.OK, {
+                "ok": True,
+                "ring": ring,
+                "debug": debug_info,
+                "durationMs": elapsed_ms,
+            })
+        except Exception as exc:
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            _log.error("parcel-geometry-m3 failed: %s", exc, exc_info=True)
+            self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {
+                "ok": False,
+                "message": f"Errore interno nel rilevamento M3: {str(exc)[:100]}",
+                "durationMs": elapsed_ms,
+            })
+
+    def _m3_detect_parcel_boundary(self, lon: float, lat: float, radius: int) -> tuple[list[list[float]] | None, dict[str, object]]:
+        """Execute M3 raster segmentation to extract parcel boundary.
+        
+        Returns: (ring, debug_dict) where ring is [[lon, lat], ...] or None if detection failed
+        """
+        # Try to import required libraries; gracefully degrade if unavailable
+        try:
+            import cv2
+            import numpy as np
+        except ImportError as e:
+            return None, {"reason": "missing_dependencies", "detail": str(e)}
+
+        tile_half = 0.00030
+        tile_px = 420
+
+        def fetch_tile(center_lon: float, center_lat: float) -> Image.Image | None:
+            """Fetch a single WMS tile centered at the given coordinates."""
+            lon_min_t = center_lon - tile_half
+            lat_min_t = center_lat - tile_half
+            lon_max_t = center_lon + tile_half
+            lat_max_t = center_lat + tile_half
+            
+            qs = urllib.parse.urlencode({
+                "SERVICE": "WMS",
+                "REQUEST": "GetMap",
+                "VERSION": "1.3.0",
+                "LAYERS": "CP.CadastralParcel",
+                "STYLES": "",
+                "CRS": "EPSG:6706",
+                "BBOX": f"{lat_min_t},{lon_min_t},{lat_max_t},{lon_max_t}",
+                "WIDTH": str(tile_px),
+                "HEIGHT": str(tile_px),
+                "FORMAT": "image/png",
+                "TRANSPARENT": "true",
+            })
+            upstream_url = f"{UPSTREAM_WMS}?language=ita&{qs}"
+            req = urllib.request.Request(
+                upstream_url,
+                headers={
+                    "User-Agent": "Planimeter-Local-Proxy/1.0",
+                    "Accept": "image/png,image/*;q=0.9,*/*;q=0.8",
+                },
+            )
+            try:
+                timeout = self.get_upstream_timeout()
+                retries = self.get_upstream_retries()
+                with self.fetch_upstream(req, timeout=timeout, retries=retries) as response:
+                    png_data = response.read()
+                    return Image.open(io.BytesIO(png_data)).convert("RGBA")
+            except Exception:
+                return None
+
+        def build_mosaic(radius: int) -> Image.Image | None:
+            """Fetch and assemble a grid of tiles into a mosaic."""
+            side = (2 * radius + 1) * tile_px
+            mosaic = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+            span_deg = tile_half * 2.0
+
+            for gy in range(radius, -radius - 1, -1):
+                for gx in range(-radius, radius + 1):
+                    lon_t = lon + gx * span_deg
+                    lat_t = lat + gy * span_deg
+                    tile = fetch_tile(lon_t, lat_t)
+                    if tile is None:
+                        tile = Image.new("RGBA", (tile_px, tile_px), (0, 0, 0, 0))
+                    
+                    px_x = (gx + radius) * tile_px
+                    px_y = (radius - gy) * tile_px
+                    mosaic.paste(tile, (px_x, px_y))
+            
+            return mosaic
+
+        def detect_on_image(img: Image.Image, radius: int) -> tuple[list[list[float]] | None, dict[str, object]]:
+            """Detect parcel boundary using flood-fill on raster edges."""
+            img_cv = np.array(img.convert("RGB"))
+            img_cv = cv2.cvtColor(img_cv, cv2.COLOR_RGB2BGR)
+            
+            # Mask red logo pixels (Agenzia Entrate branding)
+            lower_red = np.array([0, 0, 150])    # BGR
+            upper_red = np.array([100, 100, 255])
+            red_mask = cv2.inRange(img_cv, lower_red, upper_red)
+            background_color = np.array([189, 236, 253], dtype=np.uint8)
+            img_cv[red_mask > 0] = background_color
+            
+            # Edge detection: find black borders (cadastral boundaries)
+            gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+            edges = cv2.Canny(gray, threshold1=50, threshold2=120)
+            filled_area = cv2.bitwise_not(edges)
+            
+            # Flood-fill from center
+            w, h = img.size
+            cx, cy = w // 2, h // 2
+            
+            # Find center seed point (not on border)
+            if filled_area[cy, cx] == 0:
+                found = False
+                for r_search in range(1, 20):
+                    for dy in range(-r_search, r_search + 1):
+                        for dx in range(-r_search, r_search + 1):
+                            x, y = cx + dx, cy + dy
+                            if 0 <= x < w and 0 <= y < h and filled_area[y, x] > 0:
+                                cx, cy = x, y
+                                found = True
+                                break
+                        if found:
+                            break
+                    if found:
+                        break
+            
+            if filled_area[cy, cx] == 0:
+                return None, {"reason": "center_on_border"}
+            
+            # Create mask via flood-fill
+            mask = np.zeros((h + 2, w + 2), dtype=np.uint8)
+            cv2.floodFill(filled_area, mask, (cx, cy), (255,))
+            region_mask = mask[1:-1, 1:-1]
+            region_area_px = np.count_nonzero(region_mask)
+            
+            if region_area_px < 20:
+                return None, {"reason": "region_too_small", "region_px": int(region_area_px)}
+
+            # Expand by a few pixels so the extracted contour includes the outer cadastral black border
+            # instead of staying strictly inside the fill region.
+            border_kernel = np.ones((3, 3), dtype=np.uint8)
+            expanded_region_mask = cv2.dilate(region_mask, border_kernel, iterations=2)
+            
+            # Extract contour
+            contours, _ = cv2.findContours(expanded_region_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if not contours:
+                return None, {"reason": "no_contours"}
+            
+            region_contour = max(contours, key=cv2.contourArea)
+            epsilon = 0.005 * cv2.arcLength(region_contour, True)
+            approx = cv2.approxPolyDP(region_contour, epsilon, True)
+            boundary_px = [(pt[0][0], pt[0][1]) for pt in approx]
+            
+            if len(boundary_px) < 3:
+                return None, {"reason": "too_few_vertices"}
+            
+            # Convert pixels to lon/lat
+            total_half = tile_half * (2 * radius + 1)
+            lon_min = lon - total_half
+            lat_min = lat - total_half
+            lon_max = lon + total_half
+            lat_max = lat + total_half
+            
+            def px_to_lonlat(x: int, y: int) -> list[float]:
+                lon_v = lon_min + (x / (w - 1)) * (lon_max - lon_min)
+                lat_v = lat_max - (y / (h - 1)) * (lat_max - lat_min)
+                return [lon_v, lat_v]
+            
+            ring = [px_to_lonlat(x, y) for x, y in boundary_px]
+            
+            # Close ring if not already closed
+            if ring and ring[0] != ring[-1]:
+                ring.append(ring[0])
+            
+            if len(ring) < 4:  # at least 3 unique vertices + closure
+                return None, {"reason": "ring_too_small"}
+            
+            touches_border = any((x <= 2 or x >= w - 2 or y <= 2 or y >= h - 2) for x, y in boundary_px)
+            
+            return ring, {
+                "region_area_px": int(region_area_px),
+                "contour_vertices": len(approx),
+                "touches_border": touches_border,
+                "radius": radius,
+                "mosaic_tiles": (2 * radius + 1) ** 2,
+                "seed_cx": cx,
+                "seed_cy": cy,
+            }
+
+        # Single-shot detection at the exact requested radius.
+        # Progressive expansion is orchestrated by the frontend with explicit user confirmations.
+        mosaic = build_mosaic(radius)
+        if mosaic is None:
+            return None, {"reason": "mosaic_build_failed", "radius": radius, "radii_tried": [radius]}
+
+        ring, debug = detect_on_image(mosaic, radius)
+        if ring is not None:
+            return ring, debug
+
+        # Detection failed at this specific radius.
+        debug = dict(debug)
+        debug.setdefault("radius", radius)
+        debug.setdefault("radii_tried", [radius])
+        return None, debug
 
     def handle_proxy_health(self) -> None:
         started_at = time.perf_counter()
@@ -853,6 +1124,111 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             fields[key] = value
 
         return fields
+
+    def _fetch_parcel_geometry_at_point(
+        self,
+        lat: float,
+        lon: float,
+        buf: float,
+        canonical: dict[str, str],
+    ) -> tuple[dict[str, object] | None, str | None]:
+        """Try extracting parcel geometry around point using GetFeatureInfo JSON."""
+        # WMS 1.3.0 + EPSG:4326: axis order is latitude/longitude (Y/X)
+        bbox_4326 = f"{lat - buf},{lon - buf},{lat + buf},{lon + buf}"
+        width, height = 101, 101
+        query: dict[str, list[str]] = {
+            "SERVICE": ["WMS"],
+            "REQUEST": ["GetFeatureInfo"],
+            "VERSION": ["1.3.0"],
+            "LAYERS": ["CP.CadastralParcel"],
+            "QUERY_LAYERS": ["CP.CadastralParcel"],
+            "STYLES": [""],
+            "CRS": ["EPSG:4326"],
+            "BBOX": [bbox_4326],
+            "WIDTH": [str(width)],
+            "HEIGHT": [str(height)],
+            "I": [str(width // 2)],
+            "J": [str(height // 2)],
+            "INFO_FORMAT": ["application/json"],
+            "FEATURE_COUNT": ["8"],
+            "TRANSPARENT": ["true"],
+            "FORMAT": ["image/png"],
+        }
+
+        self._normalize_wms_query(query)
+        self._filter_wms_params(query)
+        upstream_qs = urllib.parse.urlencode(query, doseq=True)
+        upstream_url = f"{UPSTREAM_WMS}?language=ita&{upstream_qs}"
+        req = urllib.request.Request(
+            upstream_url,
+            headers={
+                "User-Agent": "Planimeter-Local-Proxy/1.0",
+                "Accept": "application/json,application/geo+json;q=0.9,*/*;q=0.2",
+            },
+        )
+
+        try:
+            with self.fetch_upstream(req, timeout=self.get_upstream_timeout(), retries=self.get_upstream_retries()) as response:
+                payload = response.read()
+                content_type = (response.headers.get("Content-Type", "") or "").lower()
+                if "json" not in content_type and not payload.lstrip().startswith((b"{", b"[")):
+                    return None, None
+
+                data = json.loads(payload.decode("utf-8", errors="ignore"))
+                features = data.get("features") if isinstance(data, dict) else None
+                if not isinstance(features, list) or not features:
+                    return None, None
+
+                chosen = self._pick_best_parcel_geometry_feature(features, canonical)
+                if not chosen:
+                    return None, None
+
+                geometry = chosen.get("geometry")
+                if not isinstance(geometry, dict):
+                    return None, None
+
+                geom_type = geometry.get("type")
+                if geom_type not in {"Polygon", "MultiPolygon"}:
+                    return None, None
+
+                return geometry, "EPSG:4326"
+        except Exception:
+            return None, None
+
+    @staticmethod
+    def _pick_best_parcel_geometry_feature(features: list[object], canonical: dict[str, str]) -> dict[str, object] | None:
+        target_ids = {
+            str(canonical.get("id") or "").strip(),
+            str(canonical.get("local_id") or "").strip(),
+            str(canonical.get("label") or "").strip(),
+        }
+        target_ids.discard("")
+
+        polygon_candidates: list[dict[str, object]] = []
+        for feature in features:
+            if not isinstance(feature, dict):
+                continue
+            geometry = feature.get("geometry")
+            if not isinstance(geometry, dict):
+                continue
+            if geometry.get("type") not in {"Polygon", "MultiPolygon"}:
+                continue
+            polygon_candidates.append(feature)
+
+        if not polygon_candidates:
+            return None
+        if not target_ids:
+            return polygon_candidates[0]
+
+        for feature in polygon_candidates:
+            props = feature.get("properties")
+            if not isinstance(props, dict):
+                continue
+            prop_values = {str(value).strip() for value in props.values() if value is not None}
+            if target_ids & prop_values:
+                return feature
+
+        return polygon_candidates[0]
 
     def handle_wms_tile(self, query_string: str) -> None:
         """WMS proxy with SQLite tile cache for all GetMap requests."""

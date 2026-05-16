@@ -1,15 +1,24 @@
 import Map          from 'ol/Map.js';
 import View         from 'ol/View.js';
 import VectorSource from 'ol/source/Vector.js';
+import VectorLayer  from 'ol/layer/Vector.js';
+import Feature      from 'ol/Feature.js';
+import { Point as PointGeom, Polygon }  from 'ol/geom.js';
 import ScaleLine    from 'ol/control/ScaleLine.js';
+import GeoJSON      from 'ol/format/GeoJSON.js';
 import { defaults as defaultControls } from 'ol/control.js';
 import { fromLonLat, toLonLat, transformExtent } from 'ol/proj.js';
+import OLStyle from 'ol/style/Style.js';
+import Fill from 'ol/style/Fill.js';
+import Stroke from 'ol/style/Stroke.js';
+import CircleStyle from 'ol/style/Circle.js';
 
 import { createInitialState }            from './core/state.js';
 import { buildLayers }                   from './map/layers.js';
 import { buildInteractions }             from './map/interactions.js';
 import { calculateArea, calculatePerimeter, calculateLength } from './geometry/calculations.js';
-import { buildFeatureStyle }             from './geometry/style.js';
+import { calculateIntersectionMetricsWithCache } from './geometry/intersection.js';
+import { buildFeatureStyle, getFeatureLabelGeometry } from './geometry/style.js';
 import { decorateFeature }               from './geometry/decorate.js';
 import { t, setLocale, detectLocale }    from './i18n/i18n.js';
 import { UnitSystem }                    from './units/units.js';
@@ -31,6 +40,7 @@ import { buildDslPayload } from './dsl/schema.js';
 
 const BASE_LAYER_KEYS = ['sat', 'openTopoMap', 'esriTopo', 'esriRelief'];
 const ADMIN_LAYER_KEYS = ['osm', 'catasto'];
+const DSL_UNASSIGNED_CATEGORY_KEY = '__unassigned__';
 
 export default class Planimeter {
     constructor() {
@@ -45,11 +55,18 @@ export default class Planimeter {
 
         // ── State & source ────────────────────────────────────────────────────
         this.state        = createInitialState();
+        if (!(this.state.dslHiddenCategoryKeys instanceof Set)) {
+            this.state.dslHiddenCategoryKeys = new Set(this.state.dslHiddenCategoryKeys ?? []);
+        }
         this.state.locale = locale;
         this.state.unitSystem = this.unitSystem.system;
         this.state.toolbarPanel = preferences.toolbarPanel;
         this.state.activeBaseLayer = this.sanitizeBaseLayerKey(preferences.activeBaseLayer);
         this.state.activeAdminLayer = this.sanitizeAdminLayerKey(preferences.activeAdminLayer);
+        this.state.activeEditingLayer = preferences.activeEditingLayer === 'pertenenze' ? 'pertenenze' : 'user';
+        this.state.userAreasVisible = preferences.userAreasVisible !== false;
+        this.state.pertenenzeVisible = Boolean(preferences.pertenenzeVisible);
+        this.state.pertenenzeColor = this.sanitizePertenenzeColor(preferences.pertenenzeColor);
         this.state.catastoWmsLayerSettings = this.sanitizeCatastoWmsLayerSettings(
             preferences.catastoWmsLayerSettings,
             preferences.catastoWmsLayers,
@@ -62,18 +79,38 @@ export default class Planimeter {
         this.state.parcelInfoStatusKey = preferences.parcelInfoEnabled
             ? 'parcelInfo.clickHint'
             : 'parcelInfo.disabled';
+        this.m3BusyActive = false;
+        this.m3BusyMessage = '';
+        this.mapTileLoadCount = 0;
 
         this.vectorSource = new VectorSource();
+        this.pertenenzaSource = new VectorSource();
+        this.editVertexSource = new VectorSource();
+        this.geoJsonFormat = new GeoJSON();
 
         // ── DOM ───────────────────────────────────────────────────────────────
         this.elements = this.collectElements();
 
         // ── Layers & map ──────────────────────────────────────────────────────
-        this.layers = buildLayers(this.vectorSource, this.featureStyle.bind(this));
+        this.layers = buildLayers(this.vectorSource, this.pertenenzaSource, this.featureStyle.bind(this));
+        this.editVertexLayer = new VectorLayer({
+            source: this.editVertexSource,
+            zIndex: 40,
+            updateWhileAnimating: true,
+            updateWhileInteracting: true,
+            style: (feature) => new OLStyle({
+                image: new CircleStyle({
+                    radius: feature.get('vertexSelected') ? 7 : 5,
+                    fill: new Fill({ color: feature.get('vertexSelected') ? '#0a84ff' : 'rgba(255,255,255,0.92)' }),
+                    stroke: new Stroke({ color: feature.get('vertexSelected') ? '#ffffff' : '#ff6b00', width: 2.5 }),
+                }),
+            }),
+        });
         this.initMap();
 
         // ── Interactions ──────────────────────────────────────────────────────
-        this.interactions = buildInteractions(this.vectorSource, this.layers.vector);
+        this.allInteractions = buildInteractions(this.vectorSource, this.pertenenzaSource, this.layers.vector, this.layers.pertenenza);
+        this.setActiveInteractions();
         this.addInteractionsToMap();
         this.bindInteractionEvents();
 
@@ -91,7 +128,9 @@ export default class Planimeter {
             editFeature:     (feature) => this.editFeatureFromContext(feature),
             assignCategory:  (feature) => this.openCategoryAssignmentFromContext(feature),
             deleteFeature:   (feature) => this.deleteFeatureFromContext(feature),
+            resyncParcelMetadata: (feature) => this.resyncParcelMetadataForFeature(feature),
             queryParcelAtPixel: (pixel) => this.fetchParcelInfoAtPixel(pixel),
+            detectParcelM3AtPixel: (pixel) => this.detectParcelM3AtPixel(pixel),
             refreshTileAtPixel: (pixel) => this.refreshTileAtPixel(pixel),
             copyCoordinatesAtPixel: (pixel) => this.copyCoordinatesAtPixel(pixel),
             exportView:      () => this.exportViewSnapshot(),
@@ -117,6 +156,7 @@ export default class Planimeter {
         restorePersistedFeatures(
             this.state,
             this.vectorSource,
+            this.pertenenzaSource,
             this.view,
             (count) => {
                 this.setToolbarMessage(t('msg.featuresRestored', { count }));
@@ -128,6 +168,7 @@ export default class Planimeter {
         initDsl().then(() => {
             this.state.dslReady = true;
             this.layers.vector.changed();
+            this.layers.pertenenza.changed();
             this.updateSummary();
             this.updateDslAssignmentControls();
         }).catch((err) => {
@@ -146,6 +187,70 @@ export default class Planimeter {
         this.dragPanInteractions = null;
     }
 
+    // ── Interaction helpers ─────────────────────────────────────────────────────
+
+    setActiveInteractions() {
+        const isUser = this.state.activeEditingLayer === 'user';
+        const userInteractions = this.allInteractions.user;
+        const pertenenzeInteractions = this.allInteractions.pertenenze;
+
+        for (const ix of Object.values(userInteractions)) {
+            ix.setActive(false);
+        }
+        for (const ix of Object.values(pertenenzeInteractions)) {
+            ix.setActive(false);
+        }
+
+        const activeSet = isUser ? userInteractions : pertenenzeInteractions;
+        for (const ix of Object.values(activeSet)) {
+            ix.setActive(false);
+        }
+
+        this.setMode(this.state.mode);
+    }
+
+    getActiveInteractions() {
+        const isUser = this.state.activeEditingLayer === 'user';
+        return isUser ? this.allInteractions.user : this.allInteractions.pertenenze;
+    }
+
+    getActiveVectorSource() {
+        return this.state.activeEditingLayer === 'user' ? this.vectorSource : this.pertenenzaSource;
+    }
+
+    getActiveVectorLayer() {
+        return this.state.activeEditingLayer === 'user' ? this.layers.vector : this.layers.pertenenza;
+    }
+
+    getFeatureOverlayLayer(feature) {
+        return feature?.get?.('overlayLayer') === 'pertenenze' ? 'pertenenze' : 'user';
+    }
+
+    getSourceForFeature(feature) {
+        return this.getFeatureOverlayLayer(feature) === 'pertenenze' ? this.pertenenzaSource : this.vectorSource;
+    }
+
+    getLayerForFeature(feature) {
+        return this.getFeatureOverlayLayer(feature) === 'pertenenze' ? this.layers.pertenenza : this.layers.vector;
+    }
+
+    setEditingLayer(layerKey) {
+        this.state.activeEditingLayer = layerKey === 'pertenenze' ? 'pertenenze' : 'user';
+        if (this.state.activeEditingLayer === 'user') {
+            this.state.userAreasVisible = true;
+        }
+        if (this.state.activeEditingLayer === 'pertenenze') {
+            this.state.pertenenzeVisible = true;
+        }
+        if (this.elements.editingLayerSelect) {
+            this.elements.editingLayerSelect.value = this.state.activeEditingLayer;
+        }
+        this.clearSelection();
+        this.setActiveInteractions();
+        this.applyLayerGroupSelection();
+        this.persistPreferences();
+    }
+
     // ── DOM helpers ─────────────────────────────────────────────────────────────
 
     collectElements() {
@@ -158,8 +263,13 @@ export default class Planimeter {
             layerEsriRelief:           document.getElementById('layer-esri-relief'),
             layerOsm:                  document.getElementById('layer-osm'),
             layerCatasto:              document.getElementById('layer-catasto'),
+            layerUserAreas:            document.getElementById('layer-user-areas'),
+            layerPertenenze:           document.getElementById('layer-pertenenze'),
             baseLayerInputs:           [...document.querySelectorAll('[data-layer-group="base"]')],
             adminLayerInputs:          [...document.querySelectorAll('[data-layer-group="admin"]')],
+            userAreaLayerInputs:       [...document.querySelectorAll('[data-layer-group="user-areas"]')],
+            pertenenzaLayerInputs:     [...document.querySelectorAll('[data-layer-group="pertenenze"]')],
+            editingLayerSelect:        document.getElementById('editing-layer-select'),
             catastoSource:             document.getElementById('catasto-source'),
             catastoHint:               document.getElementById('catasto-hint'),
             locateButton:              document.getElementById('btn-locate'),
@@ -172,6 +282,8 @@ export default class Planimeter {
             importInput:               document.getElementById('file-import'),
             modeButtons:               [...document.querySelectorAll('[data-mode]')],
             status:                    document.getElementById('toolbar-status'),
+            m3BusyIndicator:           document.getElementById('m3-busy-indicator'),
+            m3BusyLabel:               document.getElementById('m3-busy-label'),
             statCount:                 document.getElementById('stat-count'),
             statTotalArea:             document.getElementById('stat-total-area'),
             statTotalPerimeter:        document.getElementById('stat-total-perimeter'),
@@ -189,6 +301,7 @@ export default class Planimeter {
             settingsCacheTtlDays:      document.getElementById('settings-cache-ttl-days'),
             settingsCacheSizeMb:       document.getElementById('settings-cache-size-mb'),
             settingsParcelInfoEnabled: document.getElementById('settings-parcel-info-enabled'),
+            settingsPertenenzeColor:   document.getElementById('settings-pertenenze-color'),
             settingsWmsLayerParts:     [...document.querySelectorAll('[data-wms-layer-part]')],
             settingsWmsLayerOpacity:   [...document.querySelectorAll('[data-wms-layer-opacity]')],
             parcelInfoStatus:          document.getElementById('parcel-info-status'),
@@ -202,6 +315,7 @@ export default class Planimeter {
             pointerCoordinatesPanel:   document.getElementById('pointer-coordinates'),
             pointerCoordinatesValue:   document.getElementById('pointer-coordinates-value'),
             dslCategoriesSection:      document.getElementById('section-dsl-categories'),
+            dslCategoryFilters:        document.getElementById('dsl-category-filters'),
             dslLegend:                 document.getElementById('dsl-legend'),
             dslCategoryTbody:          document.getElementById('dsl-category-tbody'),
             dslAssignSection:          document.getElementById('section-dsl-assignment'),
@@ -211,6 +325,7 @@ export default class Planimeter {
             dslFieldsForm:             document.getElementById('dsl-fields-form'),
             dslAssignButton:           document.getElementById('btn-dsl-assign'),
             dslAssignHint:             document.getElementById('dsl-assign-hint'),
+            dslCadastralLinks:         document.getElementById('dsl-cadastral-links'),
         };
     }
 
@@ -234,7 +349,9 @@ export default class Planimeter {
                 this.layers.osm,
                 ...Object.values(this.layers.catastoOfficial),
                 this.layers.catastoFallback,
+                this.layers.pertenenza,
                 this.layers.vector,
+                this.editVertexLayer,
             ],
             view: this.view,
             controls: defaultControls({
@@ -258,26 +375,104 @@ export default class Planimeter {
             });
         });
 
+        this.bindTileLoadingIndicator();
+
         this.view.on('change:resolution', () => this.updateSummary());
-        this.vectorSource.on('addfeature',    () => { this.updateSummary(); schedulePersistenceSync(this.state, this.vectorSource); });
-        this.vectorSource.on('removefeature', () => { this.updateSummary(); schedulePersistenceSync(this.state, this.vectorSource); });
-        this.vectorSource.on('changefeature', () => { this.updateSummary(); schedulePersistenceSync(this.state, this.vectorSource); });
+        this.vectorSource.on('addfeature',    () => { this.updateSummary(); schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource); });
+        this.vectorSource.on('removefeature', () => { this.updateSummary(); schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource); });
+        this.vectorSource.on('changefeature', () => { this.updateSummary(); schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource); });
+        this.pertenenzaSource.on('addfeature',    () => { this.updateSummary(); schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource); });
+        this.pertenenzaSource.on('removefeature', () => { this.updateSummary(); schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource); });
+        this.pertenenzaSource.on('changefeature', () => { this.updateSummary(); schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource); });
     }
 
     addInteractionsToMap() {
-        const ix = this.interactions;
-        this.map.addInteraction(ix.select);
-        this.map.addInteraction(ix.modify);
-        this.map.addInteraction(ix.draw);
-        this.map.addInteraction(ix.drawStraight);
-        this.map.addInteraction(ix.drawPolyline);
-        this.map.addInteraction(ix.snap);
+        const addSet = (set) => {
+            this.map.addInteraction(set.select);
+            this.map.addInteraction(set.modify);
+            this.map.addInteraction(set.draw);
+            this.map.addInteraction(set.drawStraight);
+            this.map.addInteraction(set.drawPolyline);
+            this.map.addInteraction(set.snap);
+        };
+        addSet(this.allInteractions.user);
+        addSet(this.allInteractions.pertenenze);
     }
 
     // ── Interaction events ───────────────────────────────────────────────────────
 
     bindInteractionEvents() {
-        const ix = this.interactions;
+        this.bindInteractionEventsForSet(this.allInteractions.user, 'user');
+        this.bindInteractionEventsForSet(this.allInteractions.pertenenze, 'pertenenze');
+
+        this.map.on('pointermove', (event) => {
+            this.state.lastPointerCoordinate = event.coordinate;
+        });
+
+        this.map.on('singleclick', (event) => {
+            if (this.state.mode !== 'edit') return;
+            if (!this.isPolygonFeature(this.state.selectedFeature)) return;
+
+            const picked = this.findNearestEditableVertex(this.state.selectedFeature, event.coordinate, 10);
+            if (!picked) {
+                this.state.selectedEditVertex = null;
+                this.layers.vector.changed();
+                this.layers.pertenenza.changed();
+                this.refreshEditVertexOverlay();
+                return;
+            }
+
+            this.state.selectedEditVertex = {
+                featureId: this.state.selectedFeature.get('featureId'),
+                overlayLayer: this.getFeatureOverlayLayer(this.state.selectedFeature),
+                polygonIndex: picked.polygonIndex,
+                ringIndex: picked.ringIndex,
+                vertexIndex: picked.vertexIndex,
+            };
+            this.layers.vector.changed();
+            this.layers.pertenenza.changed();
+            this.refreshEditVertexOverlay();
+        });
+
+        this.map.getViewport().addEventListener('contextmenu', (event) => {
+            if (this.state.mode !== 'edit') return;
+            if (!this.state.selectedEditVertex) return;
+            if (!this.isPolygonFeature(this.state.selectedFeature)) return;
+
+            event.preventDefault();
+            event.stopPropagation();
+            this.requestDeleteSelectedVertex();
+        });
+
+        document.addEventListener('keydown', (ev) => {
+            if (ev.ctrlKey && !this.state.isCtrlPressed) {
+                this.state.isCtrlPressed = true;
+                this.refreshSnapState();
+            }
+
+            if ((ev.key === 'Delete' || ev.key === 'Del') && this.state.mode === 'edit') {
+                if (this.requestDeleteSelectedVertex()) {
+                    ev.preventDefault();
+                }
+            }
+        });
+        document.addEventListener('keyup', (ev) => {
+            if (!ev.ctrlKey && this.state.isCtrlPressed) {
+                this.state.isCtrlPressed = false;
+                this.refreshSnapState();
+            }
+        });
+        window.addEventListener('blur', () => {
+            if (this.state.isCtrlPressed) {
+                this.state.isCtrlPressed = false;
+                this.refreshSnapState();
+            }
+        });
+    }
+
+    bindInteractionEventsForSet(ix, setName) {
+        const getSource = () => setName === 'user' ? this.vectorSource : this.pertenenzaSource;
+        const getLayer = () => setName === 'user' ? this.layers.vector : this.layers.pertenenza;
 
         ix.draw.on('drawstart', () => {
             this.state.isDrawing = true;
@@ -286,9 +481,10 @@ export default class Planimeter {
         });
         ix.draw.on('drawend', (ev) => {
             this.state.isDrawing = false;
-            decorateFeature(ev.feature, this.state, this.vectorSource.getFeatures().length);
+            ev.feature.set('overlayLayer', setName);
+            decorateFeature(ev.feature, this.state, getSource().getFeatures().length);
             this.state.selectedFeature = ev.feature;
-            this.layers.vector.changed();
+            getLayer().changed();
             this.updateSummary();
             this.setToolbarMessage(t('msg.drawDone'));
             this.pauseDrawAfterClose();
@@ -306,9 +502,10 @@ export default class Planimeter {
         ix.drawStraight.on('drawend', (ev) => {
             this.state.isDrawing = false;
             ev.feature.set('measurementType', 'straight');
-            decorateFeature(ev.feature, this.state, this.vectorSource.getFeatures().length);
+            ev.feature.set('overlayLayer', setName);
+            decorateFeature(ev.feature, this.state, getSource().getFeatures().length);
             this.state.selectedFeature = ev.feature;
-            this.layers.vector.changed();
+            getLayer().changed();
             this.updateSummary();
             this.setToolbarMessage(t('msg.straightDone'));
         });
@@ -325,9 +522,10 @@ export default class Planimeter {
         ix.drawPolyline.on('drawend', (ev) => {
             this.state.isDrawing = false;
             ev.feature.set('measurementType', 'polyline');
-            decorateFeature(ev.feature, this.state, this.vectorSource.getFeatures().length);
+            ev.feature.set('overlayLayer', setName);
+            decorateFeature(ev.feature, this.state, getSource().getFeatures().length);
             this.state.selectedFeature = ev.feature;
-            this.layers.vector.changed();
+            getLayer().changed();
             this.updateSummary();
             this.setToolbarMessage(t('msg.polylineDone'));
         });
@@ -341,34 +539,35 @@ export default class Planimeter {
         ix.modify.on('modifystart', () => {
             this.setToolbarMessage(t('msg.editVerticesActive'));
         });
-        ix.modify.on('modifyend', () => {
+        ix.modify.on('modifyend', (ev) => {
             this.updateSummary();
             this.setToolbarMessage(t('msg.editDone'));
             const now = new Date().toISOString();
-            for (const f of this.interactions.select.getFeatures().getArray()) {
+            for (const f of ix.select.getFeatures().getArray()) {
                 f.set('version',    (f.get('version') ?? 1) + 1);
                 f.set('modifiedAt', now);
             }
+
+            if (this.state.mode === 'edit' && this.isPolygonFeature(this.state.selectedFeature)) {
+                const anchor = ev?.mapBrowserEvent?.coordinate ?? this.state.lastPointerCoordinate;
+                if (Array.isArray(anchor) && anchor.length >= 2) {
+                    const picked = this.findNearestEditableVertex(this.state.selectedFeature, anchor, 14);
+                    if (picked) {
+                        this.state.selectedEditVertex = {
+                            featureId: this.state.selectedFeature.get('featureId'),
+                            overlayLayer: this.getFeatureOverlayLayer(this.state.selectedFeature),
+                            polygonIndex: picked.polygonIndex,
+                            ringIndex: picked.ringIndex,
+                            vertexIndex: picked.vertexIndex,
+                        };
+                        this.layers.vector.changed();
+                        this.layers.pertenenza.changed();
+                        this.refreshEditVertexOverlay();
+                    }
+                }
+            }
         });
 
-        document.addEventListener('keydown', (ev) => {
-            if (ev.ctrlKey && !this.state.isCtrlPressed) {
-                this.state.isCtrlPressed = true;
-                this.refreshSnapState();
-            }
-        });
-        document.addEventListener('keyup', (ev) => {
-            if (!ev.ctrlKey && this.state.isCtrlPressed) {
-                this.state.isCtrlPressed = false;
-                this.refreshSnapState();
-            }
-        });
-        window.addEventListener('blur', () => {
-            if (this.state.isCtrlPressed) {
-                this.state.isCtrlPressed = false;
-                this.refreshSnapState();
-            }
-        });
     }
 
     // ── UI bindings ──────────────────────────────────────────────────────────────
@@ -386,6 +585,10 @@ export default class Planimeter {
 
         this.elements.modeButtons.forEach((btn) => {
             btn.addEventListener('click', () => this.setMode(btn.dataset.mode));
+        });
+
+        this.elements.editingLayerSelect?.addEventListener('change', (ev) => {
+            this.setEditingLayer(ev.target.value);
         });
 
         this.elements.locateButton.addEventListener('click',  () => this.geolocate());
@@ -458,6 +661,13 @@ export default class Planimeter {
             this.renderParcelInfo();
         });
 
+        this.elements.settingsPertenenzeColor?.addEventListener('input', (ev) => {
+            this.state.pertenenzeColor = this.sanitizePertenenzeColor(ev.target.value);
+            this.syncPreferenceControls();
+            this.persistPreferences();
+            this.layers.pertenenza.changed();
+        });
+
         document.addEventListener('keydown', (ev) => {
             if (ev.key === 'Escape' && this.selectionExport?.active) {
                 this.cancelSelectionExportMode();
@@ -475,11 +685,22 @@ export default class Planimeter {
     // ── Feature style ────────────────────────────────────────────────────────────
 
     featureStyle(feature) {
+        if (this.isPolygonFeature(feature)) {
+            const categoryId = this.getFeatureDslCategoryId(feature);
+            if (!this.isDslCategoryVisible(categoryId)) {
+                return [];
+            }
+        }
         return buildFeatureStyle(
             feature,
             this.state.selectedFeature,
             this.view?.getProjection(),
             this.unitSystem,
+            {
+                pertenenzeColor: this.state.pertenenzeColor,
+                editMode: this.state.mode === 'edit',
+                selectedVertex: this.state.selectedEditVertex,
+            },
         );
     }
 
@@ -491,13 +712,18 @@ export default class Planimeter {
         }
 
         this.state.mode = mode;
+        if (mode !== 'edit' && this.state.selectedEditVertex) {
+            this.state.selectedEditVertex = null;
+            this.layers.vector.changed();
+            this.layers.pertenenza.changed();
+        }
 
         if (this.state.drawLockTimeoutId) {
             window.clearTimeout(this.state.drawLockTimeoutId);
             this.state.drawLockTimeoutId = null;
         }
 
-        const ix = this.interactions;
+        const ix = this.getActiveInteractions();
         ix.draw.setActive(mode === 'draw');
         ix.drawStraight.setActive(mode === 'measure-straight');
         ix.drawPolyline.setActive(mode === 'measure-polyline');
@@ -538,6 +764,9 @@ export default class Planimeter {
         }
 
         this.setToolbarMessage(t(modeMsg[mode] ?? 'msg.navigateActive'));
+        this.layers.vector.changed();
+        this.layers.pertenenza.changed();
+        this.refreshEditVertexOverlay();
         this.updatePointerCoordinatesVisibility();
         this.renderParcelInfo();
     }
@@ -547,9 +776,10 @@ export default class Planimeter {
     }
 
     getActiveDrawInteraction() {
-        if (this.state.mode === 'measure-straight') return this.interactions.drawStraight;
-        if (this.state.mode === 'measure-polyline') return this.interactions.drawPolyline;
-        if (this.state.mode === 'draw')             return this.interactions.draw;
+        const ix = this.getActiveInteractions();
+        if (this.state.mode === 'measure-straight') return ix.drawStraight;
+        if (this.state.mode === 'measure-polyline') return ix.drawPolyline;
+        if (this.state.mode === 'draw')             return ix.draw;
         return null;
     }
 
@@ -558,12 +788,12 @@ export default class Planimeter {
     }
 
     pauseDrawAfterClose() {
-        this.interactions.draw.setActive(false);
+        this.getActiveInteractions().draw.setActive(false);
         if (this.state.drawLockTimeoutId) window.clearTimeout(this.state.drawLockTimeoutId);
         this.state.drawLockTimeoutId = window.setTimeout(() => {
             this.state.drawLockTimeoutId = null;
             if (this.state.mode === 'draw') {
-                this.interactions.draw.setActive(true);
+                this.getActiveInteractions().draw.setActive(true);
                 this.refreshSnapState();
                 this.setToolbarMessage(t('msg.drawResumed'));
             }
@@ -572,7 +802,9 @@ export default class Planimeter {
 
     refreshSnapState() {
         const allowed = this.isMeasureOrDrawMode(this.state.mode) || this.state.mode === 'edit';
-        this.interactions.snap.setActive(allowed && !this.state.isCtrlPressed);
+        this.allInteractions.user.snap.setActive(false);
+        this.allInteractions.pertenenze.snap.setActive(false);
+        this.getActiveInteractions().snap.setActive(allowed && !this.state.isCtrlPressed);
 
         if (this.state.mode === 'navigate') {
             this.elements.snapStatus.textContent = t('snap.off.navigate');
@@ -592,35 +824,384 @@ export default class Planimeter {
 
         if (!feature) {
             this.state.selectedFeature = null;
+            this.state.selectedEditVertex = null;
             this.layers.vector.changed();
+            this.layers.pertenenza.changed();
+            this.refreshEditVertexOverlay();
             this.updateSummary();
             return;
         }
 
         if (this.state.mode === 'delete') {
-            this.vectorSource.removeFeature(feature);
+            this.getSourceForFeature(feature).removeFeature(feature);
             this.clearSelection();
             this.setToolbarMessage(t('msg.featureDeleted'));
             return;
         }
 
         this.state.selectedFeature = feature;
+        this.state.selectedEditVertex = null;
         this.layers.vector.changed();
+        this.layers.pertenenza.changed();
+        this.refreshEditVertexOverlay();
         this.updateSummary();
-        this.setToolbarMessage(t('msg.featureSelected', { name: feature.get('featureName') }));
+        this.setToolbarMessage(this.formatSelectedFeatureMessage(feature));
     }
 
     clearSelection() {
         this.state.selectedFeature = null;
-        this.interactions.select.getFeatures().clear();
+        this.state.selectedEditVertex = null;
+        this.allInteractions.user.select.getFeatures().clear();
+        this.allInteractions.pertenenze.select.getFeatures().clear();
         this.layers.vector.changed();
+        this.layers.pertenenza.changed();
+        this.refreshEditVertexOverlay();
         this.updateSummary();
+    }
+
+    getPropertyScopeLabel(feature) {
+        const explicit = String(feature?.get?.('parcelNumber') || '').trim();
+        if (explicit) return explicit;
+
+        const name = String(feature?.get?.('featureName') || '').trim();
+        const nameMatch = /^(?:Pertinenza|Boundary|Parcel)?\s*(\d+)$/i.exec(name);
+        if (nameMatch) return nameMatch[1];
+
+        const featureId = String(feature?.get?.('featureId') || '').trim();
+        const idMatch = /^pert-(\d+)$/i.exec(featureId);
+        if (idMatch) return idMatch[1];
+
+        return name || featureId || '-';
+    }
+
+    deriveParcelDisplayNumber(parcel) {
+        const id = String(parcel?.id || '').trim();
+        const localId = String(parcel?.local_id || '').trim();
+        const label = String(parcel?.label || '').trim();
+
+        const fromId = /(\d+)$/i.exec(id)?.[1];
+        if (fromId) return fromId;
+
+        const fromLocalId = /(\d+)$/i.exec(localId)?.[1];
+        if (fromLocalId) return fromLocalId;
+
+        const fromLabel = /(\d+)$/i.exec(label)?.[1];
+        if (fromLabel) return fromLabel;
+
+        return id || localId || label || '-';
+    }
+
+    async fetchParcelSummaryAtLonLat(lon, lat) {
+        const proxyData = await this.fetchParcelSummaryViaProxyAtLonLat(lon, lat);
+        if (proxyData?.parcel) return proxyData;
+
+        try {
+            const response = await fetch('/parcel-at-point', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                },
+                body: JSON.stringify({ lat, lon, includeGeometry: true }),
+            });
+            if (response.ok) {
+                const data = await response.json();
+                if (data?.parcel) return data;
+            }
+        } catch {
+            // Fall through to WMS proxy fallback.
+        }
+
+        return this.fetchParcelSummaryViaProxyAtLonLat(lon, lat);
+    }
+
+    async fetchParcelSummaryViaProxyAtLonLat(lon, lat) {
+        const coordinate = fromLonLat([lon, lat], this.view.getProjection());
+        const resolution = this.view.getResolution();
+        if (!coordinate || !resolution) return null;
+
+        const source = this.layers.catastoOfficial.parcels.getSource();
+        const url = source.getFeatureInfoUrl(
+            coordinate,
+            resolution,
+            this.view.getProjection(),
+            {
+                INFO_FORMAT: 'text/html',
+                FEATURE_COUNT: 10,
+                LAYERS: 'CP.CadastralParcel',
+                QUERY_LAYERS: 'CP.CadastralParcel',
+            },
+        );
+        if (!url) return null;
+
+        try {
+            const response = await fetch(`${url.replace('/wms-tile?', '/wms-proxy?')}&OUTPUT=json`, {
+                headers: { Accept: 'application/json' },
+            });
+            if (!response.ok) return null;
+            const data = await response.json();
+            return data?.parcel ? data : null;
+        } catch {
+            return null;
+        }
+    }
+
+    applyParcelMetadataToFeature(feature, parcelData) {
+        const parcel = parcelData?.parcel;
+        if (!feature || !parcel) return;
+
+        const parcelNumber = this.deriveParcelDisplayNumber(parcel);
+        feature.set('parcelNumber', parcelNumber);
+        feature.set('featureName', parcelNumber);
+        feature.set('parcel_id', String(parcel.id || parcel.local_id || '').trim() || null);
+        feature.set('inspire_local_id', String(parcel.local_id || '').trim() || null);
+        feature.set('parcel_local_id', String(parcel.local_id || '').trim() || null);
+        feature.set('parcel_label', String(parcel.label || '').trim() || null);
+    }
+
+    refreshEditVertexOverlay() {
+        this.editVertexSource.clear();
+
+        if (this.state.mode !== 'edit' || !this.isPolygonFeature(this.state.selectedFeature)) {
+            return;
+        }
+
+        const feature = this.state.selectedFeature;
+        const polygonSets = this.getFeaturePolygonCoordinateSets(feature);
+        const featureId = feature.get('featureId');
+
+        for (let polygonIndex = 0; polygonIndex < polygonSets.length; polygonIndex += 1) {
+            const rings = polygonSets[polygonIndex] || [];
+            for (let ringIndex = 0; ringIndex < rings.length; ringIndex += 1) {
+                const ring = rings[ringIndex] || [];
+                const limit = Math.max(0, ring.length - 1);
+                for (let vertexIndex = 0; vertexIndex < limit; vertexIndex += 1) {
+                    const coord = ring[vertexIndex];
+                    if (!Array.isArray(coord) || coord.length < 2) continue;
+
+                    const overlayFeature = new Feature({
+                        geometry: new PointGeom(coord),
+                    });
+                    const isSelectedVertex = Boolean(
+                        this.state.selectedEditVertex
+                        && this.state.selectedEditVertex.featureId === featureId
+                        && this.state.selectedEditVertex.polygonIndex === polygonIndex
+                        && this.state.selectedEditVertex.ringIndex === ringIndex
+                        && this.state.selectedEditVertex.vertexIndex === vertexIndex,
+                    );
+                    overlayFeature.set('vertexSelected', isSelectedVertex);
+                    this.editVertexSource.addFeature(overlayFeature);
+                }
+            }
+        }
+    }
+
+    getFeatureInspireLocalId(feature) {
+        const direct = String(
+            feature?.get?.('inspire_local_id')
+            || feature?.get?.('parcel_local_id')
+            || feature?.get?.('parcel_id')
+            || '',
+        ).trim();
+        if (direct) return direct;
+
+        const cadastralLinks = feature?.get?.('links')?.cadastral;
+        if (Array.isArray(cadastralLinks)) {
+            const firstParcelId = String(cadastralLinks.find((entry) => entry?.parcel_id)?.parcel_id || '').trim();
+            if (firstParcelId) return firstParcelId;
+        }
+
+        return '-';
+    }
+
+    formatSelectedFeatureMessage(feature) {
+        if (!feature) return t('stat.selection.none');
+
+        if (this.getFeatureOverlayLayer(feature) !== 'pertenenze' || !this.isPolygonFeature(feature)) {
+            return t('msg.featureSelected', { name: feature.get('featureName') });
+        }
+
+        const projection = this.view?.getProjection();
+        return t('msg.propertyScopeSelected', {
+            parcel: this.getPropertyScopeLabel(feature),
+            area: this.unitSystem.formatArea(calculateArea(feature, projection)),
+            perimeter: this.unitSystem.formatPerimeter(calculatePerimeter(feature, projection)),
+            localId: this.getFeatureInspireLocalId(feature),
+        });
+    }
+
+    escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    buildParcelSummaryHtml(parcel = {}, parcelGeometry = null, parcelGeometryCrs = 'EPSG:4326') {
+        const label = parcel.label ?? parcel.reference ?? parcel.id ?? parcel.local_id ?? '-';
+        const inspireLocalId = parcel.local_id ?? parcel.id ?? '-';
+        let areaLabel = '-';
+        let perimeterLabel = '-';
+
+        if (parcelGeometry && typeof parcelGeometry === 'object') {
+            try {
+                const geometry = this.geoJsonFormat.readGeometry(parcelGeometry, {
+                    dataProjection: parcelGeometryCrs,
+                    featureProjection: this.view.getProjection(),
+                });
+                if (geometry) {
+                    const feature = new Feature({ geometry });
+                    areaLabel = this.unitSystem.formatArea(calculateArea(feature, this.view?.getProjection()));
+                    perimeterLabel = this.unitSystem.formatPerimeter(calculatePerimeter(feature, this.view?.getProjection()));
+                }
+            } catch (error) {
+                console.warn('Unable to build parcel summary metrics:', error);
+            }
+        }
+
+        return `
+            <section class="parcel-summary">
+                <h3>${this.escapeHtml(t('parcelInfo.summaryTitle'))}</h3>
+                <dl>
+                    <div><dt>${this.escapeHtml(t('parcelInfo.label'))}</dt><dd>${this.escapeHtml(label)}</dd></div>
+                    <div><dt>${this.escapeHtml(t('parcelInfo.area'))}</dt><dd>${this.escapeHtml(areaLabel)}</dd></div>
+                    <div><dt>${this.escapeHtml(t('parcelInfo.perimeter'))}</dt><dd>${this.escapeHtml(perimeterLabel)}</dd></div>
+                    <div><dt>${this.escapeHtml(t('parcelInfo.inspireLocalId'))}</dt><dd>${this.escapeHtml(inspireLocalId)}</dd></div>
+                </dl>
+            </section>`;
+    }
+
+    extractParcelFieldsFromHtmlTable(rawHtml) {
+        const rows = Array.from(String(rawHtml || '').matchAll(/<tr\b[^>]*>\s*<th\b[^>]*>(.*?)<\/th>\s*<td\b[^>]*>(.*?)<\/td>\s*<\/tr>/gis));
+        const fields = {};
+        for (const [, keyRaw, valueRaw] of rows) {
+            const key = String(keyRaw).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            const value = String(valueRaw).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            if (key && value) {
+                fields[key] = value;
+            }
+        }
+        return fields;
+    }
+
+    getFeaturePolygonCoordinateSets(feature) {
+        const geometry = feature?.getGeometry?.();
+        const type = geometry?.getType?.();
+        if (type === 'Polygon') return [geometry.getCoordinates()];
+        if (type === 'MultiPolygon') return geometry.getCoordinates();
+        return [];
+    }
+
+    findNearestEditableVertex(feature, coordinate, pixelTolerance = 12) {
+        if (!this.isPolygonFeature(feature) || !Array.isArray(coordinate) || coordinate.length < 2) return null;
+
+        const targetPixel = this.map.getPixelFromCoordinate(coordinate);
+        if (!targetPixel) return null;
+
+        let best = null;
+        let bestDist2 = Number.POSITIVE_INFINITY;
+        const tolerance2 = pixelTolerance * pixelTolerance;
+
+        const polygonSets = this.getFeaturePolygonCoordinateSets(feature);
+        for (let polygonIndex = 0; polygonIndex < polygonSets.length; polygonIndex += 1) {
+            const rings = polygonSets[polygonIndex] || [];
+            for (let ringIndex = 0; ringIndex < rings.length; ringIndex += 1) {
+                const ring = rings[ringIndex] || [];
+                const limit = Math.max(0, ring.length - 1); // skip closure duplicate
+                for (let vertexIndex = 0; vertexIndex < limit; vertexIndex += 1) {
+                    const vertexCoord = ring[vertexIndex];
+                    if (!Array.isArray(vertexCoord) || vertexCoord.length < 2) continue;
+                    const vertexPixel = this.map.getPixelFromCoordinate(vertexCoord);
+                    if (!vertexPixel) continue;
+
+                    const dx = vertexPixel[0] - targetPixel[0];
+                    const dy = vertexPixel[1] - targetPixel[1];
+                    const dist2 = dx * dx + dy * dy;
+                    if (dist2 <= tolerance2 && dist2 < bestDist2) {
+                        bestDist2 = dist2;
+                        best = { polygonIndex, ringIndex, vertexIndex };
+                    }
+                }
+            }
+        }
+
+        return best;
+    }
+
+    requestDeleteSelectedVertex() {
+        if (this.state.mode !== 'edit') return false;
+        if (!this.state.selectedFeature || !this.state.selectedEditVertex) {
+            this.setToolbarMessage(t('msg.vertexDeleteNoSel'));
+            return false;
+        }
+
+        const confirmed = window.confirm(t('confirm.deleteVertex'));
+        if (!confirmed) return true;
+
+        const deleted = this.deleteSelectedVertexFromFeature();
+        if (!deleted) {
+            this.setToolbarMessage(t('msg.vertexDeleteMin'));
+            return true;
+        }
+
+        this.setToolbarMessage(t('msg.vertexDeleted'));
+        return true;
+    }
+
+    deleteSelectedVertexFromFeature() {
+        const feature = this.state.selectedFeature;
+        const sel = this.state.selectedEditVertex;
+        if (!feature || !sel || !this.isPolygonFeature(feature)) return false;
+
+        const geometry = feature.getGeometry();
+        const type = geometry?.getType?.();
+        const now = new Date().toISOString();
+
+        if (type === 'Polygon') {
+            const coords = geometry.getCoordinates();
+            const ring = coords[sel.ringIndex];
+            if (!Array.isArray(ring)) return false;
+            const openRing = ring.slice(0, -1);
+            if (openRing.length <= 3) return false;
+
+            openRing.splice(sel.vertexIndex, 1);
+            coords[sel.ringIndex] = [...openRing, openRing[0]];
+            geometry.setCoordinates(coords);
+        } else if (type === 'MultiPolygon') {
+            const coords = geometry.getCoordinates();
+            const polygon = coords[sel.polygonIndex];
+            const ring = polygon?.[sel.ringIndex];
+            if (!Array.isArray(ring)) return false;
+            const openRing = ring.slice(0, -1);
+            if (openRing.length <= 3) return false;
+
+            openRing.splice(sel.vertexIndex, 1);
+            polygon[sel.ringIndex] = [...openRing, openRing[0]];
+            geometry.setCoordinates(coords);
+        } else {
+            return false;
+        }
+
+        feature.set('version', (feature.get('version') ?? 1) + 1);
+        feature.set('modifiedAt', now);
+
+        this.state.selectedEditVertex = null;
+        this.layers.vector.changed();
+        this.layers.pertenenza.changed();
+        this.refreshEditVertexOverlay();
+        this.updateSummary();
+        return true;
     }
 
     // ── Summary ──────────────────────────────────────────────────────────────────
 
     updateSummary() {
-        const features     = this.vectorSource.getFeatures();
+        const features = [
+            ...this.vectorSource.getFeatures(),
+            ...this.pertenenzaSource.getFeatures(),
+        ];
         const areaFeatures = features.filter((f) => {
             const type = f.getGeometry()?.getType();
             return type === 'Polygon' || type === 'MultiPolygon';
@@ -646,7 +1227,10 @@ export default class Planimeter {
         this.elements.statSelectedArea.textContent   = selectedMeasure;
         this.elements.statZoom.textContent           = (this.view?.getZoom() ?? 0).toFixed(1);
 
-        this.renderDslSummary(areaFeatures);
+        this.renderDslSummary(this.vectorSource.getFeatures().filter((f) => {
+            const type = f.getGeometry()?.getType();
+            return type === 'Polygon' || type === 'MultiPolygon';
+        }));
         this.updateDslAssignmentControls();
     }
 
@@ -677,7 +1261,11 @@ export default class Planimeter {
         const domain  = getDomain(this.state.dslActiveDomainId);
         const proj    = this.view?.getProjection();
         const rows    = aggregateByCategory(features, domain, proj);
-        const grandTotal = totalAggArea(rows);
+        this.renderDslCategoryFilters(rows);
+
+        const visibleRows = rows.filter((row) => this.isDslCategoryVisible(row.categoryId ?? null));
+        const grandTotal = totalAggArea(visibleRows);
+        const visibleCount = visibleRows.reduce((sum, row) => sum + row.count, 0);
 
         section.hidden = false;
 
@@ -685,7 +1273,7 @@ export default class Planimeter {
         const legend = this.elements.dslLegend;
         if (legend) {
             legend.innerHTML = '';
-            for (const row of rows) {
+            for (const row of visibleRows) {
                 const label = row.label ?? t('dsl.category.unassigned');
                 const item  = document.createElement('div');
                 item.className = 'dsl-legend-item';
@@ -699,7 +1287,7 @@ export default class Planimeter {
         const tbody = this.elements.dslCategoryTbody;
         if (tbody) {
             tbody.innerHTML = '';
-            for (const row of rows) {
+            for (const row of visibleRows) {
                 const label   = row.label ?? t('dsl.category.unassigned');
                 const pct     = grandTotal > 0 ? ((row.areaM2 / grandTotal) * 100).toFixed(1) : '0.0';
                 const areaStr = this.unitSystem.formatArea(row.areaM2);
@@ -719,7 +1307,73 @@ export default class Planimeter {
                 tfoot = document.createElement('tfoot');
                 section.querySelector('table')?.appendChild(tfoot);
             }
-            tfoot.innerHTML = `<tr><td>${t('dsl.table.total')}</td><td>${this.unitSystem.formatArea(grandTotal)}</td><td>100%</td><td>${features.length}</td></tr>`;
+            tfoot.innerHTML = `<tr><td>${t('dsl.table.total')}</td><td>${this.unitSystem.formatArea(grandTotal)}</td><td>100%</td><td>${visibleCount}</td></tr>`;
+        }
+    }
+
+    getFeatureDslCategoryId(feature) {
+        if (!this.isPolygonFeature(feature)) return null;
+        const dsl = feature.get('dsl');
+        if (!dsl || dsl.domainId !== this.state.dslActiveDomainId) return null;
+        const categoryId = dsl.categoryId;
+        return categoryId ? String(categoryId) : null;
+    }
+
+    getDslCategoryVisibilityKey(categoryId) {
+        return categoryId ?? DSL_UNASSIGNED_CATEGORY_KEY;
+    }
+
+    isDslCategoryVisible(categoryId) {
+        const hidden = this.state.dslHiddenCategoryKeys;
+        const key = this.getDslCategoryVisibilityKey(categoryId);
+        return !(hidden instanceof Set && hidden.has(key));
+    }
+
+    setDslCategoryVisibility(categoryId, visible) {
+        const key = this.getDslCategoryVisibilityKey(categoryId);
+        if (!(this.state.dslHiddenCategoryKeys instanceof Set)) {
+            this.state.dslHiddenCategoryKeys = new Set();
+        }
+
+        if (visible) {
+            this.state.dslHiddenCategoryKeys.delete(key);
+        } else {
+            this.state.dslHiddenCategoryKeys.add(key);
+        }
+
+        this.layers.vector.changed();
+        this.updateSummary();
+    }
+
+    renderDslCategoryFilters(rows) {
+        const container = this.elements.dslCategoryFilters;
+        if (!container) return;
+
+        container.innerHTML = '';
+        for (const row of rows) {
+            const label = row.label ?? t('dsl.category.unassigned');
+            const categoryId = row.categoryId ?? null;
+
+            const item = document.createElement('label');
+            item.className = 'dsl-filter-chip';
+
+            const check = document.createElement('input');
+            check.type = 'checkbox';
+            check.checked = this.isDslCategoryVisible(categoryId);
+            check.addEventListener('change', () => {
+                this.setDslCategoryVisibility(categoryId, check.checked);
+            });
+
+            const swatch = document.createElement('span');
+            swatch.className = 'dsl-legend-swatch';
+            swatch.style.background = row.color;
+            swatch.style.borderColor = row.stroke ?? row.color;
+
+            const text = document.createElement('span');
+            text.textContent = label;
+
+            item.append(check, swatch, text);
+            container.appendChild(item);
         }
     }
 
@@ -781,6 +1435,8 @@ export default class Planimeter {
             this.elements.dslAssignFeatureValue.textContent = selectedLabel;
         }
 
+        this.renderSelectedFeatureCadastralLinks(featureIsPolygon ? feature : null);
+
         const categoryChosen = Boolean(select.value);
         select.disabled = !featureIsPolygon;
         button.disabled = !featureIsPolygon || !categoryChosen;
@@ -800,6 +1456,99 @@ export default class Planimeter {
         }
     }
 
+    getOrCreateFeatureLinks(feature) {
+        const raw = feature?.get('links');
+        const links = (raw && typeof raw === 'object') ? raw : {};
+        if (!Array.isArray(links.cadastral)) {
+            links.cadastral = [];
+        }
+        return links;
+    }
+
+    renderSelectedFeatureCadastralLinks(feature) {
+        const container = this.elements.dslCadastralLinks;
+        if (!container) return;
+
+        container.innerHTML = '';
+
+        if (!feature) {
+            const empty = document.createElement('p');
+            empty.className = 'dsl-cadastral-link-empty';
+            empty.textContent = t('dsl.links.noFeature');
+            container.appendChild(empty);
+            return;
+        }
+
+        const links = this.getOrCreateFeatureLinks(feature).cadastral;
+        if (!links.length) {
+            const empty = document.createElement('p');
+            empty.className = 'dsl-cadastral-link-empty';
+            empty.textContent = t('dsl.links.none');
+            container.appendChild(empty);
+            return;
+        }
+
+        links.forEach((link, index) => {
+            const parcelId = String(link?.parcel_id ?? '').trim();
+            if (!parcelId) return;
+
+            const row = document.createElement('div');
+            row.className = 'dsl-cadastral-link-row';
+
+            const main = document.createElement('div');
+            main.className = 'dsl-cadastral-link-main';
+
+            const idEl = document.createElement('span');
+            idEl.className = 'dsl-cadastral-link-id';
+            idEl.textContent = parcelId;
+
+            const meta = document.createElement('span');
+            meta.className = 'dsl-cadastral-link-meta';
+            const coverageValue = Number.isFinite(link?.coverage_ratio)
+                ? (link.coverage_ratio * 100).toFixed(2)
+                : 'n/a';
+            const intersectionValue = Number.isFinite(link?.intersection_area)
+                ? this.unitSystem.formatArea(link.intersection_area)
+                : 'n/a';
+            meta.textContent = t('dsl.links.meta', {
+                coverage: coverageValue,
+                intersection: intersectionValue,
+            });
+
+            main.append(idEl, meta);
+
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.className = 'dsl-cadastral-unlink-btn';
+            removeBtn.textContent = t('dsl.links.remove');
+            removeBtn.addEventListener('click', () => this.unlinkSelectedFeatureCadastralByIndex(index));
+
+            row.append(main, removeBtn);
+            container.appendChild(row);
+        });
+    }
+
+    unlinkSelectedFeatureCadastralByIndex(index) {
+        const feature = this.state.selectedFeature;
+        if (!this.isPolygonFeature(feature)) return;
+
+        const links = this.getOrCreateFeatureLinks(feature);
+        const removed = links.cadastral.splice(index, 1)[0];
+        if (!removed) return;
+
+        feature.set('links', links);
+        feature.set('version', (feature.get('version') ?? 1) + 1);
+        feature.set('modifiedAt', new Date().toISOString());
+
+        schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource);
+        this.getLayerForFeature(feature).changed();
+        this.updateSummary();
+        this.setToolbarMessage(t('msg.parcelUnlinked', {
+            parcelId: removed.parcel_id,
+            name: feature.get('featureName') || feature.get('featureId') || '-',
+        }));
+    }
+
     isPolygonFeature(feature) {
         const type = feature?.getGeometry?.()?.getType?.();
         return type === 'Polygon' || type === 'MultiPolygon';
@@ -807,11 +1556,12 @@ export default class Planimeter {
 
     openCategoryAssignmentFromContext(feature) {
         if (!this.isPolygonFeature(feature)) return;
+        this.setEditingLayer(this.getFeatureOverlayLayer(feature));
+        this.clearSelection();
         this.state.selectedFeature = feature;
-        this.interactions.select.getFeatures().clear();
-        this.interactions.select.getFeatures().push(feature);
+        this.getActiveInteractions().select.getFeatures().push(feature);
         this.setToolbarPanel('operate');
-        this.layers.vector.changed();
+        this.getLayerForFeature(feature).changed();
         this.updateSummary();
         this.updateDslAssignmentControls();
         this.elements.dslCategorySelect?.focus();
@@ -1007,7 +1757,7 @@ export default class Planimeter {
         feature.set('version', (feature.get('version') ?? 1) + 1);
         feature.set('modifiedAt', new Date().toISOString());
 
-        schedulePersistenceSync();
+        schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource);
     }
 
     // ── Feature actions ──────────────────────────────────────────────────────────
@@ -1031,13 +1781,15 @@ export default class Planimeter {
         geom.translate(offset, -offset);
         clone.unset('featureId', true);
         clone.unset('featureName', true);
-        decorateFeature(clone, this.state, this.vectorSource.getFeatures().length);
-        this.vectorSource.addFeature(clone);
+        const targetSource = this.getSourceForFeature(this.state.selectedFeature);
+        clone.set('overlayLayer', this.getFeatureOverlayLayer(this.state.selectedFeature));
+        decorateFeature(clone, this.state, targetSource.getFeatures().length);
+        targetSource.addFeature(clone);
 
+        this.getLayerForFeature(clone).changed();
+        this.clearSelection();
         this.state.selectedFeature = clone;
-        this.layers.vector.changed();
-        this.interactions.select.getFeatures().clear();
-        this.interactions.select.getFeatures().push(clone);
+        this.getActiveInteractions().select.getFeatures().push(clone);
         this.updateSummary();
         this.setToolbarMessage(t('msg.featureDuplicated'));
     }
@@ -1047,18 +1799,19 @@ export default class Planimeter {
             alert(t('alert.noSelection'));
             return;
         }
-        this.vectorSource.removeFeature(this.state.selectedFeature);
+        this.getSourceForFeature(this.state.selectedFeature).removeFeature(this.state.selectedFeature);
         this.clearSelection();
         this.setToolbarMessage(t('msg.featureDeletedSelected'));
     }
 
     clearAllFeatures() {
-        if (!this.vectorSource.getFeatures().length) {
+        const source = this.getActiveVectorSource();
+        if (!source.getFeatures().length) {
             this.setToolbarMessage(t('msg.nothingToClear'));
             return;
         }
         if (!window.confirm(t('confirm.clearAll'))) return;
-        this.vectorSource.clear();
+        source.clear();
         this.clearSelection();
         this.setToolbarMessage(t('msg.clearDone'));
     }
@@ -1721,6 +2474,7 @@ export default class Planimeter {
                 list.push('catasto:fallback');
             }
         }
+        if (this.elements.layerPertenenze?.checked) list.push('pertenenze');
         return list.length ? list.join(', ') : 'none';
     }
 
@@ -1751,8 +2505,12 @@ export default class Planimeter {
 
                 if (!imported.length) throw new Error('No supported geometries found.');
 
-                imported.forEach((f) => decorateFeature(f, this.state, this.vectorSource.getFeatures().length));
-                this.vectorSource.addFeatures(imported);
+                const targetSource = this.getActiveVectorSource();
+                imported.forEach((f, index) => {
+                    f.set('overlayLayer', this.state.activeEditingLayer);
+                    decorateFeature(f, this.state, targetSource.getFeatures().length + index);
+                });
+                targetSource.addFeatures(imported);
                 this.fitToFeatures();
                 this.setToolbarMessage(t('msg.featuresImported', {
                     count:  imported.length,
@@ -1773,8 +2531,19 @@ export default class Planimeter {
     // ── View helpers ─────────────────────────────────────────────────────────────
 
     fitToFeatures() {
-        if (!this.vectorSource.getFeatures().length) return;
-        this.view.fit(this.vectorSource.getExtent(), {
+        const extents = [this.vectorSource, this.pertenenzaSource]
+            .map((source) => source.getFeatures().length ? source.getExtent() : null)
+            .filter(Boolean);
+        if (!extents.length) return;
+
+        const mergedExtent = extents.reduce((acc, extent) => [
+            Math.min(acc[0], extent[0]),
+            Math.min(acc[1], extent[1]),
+            Math.max(acc[2], extent[2]),
+            Math.max(acc[3], extent[3]),
+        ]);
+
+        this.view.fit(mergedExtent, {
             padding:  [80, 80, 80, 80],
             duration: 900,
             maxZoom:  18,
@@ -1817,7 +2586,7 @@ export default class Planimeter {
     // ── Layer helpers ────────────────────────────────────────────────────────────
 
     sanitizeBaseLayerKey(layerKey) {
-        return BASE_LAYER_KEYS.includes(layerKey) ? layerKey : 'sat';
+        return BASE_LAYER_KEYS.includes(layerKey) ? layerKey : null;
     }
 
     sanitizeAdminLayerKey(layerKey) {
@@ -1831,9 +2600,7 @@ export default class Planimeter {
                 if (ev.target.checked) {
                     this.state.activeBaseLayer = this.sanitizeBaseLayerKey(key);
                 } else if (this.state.activeBaseLayer === key) {
-                    // Keep exactly one base layer active at all times.
-                    ev.target.checked = true;
-                    return;
+                    this.state.activeBaseLayer = null;
                 }
 
                 this.applyLayerGroupSelection();
@@ -1850,6 +2617,22 @@ export default class Planimeter {
                     this.state.activeAdminLayer = null;
                 }
 
+                this.applyLayerGroupSelection();
+                this.persistPreferences();
+            });
+        });
+
+        this.elements.pertenenzaLayerInputs.forEach((el) => {
+            el.addEventListener('change', (ev) => {
+                this.state.pertenenzeVisible = ev.target.checked;
+                this.applyLayerGroupSelection();
+                this.persistPreferences();
+            });
+        });
+
+        this.elements.userAreaLayerInputs.forEach((el) => {
+            el.addEventListener('change', (ev) => {
+                this.state.userAreasVisible = ev.target.checked;
                 this.applyLayerGroupSelection();
                 this.persistPreferences();
             });
@@ -1876,6 +2659,18 @@ export default class Planimeter {
         this.elements.layerCatasto.checked = adminActive === 'catasto';
         this.layers.osm.setVisible(adminActive === 'osm');
         this.updateCatastoVisibility();
+
+        const showUserAreas = Boolean(this.state.userAreasVisible);
+        if (this.elements.layerUserAreas) {
+            this.elements.layerUserAreas.checked = showUserAreas;
+        }
+        this.layers.vector.setVisible(showUserAreas);
+
+        const showPertinenze = Boolean(this.state.pertenenzeVisible);
+        if (this.elements.layerPertenenze) {
+            this.elements.layerPertenenze.checked = showPertinenze;
+        }
+        this.layers.pertenenza.setVisible(showPertinenze);
 
         this.proxyHealth?.update(this.elements.layerCatasto.checked, this.state.catastoSource);
         this.renderParcelInfo();
@@ -1922,6 +2717,7 @@ export default class Planimeter {
 
         this.proxyHealth.render();
         this.layers.vector.changed();
+        this.layers.pertenenza.changed();
         this.updateSummary();
         this.syncPreferenceControls();
         this.updatePointerCoordinatesVisibility();
@@ -1932,6 +2728,55 @@ export default class Planimeter {
 
     setToolbarMessage(message) {
         this.elements.status.textContent = message;
+    }
+
+    setM3BusyVisible(visible, message = null) {
+        this.m3BusyActive = Boolean(visible);
+        if (message) {
+            this.m3BusyMessage = message;
+        }
+        this.updateBusyOverlay();
+    }
+
+    bindTileLoadingIndicator() {
+        const register = (source) => {
+            if (!source?.on) return;
+            source.on('tileloadstart', () => {
+                this.mapTileLoadCount += 1;
+                this.updateBusyOverlay();
+            });
+            const finish = () => {
+                this.mapTileLoadCount = Math.max(0, this.mapTileLoadCount - 1);
+                this.updateBusyOverlay();
+            };
+            source.on('tileloadend', finish);
+            source.on('tileloaderror', finish);
+        };
+
+        register(this.layers.sat.getSource());
+        register(this.layers.openTopoMap.getSource());
+        register(this.layers.esriTopo.getSource());
+        register(this.layers.esriRelief.getSource());
+        register(this.layers.osm.getSource());
+        register(this.layers.catastoFallback.getSource());
+        Object.values(this.layers.catastoOfficial).forEach((layer) => register(layer.getSource()));
+    }
+
+    updateBusyOverlay() {
+        const indicator = this.elements.m3BusyIndicator;
+        const label = this.elements.m3BusyLabel;
+        if (!indicator || !label) return;
+
+        const visible = this.m3BusyActive || this.mapTileLoadCount > 0;
+        if (!visible) {
+            indicator.hidden = true;
+            return;
+        }
+
+        indicator.hidden = false;
+        label.textContent = this.m3BusyActive
+            ? (this.m3BusyMessage || t('m3.wait'))
+            : t('map.loadingTiles');
     }
 
     bindPointerCoordinatesOverlay() {
@@ -2038,6 +2883,12 @@ export default class Planimeter {
         if (this.elements.settingsParcelInfoEnabled) {
             this.elements.settingsParcelInfoEnabled.checked = this.state.parcelInfoEnabled;
         }
+        if (this.elements.settingsPertenenzeColor) {
+            this.elements.settingsPertenenzeColor.value = this.state.pertenenzeColor;
+        }
+        if (this.elements.editingLayerSelect) {
+            this.elements.editingLayerSelect.value = this.state.activeEditingLayer;
+        }
         if (this.elements.settingsWmsLayerParts?.length) {
             this.elements.settingsWmsLayerParts.forEach((el) => {
                 const settings = this.state.catastoWmsLayerSettings[el.dataset.wmsLayerPart];
@@ -2067,6 +2918,10 @@ export default class Planimeter {
             toolbarPanel: this.state.toolbarPanel,
             activeBaseLayer: this.state.activeBaseLayer,
             activeAdminLayer: this.state.activeAdminLayer,
+            activeEditingLayer: this.state.activeEditingLayer,
+            userAreasVisible: this.state.userAreasVisible,
+            pertenenzeVisible: this.state.pertenenzeVisible,
+            pertenenzeColor: this.state.pertenenzeColor,
             catastoWmsLayerSettings: this.state.catastoWmsLayerSettings,
             parcelInfoEnabled: this.state.parcelInfoEnabled,
             exportImageQuality: this.state.exportImageQuality,
@@ -2086,6 +2941,7 @@ export default class Planimeter {
         this.unitSystem = new UnitSystem(unitSystem);
         this.state.unitSystem = unitSystem;
         this.layers.vector.changed();
+        this.layers.pertenenza.changed();
         this.persistPreferences();
         this.updateSummary();
         this.syncPreferenceControls();
@@ -2108,6 +2964,11 @@ export default class Planimeter {
         const value = Number.parseInt(String(sizeMb), 10);
         if (!Number.isFinite(value)) return 500;
         return Math.max(32, Math.min(4096, value));
+    }
+
+    sanitizePertenenzeColor(color) {
+        const value = String(color ?? '').trim();
+        return /^#[0-9a-fA-F]{6}$/.test(value) ? value.toLowerCase() : '#8a9199';
     }
 
     updateExportImageQuality(quality) {
@@ -2285,20 +3146,68 @@ export default class Planimeter {
 
     editFeatureFromContext(feature) {
         if (!feature) return;
+        this.setEditingLayer(this.getFeatureOverlayLayer(feature));
         this.setMode('edit');
         this.state.selectedFeature = feature;
-        this.interactions.select.getFeatures().clear();
-        this.interactions.select.getFeatures().push(feature);
-        this.layers.vector.changed();
+        this.state.selectedEditVertex = null;
+        this.getActiveInteractions().select.getFeatures().clear();
+        this.getActiveInteractions().select.getFeatures().push(feature);
+        this.getLayerForFeature(feature).changed();
+        this.refreshEditVertexOverlay();
         this.updateSummary();
-        this.setToolbarMessage(t('msg.featureSelected', { name: feature.get('featureName') }));
+        this.setToolbarMessage(this.formatSelectedFeatureMessage(feature));
     }
 
     deleteFeatureFromContext(feature) {
         if (!feature) return;
-        this.vectorSource.removeFeature(feature);
+        this.getSourceForFeature(feature).removeFeature(feature);
         if (this.state.selectedFeature === feature) this.clearSelection();
         this.setToolbarMessage(t('msg.featureDeleted'));
+    }
+
+    async resyncParcelMetadataForFeature(feature) {
+        if (!this.isPolygonFeature(feature) || this.getFeatureOverlayLayer(feature) !== 'pertenenze') {
+            return;
+        }
+
+        const labelPoint = getFeatureLabelGeometry(feature);
+        const coord = labelPoint?.getCoordinates?.();
+        if (!Array.isArray(coord) || coord.length < 2) {
+            this.setToolbarMessage(t('msg.parcelResyncUnavailable'));
+            return;
+        }
+
+        const [lon, lat] = toLonLat(coord, this.view.getProjection());
+        const parcelSummary = await this.fetchParcelSummaryAtLonLat(lon, lat);
+        if (!parcelSummary?.parcel) {
+            this.setToolbarMessage(t('msg.parcelResyncUnavailable'));
+            return;
+        }
+
+        this.applyParcelMetadataToFeature(feature, parcelSummary);
+        const parcelId = String(parcelSummary.parcel.id || parcelSummary.parcel.local_id || '').trim();
+        if (parcelId) {
+            const links = this.getOrCreateFeatureLinks(feature);
+            if (!links.cadastral.some((entry) => String(entry?.parcel_id || '').trim() === parcelId)) {
+                links.cadastral.push({
+                    parcel_id: parcelId,
+                    intersection_area: null,
+                    coverage_ratio: null,
+                    linkedAt: new Date().toISOString(),
+                });
+                feature.set('links', links);
+            }
+        }
+
+        feature.set('version', (feature.get('version') ?? 1) + 1);
+        feature.set('modifiedAt', new Date().toISOString());
+        this.getLayerForFeature(feature).changed();
+        schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource);
+        this.updateSummary();
+        this.setToolbarMessage(t('msg.parcelResyncDone', {
+            parcel: this.getPropertyScopeLabel(feature),
+            localId: this.getFeatureInspireLocalId(feature),
+        }));
     }
 
     async fetchParcelInfoAtPixel(pixel) {
@@ -2330,13 +3239,51 @@ export default class Planimeter {
             this.state.parcelInfoStatusKey = result.statusKey;
             if (result.parcelId) {
                 this.state.lastParcelId = result.parcelId;
-                if (this.state.selectedFeature) {
-                    this.state.selectedFeature.set('parcel_id', result.parcelId);
-                    const links = this.state.selectedFeature.get('links') ?? { cadastral: [] };
-                    if (!links.cadastral.some((c) => c.parcel_id === result.parcelId)) {
-                        links.cadastral.push({ parcel_id: result.parcelId, linkedAt: new Date().toISOString() });
+                if (this.isPolygonFeature(this.state.selectedFeature)) {
+                    const feature = this.state.selectedFeature;
+                    feature.set('parcel_id', result.parcelId);
+                    if (result.parcelData?.parcel) {
+                        this.applyParcelMetadataToFeature(feature, result.parcelData);
                     }
-                    this.state.selectedFeature.set('links', links);
+                    const links = this.getOrCreateFeatureLinks(feature);
+                    let existing = links.cadastral.find((c) => c.parcel_id === result.parcelId);
+                    let isNewLink = false;
+                    let changed = false;
+                    if (!existing) {
+                        existing = {
+                            parcel_id: result.parcelId,
+                            intersection_area: null,
+                            coverage_ratio: null,
+                            linkedAt: new Date().toISOString(),
+                        };
+                        links.cadastral.push(existing);
+                        isNewLink = true;
+                        changed = true;
+                    }
+
+                    const metricsChanged = this.populateCadastralLinkMetrics(
+                        feature,
+                        existing,
+                        result.parcelGeometry,
+                        result.parcelGeometryCrs,
+                    );
+                    changed = changed || metricsChanged;
+
+                    if (changed) {
+                        feature.set('links', links);
+                        feature.set('version', (feature.get('version') ?? 1) + 1);
+                        feature.set('modifiedAt', new Date().toISOString());
+                        schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource);
+                        this.getLayerForFeature(feature).changed();
+                        this.updateDslAssignmentControls(false);
+                    }
+
+                    if (isNewLink) {
+                        this.setToolbarMessage(t('msg.parcelLinked', {
+                            parcelId: result.parcelId,
+                            name: feature.get('featureName') || feature.get('featureId') || '-',
+                        }));
+                    }
                 }
             }
         } catch (error) {
@@ -2349,11 +3296,14 @@ export default class Planimeter {
         }
     }
 
-    // Feature flag: switch GetFeatureInfo from raw-HTML to structured-JSON mode.
-    // When true, /wms-proxy returns parsed canonical fields from server.
-    static FEATUREINFO_USE_JSON = true;
+    // Prefer proxy JSON mode because it is more stable against Agenzia WMS quirks.
+    static FEATUREINFO_USE_JSON = false;
 
     async requestParcelInfoJson(pixel) {
+        return this.requestParcelInfoJsonViaProxy(pixel);
+    }
+
+    async requestParcelInfoJsonViaProxy(pixel) {
         const rawUrl = this.buildParcelInfoUrl(pixel, 'text/html');
         if (!rawUrl) return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty' };
 
@@ -2375,7 +3325,46 @@ export default class Planimeter {
         }
 
         const parcelId = data.parcel?.id ?? data.parcel?.local_id ?? null;
-        return { parcelInfoHtml: this._buildParcelHtmlFromJson(data), statusKey: 'parcelInfo.ready', parcelId };
+        return { parcelInfoHtml: this._buildParcelHtmlFromJson(data), statusKey: 'parcelInfo.ready', parcelId, parcelData: data };
+    }
+
+    populateCadastralLinkMetrics(feature, link, parcelGeometry, parcelGeometryCrs = 'EPSG:4326') {
+        if (!feature || !link || !parcelGeometry || typeof parcelGeometry !== 'object') {
+            return false;
+        }
+
+        try {
+            const parcelGeom = this.geoJsonFormat.readGeometry(parcelGeometry, {
+                dataProjection: parcelGeometryCrs,
+                featureProjection: this.view.getProjection(),
+            });
+            if (!parcelGeom) return false;
+
+            const parcelKey = String(link.parcel_id ?? '').trim();
+            const metrics = calculateIntersectionMetricsWithCache(
+                feature,
+                parcelKey || `parcel-${Date.now()}`,
+                () => parcelGeom,
+                { ratioBase: 'target' },
+            );
+
+            const nextIntersection = Number.isFinite(metrics.intersectionArea)
+                ? metrics.intersectionArea
+                : null;
+            const nextCoverage = Number.isFinite(metrics.coverageRatioTarget)
+                ? metrics.coverageRatioTarget
+                : null;
+
+            const changed = link.intersection_area !== nextIntersection || link.coverage_ratio !== nextCoverage;
+            if (!changed) return false;
+
+            link.intersection_area = nextIntersection;
+            link.coverage_ratio = nextCoverage;
+            return true;
+        } catch (error) {
+            console.warn('Unable to compute cadastral metrics:', error);
+            return false;
+        }
     }
 
     _buildParcelHtmlFromJson(data) {
@@ -2384,7 +3373,12 @@ export default class Planimeter {
             .filter(([, v]) => v)
             .map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`)
             .join('');
-        return `<table>${rows}</table>`;
+        const summaryHtml = this.buildParcelSummaryHtml(
+            p,
+            data.parcelGeometry ?? null,
+            data.parcelGeometryCrs ?? 'EPSG:4326',
+        );
+        return `${summaryHtml}<table>${rows}</table>`;
     }
 
     async requestParcelInfoHtml(pixel) {
@@ -2408,7 +3402,29 @@ export default class Planimeter {
             return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty' };
         }
 
-        return { parcelInfoHtml: rawHtml, statusKey: 'parcelInfo.ready' };
+        let summaryHtml = '';
+        try {
+            const coordinate = this.map.getCoordinateFromPixel(pixel);
+            if (coordinate) {
+                const [lon, lat] = toLonLat(coordinate, this.view.getProjection());
+                const summaryData = await this.fetchParcelSummaryAtLonLat(lon, lat);
+                if (summaryData?.parcel) {
+                    summaryHtml = this.buildParcelSummaryHtml(
+                        summaryData.parcel,
+                        summaryData.parcelGeometry ?? null,
+                        summaryData.parcelGeometryCrs ?? 'EPSG:4326',
+                    );
+                }
+            }
+        } catch {
+            const fields = this.extractParcelFieldsFromHtmlTable(rawHtml);
+            summaryHtml = this.buildParcelSummaryHtml({
+                label: fields.Label ?? fields.label ?? fields.NationalCadastralReference ?? '-',
+                local_id: fields.InspireId_localId ?? fields.InspireId_localid ?? fields.InspireIdlocalId ?? '-',
+            });
+        }
+
+        return { parcelInfoHtml: `${summaryHtml}${rawHtml}`, statusKey: 'parcelInfo.ready' };
     }
 
     extractFeatureInfoHtmlPage(payload) {
@@ -2441,6 +3457,152 @@ export default class Planimeter {
         if (!url) return null;
 
         return url.replace('/wms-tile?', '/wms-proxy?');
+    }
+
+    async detectParcelM3AtPixel(pixel) {
+        /**
+         * M3 Raster Segmentation: detect parcel boundary at clicked location with progressive expansion.
+         * Shows live preview of each detection before asking to expand.
+         * 1. Convert pixel to map coordinates (Web Mercator)
+         * 2. Convert to lon/lat (EPSG:4326)
+         * 3. Call /parcel-geometry-m3 endpoint (start with radius 1)
+         * 4. Display detected feature on map (live preview)
+         * 5. If detection succeeds and touches border, ask user to expand radius
+         * 6. If YES: remove preview feature, retry with incremented radius (repeat from 3)
+         * 7. If NO or no border touch: keep feature and finish
+         * 8. Switch layer selector to "Pertinenze" and show success message
+         */
+        
+        const coordinate = this.map.getCoordinateFromPixel(pixel);
+        if (!coordinate) {
+            this.setToolbarMessage(t('m3.error.coordinate'));
+            return;
+        }
+
+        const [lon, lat] = toLonLat(coordinate);
+        const parcelSummaryPromise = this.fetchParcelSummaryAtLonLat(lon, lat);
+
+        this.setM3BusyVisible(true, t('m3.wait'));
+        this.setToolbarMessage(t('m3.detecting'));
+
+        try {
+            let currentRadius = 1;
+            let bestFeature = null;
+            let bestResult = null;
+
+            // Progressive expansion loop
+            while (currentRadius <= 5) {
+                const response = await fetch('/parcel-geometry-m3', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ lat, lon, radius: currentRadius }),
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    if (currentRadius === 1) {
+                        // First attempt failed
+                        this.setToolbarMessage(errorData.message || t('m3.error.request'));
+                    }
+                    // Use previous successful result if available
+                    break;
+                }
+
+                const result = await response.json();
+                if (!result.ok || !result.ring) {
+                    if (currentRadius === 1) {
+                        // First attempt failed
+                        this.setToolbarMessage(result.message || t('m3.error.detection'));
+                    }
+                    // Use previous successful result if available
+                    break;
+                }
+
+                // Success at this radius: create feature and add to map for preview
+                const ringInMapProj = result.ring.map((pt) => fromLonLat(pt));
+                const feature = new Feature({
+                    geometry: new Polygon([ringInMapProj]),
+                });
+
+                // Tag feature with overlay provenance
+                feature.set('overlayLayer', 'pertenenze');
+                
+                // Decorate feature with standard properties
+                decorateFeature(feature, this.state, this.pertenenzaSource.getFeatures().length);
+
+                const parcelSummary = await parcelSummaryPromise;
+                if (parcelSummary?.parcel) {
+                    this.applyParcelMetadataToFeature(feature, parcelSummary);
+                }
+
+                // Add to pertinenze source for live preview
+                this.pertenenzaSource.addFeature(feature);
+                this.setEditingLayer('pertenenze');
+
+                // Show preview with current radius
+                const areaM2 = calculateArea(feature, this.view?.getProjection());
+                const vertexCount = Math.max(0, ringInMapProj.length - 1);
+                const previewMsg = t('m3.preview.detected', {
+                    area: this.unitSystem.formatArea(areaM2),
+                    vertices: vertexCount,
+                    radius: currentRadius,
+                });
+                this.setToolbarMessage(previewMsg);
+
+                // Store current result as best
+                bestFeature = feature;
+                bestResult = result;
+
+                // Check if touches border and can expand
+                if (result.debug?.touches_border && currentRadius < 5) {
+                    this.layers.pertenenza.changed();
+                    this.map.renderSync();
+                    await new Promise((resolve) => {
+                        window.requestAnimationFrame(() => {
+                            window.setTimeout(resolve, 0);
+                        });
+                    });
+                    const nextRadius = currentRadius + 1;
+                    const confirmMsg = t('m3.confirm.expandRadius', {
+                        currentRadius,
+                        newRadius: nextRadius,
+                    });
+                    if (window.confirm(confirmMsg)) {
+                        // User wants to try a larger radius: remove current preview and retry
+                        this.pertenenzaSource.removeFeature(feature);
+                        bestFeature = null;
+                        currentRadius = nextRadius;
+                        this.setToolbarMessage(t('m3.detecting'));
+                        continue;
+                    }
+                }
+
+                // Stop expanding (either no border touch or user declined)
+                // Feature remains on map
+                break;
+            }
+
+            if (!bestFeature || !bestResult) {
+                this.setToolbarMessage(t('m3.error.detection'));
+                return;
+            }
+
+            // Show final success message (feature already on map from preview loop)
+            const areaM2 = calculateArea(bestFeature, this.view?.getProjection());
+            const vertexCount = Math.max(0, bestFeature.getGeometry().getCoordinates()[0].length - 1);
+            const message = t('m3.success.detected', {
+                area: this.unitSystem.formatArea(areaM2),
+                vertices: vertexCount,
+            });
+            this.setToolbarMessage(message);
+
+        } catch (error) {
+            console.error('M3 detection error:', error);
+            this.setToolbarMessage(t('m3.error.internal'));
+        } finally {
+            this.setM3BusyVisible(false);
+            this.updateBusyOverlay();
+        }
     }
 
     isFeatureInfoUnsupported(payload) {
