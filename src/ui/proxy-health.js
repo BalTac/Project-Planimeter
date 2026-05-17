@@ -71,12 +71,38 @@ export class ProxyHealthMonitor {
             const detail = typeof payload.durationMs === 'number'
                 ? `${payload.message} — ${payload.durationMs} ms`
                 : payload.message;
-            this.setHealth('ok', detail);
+            const quotaSuffix = await this.fetchQuotaSuffix();
+            this.setHealth('ok', quotaSuffix ? `${detail} · ${quotaSuffix}` : detail);
         } catch (err) {
             const detail = err instanceof Error ? err.message : t('proxy.unreachable');
             this.setHealth('ko', detail);
         } finally {
             this.requestPending = false;
+        }
+    }
+
+    async fetchQuotaSuffix() {
+        try {
+            const res = await fetch(
+                new URL('/request-quota-status', window.location.origin),
+                { cache: 'no-store', headers: { Accept: 'application/json' } },
+            );
+            if (!res.ok) return '';
+            const payload = await res.json();
+            if (!payload?.ok) return '';
+
+            const used = Number(payload.used);
+            const limit = Number(payload.limit);
+            const remaining = Number(payload.remaining_estimate);
+            if (!Number.isFinite(used) || !Number.isFinite(limit) || !Number.isFinite(remaining)) return '';
+
+            return t('quota.estimate', {
+                used: Math.max(0, Math.floor(used)),
+                limit: Math.max(1, Math.floor(limit)),
+                remaining: Math.max(0, Math.floor(remaining)),
+            });
+        } catch {
+            return '';
         }
     }
 

@@ -15,8 +15,8 @@ Output:
 from __future__ import annotations
 
 import argparse
-import json
 import io
+import json
 import math
 import pathlib
 import re
@@ -26,9 +26,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
-from PIL import Image, ImageDraw, ImageFont
-import cv2
-import numpy as np
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
@@ -39,12 +37,19 @@ TARGET_HINT = "B609_000200.402"
 OUT_DIR = pathlib.Path(__file__).resolve().parent / "output"
 LEGACY_OUT_DIR = pathlib.Path(__file__).resolve().parent / "tests" / "output"
 ENABLE_METHOD_4 = False
+M3_TILE_HALF_DEG = 0.00030
+M3_TILE_PX = 420
 
 
-def build_output_paths(lon: float, lat: float, mode: str) -> tuple[pathlib.Path, pathlib.Path]:
+def build_output_paths(lon: float, lat: float, mode: str, case_name: str | None = None) -> tuple[pathlib.Path, pathlib.Path]:
     lon_tag = f"{lon:.6f}".replace("-", "m").replace(".", "p")
     lat_tag = f"{lat:.6f}".replace("-", "m").replace(".", "p")
-    stem = f"parcel_smoke_{mode}_lon_{lon_tag}_lat_{lat_tag}"
+    case_tag = ""
+    if case_name:
+        clean_case = re.sub(r"[^A-Za-z0-9._-]+", "-", case_name.strip()).strip("-")
+        if clean_case:
+            case_tag = f"_{clean_case}"
+    stem = f"parcel_smoke_{mode}{case_tag}_lon_{lon_tag}_lat_{lat_tag}"
     return OUT_DIR / f"{stem}.png", OUT_DIR / f"{stem}.json"
 
 
@@ -123,6 +128,7 @@ def normalize_ring(ring: list[tuple[float, float]]) -> list[tuple[float, float]]
 
 
 def ring_area(ring: list[tuple[float, float]]) -> float:
+    """DEPRECATED: Returns meaningless coordinate units squared. Use ring_area_interpolated_m2() instead."""
     ring = normalize_ring(ring)
     if len(ring) < 4:
         return 0.0
@@ -155,6 +161,75 @@ def ring_area_interpolated_m2(ring: list[tuple[float, float]]) -> float:
         y2 = lat2 * meters_per_deg_lat
         acc += (x1 * y2) - (x2 * y1)
     return abs(acc) * 0.5
+
+
+def _is_valid_polygon_ring(ring: list[tuple[float, float]]) -> bool:
+    """Check polygon ring validity: closure, min size, no obvious self-intersection."""
+    if not ring or len(ring) < 4:
+        return False
+    # Already closed by normalize_ring, but verify
+    if ring[0] != ring[-1]:
+        return False
+    # Check for duplicate consecutive vertices (common artifact)
+    for i in range(len(ring) - 1):
+        if ring[i] == ring[i + 1]:
+            return False
+    return True
+
+
+def _safe_serialize_ownership_mask(mask: Any) -> list | None:
+    """Convert numpy array or dict ownership mask to JSON-serializable format."""
+    if mask is None:
+        return None
+    try:
+        # If it's already a list, return as-is
+        if isinstance(mask, list):
+            return mask
+        # If it's dict (already serializable), return as-is
+        if isinstance(mask, dict):
+            return mask
+        # Try numpy array → list conversion
+        import numpy as np
+        if isinstance(mask, np.ndarray):
+            return mask.tolist()
+        # If other type, try generic conversion
+        return list(mask)
+    except Exception:
+        return None
+
+
+def _normalize_debug_response(response_dict: dict[str, Any]) -> dict[str, Any]:
+    """Probe both camelCase and snake_case keys in response debug object."""
+    out = {}
+    # Canonical mappings: prefer camelCase from endpoint, fallback to snake_case
+    mappings = [
+        ("snapAcceptedVertices", "snap_accepted_vertices", "snap_accepted_vertices"),
+        ("snapKeptVertices", "snap_kept_vertices", "snap_kept_vertices"),
+        ("snapRejectedVertices", "snap_rejected_vertices", "snap_rejected_vertices"),
+        ("meanSnapMeters", "mean_snap_meters", "mean_snap_meters"),
+        ("meanConfidence", "mean_confidence", "mean_confidence"),
+        ("ownershipMode", "ownership_mode", "ownership_mode"),
+        ("ownershipAccepted", "ownership_accepted", "ownership_accepted"),
+        ("ownershipRejected", "ownership_rejected", "ownership_rejected"),
+        ("ownershipAmbiguous", "ownership_ambiguous", "ownership_ambiguous"),
+        ("meanOwnershipScore", "mean_ownership_score", "mean_ownership_score"),
+        ("ownershipDirectionFlips", "ownership_direction_flips", "ownership_direction_flips"),
+        ("ownershipInsideFailures", "ownership_inside_failures", "ownership_inside_failures"),
+        ("ownershipOutsideFailures", "ownership_outside_failures", "ownership_outside_failures"),
+        ("continuityBoostMean", "continuity_boost_mean", "continuity_boost_mean"),
+        ("meanScoreGain", "mean_score_gain", "mean_score_gain"),
+        ("rejectedByDistance", "rejected_by_distance", "rejected_by_distance"),
+        ("rejectedByWeakGain", "rejected_by_weak_gain", "rejected_by_weak_gain"),
+    ]
+    for camel, snake, out_key in mappings:
+        value = response_dict.get(camel) or response_dict.get(snake)
+        if value is not None:
+            out[out_key] = value
+    # Copy any remaining keys not in mapping
+    for k, v in response_dict.items():
+        if k not in out and k not in [m[0] for m in mappings] + [m[1] for m in mappings]:
+            out[k] = v
+    return out
 
 
 def fetch_parcel_label_from_featureinfo_html(base_url: str, lon: float, lat: float) -> dict[str, str]:
@@ -232,6 +307,58 @@ def fetch_parcel_label_from_featureinfo_html(base_url: str, lon: float, lat: flo
     return {}
 
 
+def fetch_parcel_summary_proxy_json(base_url: str, lon: float, lat: float) -> dict[str, str]:
+    """Proxy-first parcel metadata summary aligned with app runtime strategy."""
+    buf = 0.00008
+    lat_min, lon_min, lat_max, lon_max = lat - buf, lon - buf, lat + buf, lon + buf
+    qs = urllib.parse.urlencode({
+        "SERVICE": "WMS",
+        "REQUEST": "GetFeatureInfo",
+        "VERSION": "1.3.0",
+        "LAYERS": "CP.CadastralParcel",
+        "QUERY_LAYERS": "CP.CadastralParcel",
+        "STYLES": "",
+        "CRS": "EPSG:6706",
+        "BBOX": f"{lat_min},{lon_min},{lat_max},{lon_max}",
+        "WIDTH": "221",
+        "HEIGHT": "221",
+        "I": "110",
+        "J": "110",
+        "INFO_FORMAT": "text/html",
+        "FEATURE_COUNT": "10",
+        "TRANSPARENT": "true",
+        "FORMAT": "image/png",
+        "OUTPUT": "json",
+    })
+    try:
+        data = http_json(base_url, f"/wms-proxy?{qs}")
+    except Exception:
+        return fetch_parcel_label_from_featureinfo_html(base_url, lon, lat)
+
+    parcel = data.get("parcel") if isinstance(data, dict) else None
+    if not isinstance(parcel, dict):
+        return fetch_parcel_label_from_featureinfo_html(base_url, lon, lat)
+
+    result: dict[str, str] = {}
+    label = str(parcel.get("label") or "").strip()
+    reference = str(parcel.get("id") or "").strip()
+    local_id = str(parcel.get("local_id") or "").strip()
+    namespace = str(parcel.get("namespace") or "").strip()
+
+    if label:
+        result["parcel_label"] = label
+    if reference:
+        result["parcel_reference"] = reference
+    if local_id:
+        result["parcel_inspire_localid"] = local_id
+    if namespace:
+        result["parcel_inspire_namespace"] = namespace
+
+    if result:
+        return result
+    return fetch_parcel_label_from_featureinfo_html(base_url, lon, lat)
+
+
 def _ref_matches(candidate: str, reference: str) -> bool:
     candidate_norm = str(candidate or "").strip().lower()
     reference_norm = str(reference or "").strip().lower()
@@ -298,7 +425,8 @@ def resolve_coordinates_from_reference(reference: str) -> tuple[float, float, st
         for result in results:
             if not isinstance(result, dict):
                 continue
-            debug = result.get("debug") if isinstance(result.get("debug"), dict) else {}
+            debug_obj = result.get("debug")
+            debug = debug_obj if isinstance(debug_obj, dict) else {}
             parcel_ref = str(debug.get("parcel_reference") or "")
             parcel_label = str(debug.get("parcel_label") or "")
             parcel_inspire_localid = str(debug.get("parcel_inspire_localid") or "")
@@ -431,190 +559,253 @@ def method_2_wms_featureinfo_json(base_url: str, lon: float, lat: float, parcel_
 
 
 def method_3_raster_segmentation(base_url: str, lon: float, lat: float, max_radius: int = 2) -> MethodResult:
-    name = "M3 Raster color segmentation"
-    tile_half = 0.00030
-    tile_px = 420
-    max_radius = max(0, int(max_radius))  # radius=0 -> 1x1, 1 -> 3x3, 2 -> 5x5 tiles
-
-    def fetch_tile(center_lon: float, center_lat: float) -> Image.Image:
-        lon_min_t, lat_min_t, lon_max_t, lat_max_t = bbox_from_center(center_lon, center_lat, tile_half)
-        qs = urllib.parse.urlencode({
-            "SERVICE": "WMS",
-            "REQUEST": "GetMap",
-            "VERSION": "1.3.0",
-            "LAYERS": "CP.CadastralParcel",
-            "STYLES": "",
-            "CRS": "EPSG:6706",
-            "BBOX": f"{lat_min_t},{lon_min_t},{lat_max_t},{lon_max_t}",
-            "WIDTH": str(tile_px),
-            "HEIGHT": str(tile_px),
-            "FORMAT": "image/png",
-            "TRANSPARENT": "true",
-        })
-        png = http_bytes(base_url, f"/wms-proxy?{qs}")
-        
-        # DEBUG: save raw WMS tile for analysis (only on first tile)
-        if radius == 0:
-            debug_path = OUT_DIR / f"wms_raw_tile_lon_{center_lon:.6f}_lat_{center_lat:.6f}.png"
-            debug_path.parent.mkdir(parents=True, exist_ok=True)
-            debug_path.write_bytes(png)
-        
-        return Image.open(io.BytesIO(png)).convert("RGBA")
-
-    def build_mosaic(radius: int) -> Image.Image:
-        side = (2 * radius + 1) * tile_px
-        mosaic = Image.new("RGBA", (side, side), (0, 0, 0, 0))
-        span_deg = tile_half * 2.0
-
-        for gy in range(radius, -radius - 1, -1):
-            for gx in range(-radius, radius + 1):
-                lon_t = lon + gx * span_deg
-                lat_t = lat + gy * span_deg
-                try:
-                    tile_img = fetch_tile(lon_t, lat_t)
-                except Exception:
-                    tile_img = Image.new("RGBA", (tile_px, tile_px), (0, 0, 0, 0))
-
-                px_x = (gx + radius) * tile_px
-                px_y = (radius - gy) * tile_px
-                mosaic.paste(tile_img, (px_x, px_y))
-
-        return mosaic
-
-    def detect_on_image(img: Image.Image, radius: int) -> tuple[list[tuple[float, float]] | None, dict[str, Any]]:
-        """Extract parcel boundary by:
-        1. Mask out red logo (Agenzia Entrate branding)
-        2. Finding all edge pixels (black borders)
-        3. Flood-filling from image center to find region containing the queried point
-        4. Extracting only the contour of that region"""
-        
-        # Convert PIL to numpy
-        img_cv = np.array(img.convert("RGB"))
-        img_cv = cv2.cvtColor(img_cv, cv2.COLOR_RGB2BGR)
-        
-        # Remove red logo (Agenzia Entrate): detect red pixels and replace with background
-        # Red in BGR: high R (>150), low G (<100), low B (<100)
-        lower_red = np.array([0, 0, 150])      # BGR: B, G, R
-        upper_red = np.array([100, 100, 255])
-        red_mask = cv2.inRange(img_cv, lower_red, upper_red)
-        
-        # Replace red pixels with beige background (WMS fill color ~253,236,189 in RGB = 189,236,253 in BGR)
-        background_color = np.array([189, 236, 253], dtype=np.uint8)
-        img_cv[red_mask > 0] = background_color
-        
-        # Convert to grayscale
-        gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-        
-        # Detect edges (WMS black borders ~10-15 grayscale)
-        edges = cv2.Canny(gray, threshold1=50, threshold2=120)
-        
-        # Invert: white=border, black=fillable area
-        filled_area = cv2.bitwise_not(edges)
-        
-        # Flood-fill from image center to find the region containing the queried point
-        w, h = img.size
-        cx, cy = w // 2, h // 2
-        
-        # Verify center pixel is not on a border
-        if filled_area[cy, cx] == 0:
-            # Center is on a border, search nearby
-            found = False
-            for r_search in range(1, 20):
-                for dy in range(-r_search, r_search + 1):
-                    for dx in range(-r_search, r_search + 1):
-                        x, y = cx + dx, cy + dy
-                        if 0 <= x < w and 0 <= y < h and filled_area[y, x] > 0:
-                            cx, cy = x, y
-                            found = True
-                            break
-                    if found:
-                        break
-                if found:
-                    break
-        
-        if filled_area[cy, cx] == 0:
-            return None, {"reason": "center_on_border"}
-        
-        # Create a mask: flood-fill from center
-        # This finds the exact region that contains the queried point
-        mask = np.zeros((h + 2, w + 2), dtype=np.uint8)
-        cv2.floodFill(filled_area, mask, (cx, cy), 255)
-        
-        # Extract the filled region (without the extra border added by floodFill)
-        region_mask = mask[1:-1, 1:-1]
-        region_area_px = np.count_nonzero(region_mask)
-        
-        if region_area_px < 20:
-            return None, {"reason": "region_too_small", "region_px": int(region_area_px)}
-        
-        # Find contours of this region
-        contours, _ = cv2.findContours(region_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if not contours:
-            return None, {"reason": "no_region_contours"}
-        
-        # Should have exactly one contour for the region
-        region_contour = max(contours, key=cv2.contourArea)
-        
-        # Approximate to reduce noise
-        epsilon = 0.005 * cv2.arcLength(region_contour, True)
-        approx = cv2.approxPolyDP(region_contour, epsilon, True)
-        
-        boundary_px = [(pt[0][0], pt[0][1]) for pt in approx]
-        
-        if len(boundary_px) < 3:
-            return None, {"reason": "too_few_vertices"}
-        
-        # Convert to lon/lat
-        total_half = tile_half * (2 * radius + 1)
-        lon_min, lat_min, lon_max, lat_max = bbox_from_center(lon, lat, total_half)
-        
-        def px_to_lonlat(x: int, y: int) -> tuple[float, float]:
-            lon_v = lon_min + (x / (w - 1)) * (lon_max - lon_min)
-            lat_v = lat_max - (y / (h - 1)) * (lat_max - lat_min)
-            return lon_v, lat_v
-        
-        ring = normalize_ring([px_to_lonlat(x, y) for x, y in boundary_px])
-        
-        if len(ring) < 3:
-            return None, {"reason": "ring_too_small"}
-        
-        touches_border = any((x <= 2 or x >= w - 2 or y <= 2 or y >= h - 2) for x, y in boundary_px)
-        
-        return ring, {
-            "region_area_px": int(region_area_px),
-            "contour_vertices": len(approx),
-            "touches_border": touches_border,
-            "radius": radius,
-            "mosaic_tiles": (2 * radius + 1) ** 2,
-            "seed_cx": cx,
-            "seed_cy": cy,
-            "red_pixels_masked": int(np.count_nonzero(red_mask)),
-        }
-
+    name = "M3 Backend /parcel-geometry-m3"
+    max_radius = min(5, max(1, int(max_radius)))
+    start_radius = 1
     last_debug: dict[str, Any] = {}
-    for radius in range(0, max_radius + 1):
-        mosaic = build_mosaic(radius)
-        ring, debug = detect_on_image(mosaic, radius)
-        last_debug = debug
 
-        if not ring:
+    for radius in range(start_radius, max_radius + 1):
+        try:
+            data = http_json(base_url, "/parcel-geometry-m3", {
+                "lat": lat,
+                "lon": lon,
+                "radius": radius,
+            })
+        except Exception as exc:
+            return MethodResult(name, False, f"M3 endpoint request failed: {exc}", None, {
+                "max_radius_requested": max_radius,
+                "used_radius": radius,
+            })
+
+        debug = dict(data.get("debug") or {}) if isinstance(data, dict) else {}
+        debug["max_radius_requested"] = max_radius
+        debug["used_radius"] = radius
+        if isinstance(data, dict) and "durationMs" in data:
+            debug["durationMs"] = data.get("durationMs")
+
+        if not isinstance(data, dict) or not data.get("ok") or not isinstance(data.get("ring"), list):
+            debug["message"] = (data.get("message") if isinstance(data, dict) else "invalid_response")
+            last_debug = debug
+            if radius == start_radius:
+                return MethodResult(name, False, f"M3 detect failed at radius={radius}", None, debug)
             continue
 
-        if debug.get("touches_border") and radius < max_radius:
-            # The detected parcel spills out of current mosaic: expand to neighboring tiles.
+        ring = []
+        for pt in data.get("ring", []):
+            if isinstance(pt, (list, tuple)) and len(pt) >= 2 and isinstance(pt[0], (int, float)) and isinstance(pt[1], (int, float)):
+                ring.append((float(pt[0]), float(pt[1])))
+        ring = normalize_ring(ring)
+
+        if len(ring) < 4:
+            last_debug = debug
+            continue
+        
+        # Validate coarse ring geometry
+        if not _is_valid_polygon_ring(ring):
+            debug["message"] = "coarse_ring_invalid_geometry"
+            last_debug = debug
+            if radius == start_radius:
+                return MethodResult(name, False, "Coarse ring invalid at radius={radius}", None, debug)
             continue
 
         area_m2 = ring_area_interpolated_m2(ring)
         debug["estimated_area_m2"] = area_m2
         debug["estimated_area_ha"] = area_m2 / 10000.0
-        debug["max_radius_requested"] = max_radius
-        debug["used_radius"] = radius
-        debug.update(fetch_parcel_label_from_featureinfo_html(base_url, lon, lat))
-        return MethodResult(name, True, f"Raster-derived hull, {len(ring)} vertices (radius={radius})", ring, debug)
+        debug.update(fetch_parcel_summary_proxy_json(base_url, lon, lat))
 
-    last_debug["max_radius_requested"] = max_radius
-    return MethodResult(name, False, "Unable to close raster contour after neighbor-tile expansion", None, last_debug)
+        last_debug = debug
+        if debug.get("touches_border") and radius < max_radius:
+            continue
+
+        return MethodResult(name, True, f"Endpoint M3 polygon, {len(ring)} vertices (radius={radius})", ring, debug)
+
+    return MethodResult(name, False, "Unable to close contour after progressive endpoint retries", None, last_debug)
+
+
+def method_3_refine_border_tiles(
+    base_url: str,
+    lon: float,
+    lat: float,
+    coarse: MethodResult,
+    quality: str = "balanced",
+    max_requests: int | None = None,
+    corner_snap: bool = False,
+) -> MethodResult:
+    name = "M3 Refine edge attraction"
+    if not coarse.ok or not coarse.ring_lonlat:
+        return MethodResult(name, False, "Coarse ring unavailable", None, {})
+
+    # Validate coarse ring
+    if not _is_valid_polygon_ring(coarse.ring_lonlat):
+        return MethodResult(name, False, "Coarse ring invalid (not closed or self-intersecting)", None, {})
+
+    payload: dict[str, Any] = {
+        "lat": lat,
+        "lon": lon,
+        "coarseRing": [[float(x), float(y)] for x, y in coarse.ring_lonlat],
+        "quality": quality,
+    }
+    
+    # CRITICAL FIX: Safe ownership mask serialization
+    ownership_mask = coarse.debug.get("ownershipMask") if isinstance(coarse.debug, dict) else None
+    if ownership_mask is not None:
+        safe_mask = _safe_serialize_ownership_mask(ownership_mask)
+        if safe_mask is not None:
+            payload["ownershipMask"] = safe_mask
+        # else: silently omit invalid mask (fallback)
+    
+    mask_transform = coarse.debug.get("maskTransform") if isinstance(coarse.debug, dict) else None
+    if isinstance(mask_transform, dict):
+        payload["maskTransform"] = mask_transform
+    
+    if isinstance(coarse.debug, dict):
+        payload["coarseDebug"] = coarse.debug
+    
+    if isinstance(max_requests, int) and max_requests > 0:
+        payload["maxRequests"] = int(max_requests)
+
+    if corner_snap:
+        payload["cornerSnap"] = True
+
+    try:
+        data = http_json(base_url, "/parcel-geometry-m3-refine", payload)
+    except Exception as exc:
+        return MethodResult(name, False, f"Refine endpoint request failed: {exc}", None, {})
+
+    if not isinstance(data, dict) or not data.get("ok") or not isinstance(data.get("ring"), list):
+        debug = dict(data.get("debug") or {}) if isinstance(data, dict) else {}
+        debug["message"] = (data.get("message") if isinstance(data, dict) else "invalid_response")
+        return MethodResult(name, False, "Refine endpoint returned no ring", None, debug)
+
+    ring = normalize_ring([
+        (float(pt[0]), float(pt[1]))
+        for pt in data.get("ring", [])
+        if isinstance(pt, (list, tuple)) and len(pt) >= 2 and isinstance(pt[0], (int, float)) and isinstance(pt[1], (int, float))
+    ])
+    if len(ring) < 4:
+        debug = dict(data.get("debug") or {})
+        debug["message"] = "ring_too_small"
+        return MethodResult(name, False, "Refined ring invalid", None, debug)
+
+    # Validate refined ring geometry
+    if not _is_valid_polygon_ring(ring):
+        debug = dict(data.get("debug") or {})
+        debug["message"] = "refined_ring_invalid_geometry"
+        debug["reason"] = "self-intersecting or duplicate vertices"
+        return MethodResult(name, False, "Refined ring has geometric issues", None, debug)
+
+    coarse_area = ring_area_interpolated_m2(coarse.ring_lonlat)
+    refined_area = ring_area_interpolated_m2(ring)
+    delta_m2 = refined_area - coarse_area
+    delta_ratio = (delta_m2 / coarse_area) if coarse_area > 1e-9 else 0.0
+    
+    # MEDIUM FIX: Clamp delta ratio + warn if suspicious
+    delta_ratio_clamped = max(-0.5, min(0.5, delta_ratio))
+    area_sanity_ok = abs(delta_ratio) <= 0.5
+
+    debug = dict(data.get("debug") or {})
+    debug = _normalize_debug_response(debug)  # Fix camelCase/snake_case mismatch
+    debug["quality"] = data.get("quality", quality)
+    debug["durationMs"] = data.get("durationMs")
+    debug["coarse_area_m2"] = coarse_area
+    debug["refined_area_m2"] = refined_area
+    debug["delta_area_m2"] = delta_m2
+    debug["delta_area_ratio"] = delta_ratio_clamped
+    debug["area_sanity_check"] = area_sanity_ok
+    if not area_sanity_ok:
+        debug["area_sanity_warning"] = f"delta_ratio {delta_ratio:.2f} out of ±50% expected range"
+
+    return MethodResult(
+        name,
+        True,
+        f"Refined border, {len(ring)} vertices, delta {delta_m2:.2f} m2",
+        ring,
+        debug,
+    )
+
+
+def method_3_trace_contour_walk(
+    base_url: str,
+    lon: float,
+    lat: float,
+    coarse: MethodResult,
+    tolerance_m: float = 0.35,
+    use_at_point_fallback: bool = True,
+    max_at_point_calls: int = 8,
+) -> MethodResult:
+    """Call the new /parcel-geometry-m3-trace endpoint (contour-walk algorithm)."""
+    name = "M3 Trace contour-walk"
+    if not coarse.ok or not coarse.ring_lonlat:
+        return MethodResult(name, False, "Coarse ring unavailable", None, {})
+    if not _is_valid_polygon_ring(coarse.ring_lonlat):
+        return MethodResult(name, False, "Coarse ring invalid (not closed or self-intersecting)", None, {})
+
+    payload: dict[str, Any] = {
+        "lat": lat,
+        "lon": lon,
+        "coarseRing": [[float(x), float(y)] for x, y in coarse.ring_lonlat],
+        "toleranceM": float(tolerance_m),
+        "useAtPointFallback": bool(use_at_point_fallback),
+        "maxAtPointCalls": int(max_at_point_calls),
+    }
+
+    ownership_mask = coarse.debug.get("ownershipMask") if isinstance(coarse.debug, dict) else None
+    if ownership_mask is not None:
+        safe_mask = _safe_serialize_ownership_mask(ownership_mask)
+        if safe_mask is not None:
+            payload["ownershipMask"] = safe_mask
+    mask_transform = coarse.debug.get("maskTransform") if isinstance(coarse.debug, dict) else None
+    if isinstance(mask_transform, dict):
+        payload["maskTransform"] = mask_transform
+    if isinstance(coarse.debug, dict):
+        payload["coarseDebug"] = coarse.debug
+
+    try:
+        data = http_json(base_url, "/parcel-geometry-m3-trace", payload)
+    except Exception as exc:
+        return MethodResult(name, False, f"Trace endpoint request failed: {exc}", None, {})
+
+    if not isinstance(data, dict) or not data.get("ok") or not isinstance(data.get("ring"), list):
+        debug = dict(data.get("debug") or {}) if isinstance(data, dict) else {}
+        debug["message"] = (data.get("message") if isinstance(data, dict) else "invalid_response")
+        return MethodResult(name, False, "Trace endpoint returned no ring", None, debug)
+
+    ring = normalize_ring([
+        (float(pt[0]), float(pt[1]))
+        for pt in data.get("ring", [])
+        if isinstance(pt, (list, tuple))
+        and len(pt) >= 2
+        and isinstance(pt[0], (int, float))
+        and isinstance(pt[1], (int, float))
+    ])
+    if len(ring) < 4:
+        debug = dict(data.get("debug") or {})
+        debug["message"] = "ring_too_small"
+        return MethodResult(name, False, "Traced ring invalid", None, debug)
+    if not _is_valid_polygon_ring(ring):
+        debug = dict(data.get("debug") or {})
+        debug["message"] = "traced_ring_invalid_geometry"
+        return MethodResult(name, False, "Traced ring has geometric issues", None, debug)
+
+    coarse_area = ring_area_interpolated_m2(coarse.ring_lonlat)
+    traced_area = ring_area_interpolated_m2(ring)
+    delta_m2 = traced_area - coarse_area
+    delta_ratio = (delta_m2 / coarse_area) if coarse_area > 1e-9 else 0.0
+
+    debug = dict(data.get("debug") or {})
+    debug["durationMs"] = data.get("durationMs")
+    debug["coarse_area_m2"] = coarse_area
+    debug["traced_area_m2"] = traced_area
+    debug["delta_area_m2"] = delta_m2
+    debug["delta_area_ratio"] = delta_ratio
+
+    return MethodResult(
+        name,
+        True,
+        f"Traced contour, {len(ring)} vertices, delta {delta_m2:.2f} m2",
+        ring,
+        debug,
+    )
 
 
 def method_4_grid_probing(base_url: str, lon: float, lat: float, parcel_ref: str) -> MethodResult:
@@ -670,6 +861,54 @@ def method_4_grid_probing(base_url: str, lon: float, lat: float, parcel_ref: str
     })
 
 
+def _find_method_result(results: list[MethodResult], prefix: str) -> MethodResult | None:
+    prefix_norm = prefix.strip().lower()
+    for result in results:
+        if result.name.strip().lower().startswith(prefix_norm):
+            return result
+    return None
+
+
+def _fetch_m3_mosaic(base_url: str, lon: float, lat: float, radius: int) -> tuple[Image.Image | None, tuple[float, float, float, float] | None]:
+    radius = max(1, int(radius))
+    side_tiles = (2 * radius + 1)
+    side_px = side_tiles * M3_TILE_PX
+    mosaic = Image.new("RGB", (side_px, side_px), (18, 20, 24))
+    span_deg = M3_TILE_HALF_DEG * 2.0
+
+    for gy in range(radius, -radius - 1, -1):
+        for gx in range(-radius, radius + 1):
+            lon_t = lon + gx * span_deg
+            lat_t = lat + gy * span_deg
+            lon_min_t, lat_min_t, lon_max_t, lat_max_t = bbox_from_center(lon_t, lat_t, M3_TILE_HALF_DEG)
+            qs = urllib.parse.urlencode({
+                "SERVICE": "WMS",
+                "REQUEST": "GetMap",
+                "VERSION": "1.3.0",
+                "LAYERS": "CP.CadastralParcel",
+                "STYLES": "",
+                "CRS": "EPSG:6706",
+                "BBOX": f"{lat_min_t},{lon_min_t},{lat_max_t},{lon_max_t}",
+                "WIDTH": str(M3_TILE_PX),
+                "HEIGHT": str(M3_TILE_PX),
+                "FORMAT": "image/png",
+                "TRANSPARENT": "true",
+            })
+            try:
+                tile_raw = http_bytes(base_url, f"/wms-proxy?{qs}")
+                tile_img = Image.open(io.BytesIO(tile_raw)).convert("RGB")
+            except Exception:
+                tile_img = Image.new("RGB", (M3_TILE_PX, M3_TILE_PX), (35, 39, 46))
+
+            px_x = (gx + radius) * M3_TILE_PX
+            px_y = (radius - gy) * M3_TILE_PX
+            mosaic.paste(tile_img, (px_x, px_y))
+
+    half_total = M3_TILE_HALF_DEG * side_tiles
+    bbox = bbox_from_center(lon, lat, half_total)
+    return mosaic, bbox
+
+
 def _resolve_panel_title(results: list[MethodResult], lon: float, lat: float) -> str:
     for result in results:
         if result.debug:
@@ -679,7 +918,22 @@ def _resolve_panel_title(results: list[MethodResult], lon: float, lat: float) ->
     return f"Smoke test particella @ lon={lon:.6f}, lat={lat:.6f}"
 
 
-def draw_panel(results: list[MethodResult], lon: float, lat: float, out_path: pathlib.Path) -> None:
+def _normalize_case_name(case_name: str | None) -> str:
+    if not case_name:
+        return ""
+    clean_case = re.sub(r"[^A-Za-z0-9._-]+", "-", case_name.strip()).strip("-")
+    return clean_case
+
+
+def draw_panel(
+    results: list[MethodResult],
+    lon: float,
+    lat: float,
+    out_path: pathlib.Path,
+    base_url: str | None = None,
+    requested_radius: int = 2,
+    case_name: str | None = None,
+) -> None:
     panel_w, panel_h = 1000, 1000
     canvas = Image.new("RGB", (panel_w, panel_h), (22, 24, 28))
     draw = ImageDraw.Draw(canvas)
@@ -693,6 +947,9 @@ def draw_panel(results: list[MethodResult], lon: float, lat: float, out_path: pa
     ]
 
     panel_title = _resolve_panel_title(results, lon, lat)
+    clean_case = _normalize_case_name(case_name)
+    if clean_case:
+        panel_title = f"{panel_title} | {clean_case}"
     draw.text((20, 18), panel_title, fill=(235, 235, 235), font=font)
 
     all_points: list[tuple[float, float]] = []
@@ -710,7 +967,6 @@ def draw_panel(results: list[MethodResult], lon: float, lat: float, out_path: pa
         min_lon, max_lon = lon - half, lon + half
         min_lat, max_lat = lat - half, lat + half
 
-    # Add margin.
     dx = max(1e-9, max_lon - min_lon)
     dy = max(1e-9, max_lat - min_lat)
     min_lon -= dx * 0.1
@@ -718,27 +974,27 @@ def draw_panel(results: list[MethodResult], lon: float, lat: float, out_path: pa
     min_lat -= dy * 0.1
     max_lat += dy * 0.1
 
-    def project(pt: tuple[float, float], cell: tuple[int, int, int, int]) -> tuple[float, float]:
-        x1, y1, x2, y2 = cell
-        w = max(1, x2 - x1)
-        h = max(1, y2 - y1)
-        x = x1 + ((pt[0] - min_lon) / (max_lon - min_lon)) * w
-        y = y2 - ((pt[1] - min_lat) / (max_lat - min_lat)) * h
-        return x, y
-
-    def project_preserve_aspect(pt: tuple[float, float], cell: tuple[int, int, int, int]) -> tuple[float, float]:
+    def project_preserve_aspect(
+        pt: tuple[float, float],
+        cell: tuple[int, int, int, int],
+        bounds: tuple[float, float, float, float] | None = None,
+    ) -> tuple[float, float]:
         x1, y1, x2, y2 = cell
         cell_w = max(1, x2 - x1)
         cell_h = max(1, y2 - y1)
-        data_w = max(1e-9, max_lon - min_lon)
-        data_h = max(1e-9, max_lat - min_lat)
+        if bounds is None:
+            b_min_lon, b_max_lon, b_min_lat, b_max_lat = min_lon, max_lon, min_lat, max_lat
+        else:
+            b_min_lon, b_max_lon, b_min_lat, b_max_lat = bounds
+        data_w = max(1e-9, b_max_lon - b_min_lon)
+        data_h = max(1e-9, b_max_lat - b_min_lat)
         scale = min(cell_w / data_w, cell_h / data_h)
         draw_w = data_w * scale
         draw_h = data_h * scale
         offset_x = x1 + (cell_w - draw_w) / 2.0
         offset_y = y1 + (cell_h - draw_h) / 2.0
-        x = offset_x + (pt[0] - min_lon) * scale
-        y = offset_y + (max_lat - pt[1]) * scale
+        x = offset_x + (pt[0] - b_min_lon) * scale
+        y = offset_y + (b_max_lat - pt[1]) * scale
         return x, y
 
     colors = [
@@ -748,7 +1004,7 @@ def draw_panel(results: list[MethodResult], lon: float, lat: float, out_path: pa
         (255, 115, 115),
     ]
 
-    for idx, result in enumerate(results):
+    for idx, result in enumerate(results[:4]):
         cell = cells[idx]
         x1, y1, x2, y2 = cell
         draw.rectangle(cell, outline=(70, 75, 85), width=2, fill=(30, 34, 40))
@@ -757,19 +1013,108 @@ def draw_panel(results: list[MethodResult], lon: float, lat: float, out_path: pa
         status_col = (77, 214, 148) if result.ok else (255, 116, 116)
         draw.text((x1 + 10, y1 + 10), f"{result.name}", fill=(240, 240, 240), font=font)
         draw.text((x1 + 10, y1 + 26), status, fill=status_col, font=font)
+        draw.text((x1 + 50, y1 + 26), result.details[:80], fill=(200, 205, 212), font=font)
 
-        detail = result.details[:80]
-        draw.text((x1 + 50, y1 + 26), detail, fill=(200, 205, 212), font=font)
-
-        # Draw center point.
         cx, cy = project_preserve_aspect((lon, lat), cell)
         draw.ellipse((cx - 3, cy - 3, cx + 3, cy + 3), fill=(240, 240, 240))
 
         if result.ring_lonlat and len(result.ring_lonlat) >= 4:
             pts = [project_preserve_aspect(p, cell) for p in result.ring_lonlat]
-            draw.polygon(pts, outline=colors[idx], fill=(colors[idx][0], colors[idx][1], colors[idx][2], 40))
-            area = ring_area(result.ring_lonlat)
-            draw.text((x1 + 10, y2 - 20), f"approx area(deg2): {area:.10f}", fill=(180, 190, 200), font=font)
+            draw.polygon(pts, outline=colors[idx], fill=(colors[idx][0], colors[idx][1], colors[idx][2]))
+            draw.text((x1 + 10, y2 - 20), f"approx area(deg2): {ring_area(result.ring_lonlat):.10f}", fill=(180, 190, 200), font=font)
+
+    coarse = _find_method_result(results, "M3 Backend /parcel-geometry-m3")
+    refined = _find_method_result(results, "M3 Refine")
+    coarse_ring = coarse.ring_lonlat if coarse is not None else None
+    refined_ring = refined.ring_lonlat if refined is not None else None
+    extras_enabled = coarse_ring is not None and refined_ring is not None and len(results) <= 2
+
+    if extras_enabled:
+        mosaic_cell = cells[2]
+        diff_cell = cells[3]
+
+        used_radius_raw = coarse.debug.get("used_radius") if coarse and coarse.debug else requested_radius
+        used_radius = int(used_radius_raw) if isinstance(used_radius_raw, (int, float)) else requested_radius
+
+        # Extra panel 1: composed WMS tile mosaic used for the inspected parcel.
+        mx1, my1, mx2, my2 = mosaic_cell
+        draw.rectangle(mosaic_cell, outline=(70, 75, 85), width=2, fill=(30, 34, 40))
+        draw.text((mx1 + 10, my1 + 10), "Mosaico tile composito (M3)", fill=(240, 240, 240), font=font)
+
+        mosaic_img, mosaic_bbox = _fetch_m3_mosaic(base_url or DEFAULT_BASE_URL, lon, lat, used_radius)
+        if mosaic_img is not None and mosaic_bbox is not None:
+            inner = (mx1 + 10, my1 + 30, mx2 - 10, my2 - 10)
+            inner_w = max(1, inner[2] - inner[0])
+            inner_h = max(1, inner[3] - inner[1])
+            mosaic_fit = mosaic_img.resize((inner_w, inner_h))
+            canvas.paste(mosaic_fit, (inner[0], inner[1]))
+
+            b_min_lon, b_min_lat, b_max_lon, b_max_lat = mosaic_bbox
+            mosaic_bounds = (b_min_lon, b_max_lon, b_min_lat, b_max_lat)
+
+            if coarse_ring and len(coarse_ring) >= 4:
+                coarse_pts = [project_preserve_aspect(p, inner, mosaic_bounds) for p in coarse_ring]
+                draw.line(coarse_pts, fill=(255, 191, 73), width=2)
+            if refined_ring and len(refined_ring) >= 4:
+                refined_pts = [project_preserve_aspect(p, inner, mosaic_bounds) for p in refined_ring]
+                draw.line(refined_pts, fill=(83, 156, 255), width=2)
+
+            cpx, cpy = project_preserve_aspect((lon, lat), inner, mosaic_bounds)
+            draw.ellipse((cpx - 3, cpy - 3, cpx + 3, cpy + 3), fill=(255, 255, 255))
+            draw.text((mx1 + 10, my2 - 20), "giallo=coarse, blu=edge-snap refine", fill=(225, 225, 225), font=font)
+
+        # Extra panel 2: geometric diff between coarse and refined detection.
+        dx1, dy1, dx2, dy2 = diff_cell
+        draw.rectangle(diff_cell, outline=(70, 75, 85), width=2, fill=(30, 34, 40))
+        draw.text((dx1 + 10, dy1 + 10), "Diff coarse vs refined", fill=(240, 240, 240), font=font)
+
+        if coarse_ring and refined_ring and len(coarse_ring) >= 4 and len(refined_ring) >= 4:
+            d_inner_w = max(1, (dx2 - dx1) - 20)
+            d_inner_h = max(1, (dy2 - dy1) - 40)
+            diff_panel = Image.new("RGB", (d_inner_w, d_inner_h), (35, 39, 46))
+            d_draw = ImageDraw.Draw(diff_panel)
+
+            diff_points = coarse_ring + refined_ring
+            d_min_lon = min(p[0] for p in diff_points)
+            d_max_lon = max(p[0] for p in diff_points)
+            d_min_lat = min(p[1] for p in diff_points)
+            d_max_lat = max(p[1] for p in diff_points)
+            d_dx = max(1e-9, d_max_lon - d_min_lon)
+            d_dy = max(1e-9, d_max_lat - d_min_lat)
+            d_min_lon -= d_dx * 0.08
+            d_max_lon += d_dx * 0.08
+            d_min_lat -= d_dy * 0.08
+            d_max_lat += d_dy * 0.08
+
+            def project_local(pt: tuple[float, float]) -> tuple[float, float]:
+                scale = min(d_inner_w / max(1e-9, d_max_lon - d_min_lon), d_inner_h / max(1e-9, d_max_lat - d_min_lat))
+                draw_w = (d_max_lon - d_min_lon) * scale
+                draw_h = (d_max_lat - d_min_lat) * scale
+                ox = (d_inner_w - draw_w) / 2.0
+                oy = (d_inner_h - draw_h) / 2.0
+                x = ox + (pt[0] - d_min_lon) * scale
+                y = oy + (d_max_lat - pt[1]) * scale
+                return x, y
+
+            coarse_local = [project_local(p) for p in coarse_ring]
+            refined_local = [project_local(p) for p in refined_ring]
+
+            coarse_mask = Image.new("L", (d_inner_w, d_inner_h), 0)
+            refined_mask = Image.new("L", (d_inner_w, d_inner_h), 0)
+            ImageDraw.Draw(coarse_mask).polygon(coarse_local, fill=255)
+            ImageDraw.Draw(refined_mask).polygon(refined_local, fill=255)
+            diff_mask = ImageChops.difference(coarse_mask, refined_mask)
+            zero_mask = Image.new("L", (d_inner_w, d_inner_h), 0)
+            diff_rgb = Image.merge("RGB", (diff_mask, zero_mask, zero_mask))
+            diff_panel = ImageChops.add(diff_panel, diff_rgb)
+            d_draw = ImageDraw.Draw(diff_panel)
+            d_draw.polygon(coarse_local, outline=(255, 191, 73), width=2)
+            d_draw.polygon(refined_local, outline=(83, 156, 255), width=2)
+
+            canvas.paste(diff_panel, (dx1 + 10, dy1 + 30))
+            refined_debug = refined.debug if refined is not None else {}
+            delta_m2 = float(refined_debug.get("delta_area_m2", 0.0)) if refined_debug else 0.0
+            draw.text((dx1 + 10, dy2 - 20), f"rosso=diff simmetrica, delta_area={delta_m2:.2f} m2", fill=(225, 225, 225), font=font)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(out_path, format="PNG")
@@ -781,6 +1126,7 @@ def run(
     lat: float | None = TARGET_LAT,
     hint: str = TARGET_HINT,
     radius: int = 2,
+    case_name: str | None = None,
 ) -> int:
     try:
         lon, lat, resolved_source = resolve_input_coordinates(hint, lon, lat)
@@ -790,7 +1136,7 @@ def run(
         return 2
     results: list[MethodResult] = []
     parcel_ref = hint
-    out_img, out_json = build_output_paths(lon, lat, "full")
+    out_img, out_json = build_output_paths(lon, lat, "full", case_name=case_name)
 
     try:
         m1, parcel_ref = method_1_semantic_geometry(base_url, lon, lat, hint)
@@ -825,7 +1171,7 @@ def run(
             })
         results.append(m4)
 
-    draw_panel(results, lon, lat, out_img)
+    draw_panel(results, lon, lat, out_img, base_url=base_url, requested_radius=radius, case_name=case_name)
 
     report = {
         "base_url": base_url,
@@ -835,6 +1181,7 @@ def run(
             "hint": hint,
             "resolved_parcel_ref": parcel_ref,
             "resolved_source": resolved_source,
+            "case_name": _normalize_case_name(case_name),
         },
         "results": [
             {
@@ -865,6 +1212,13 @@ def run_method3_only(
     lat: float | None = TARGET_LAT,
     hint: str = TARGET_HINT,
     radius: int = 2,
+    refine: bool = False,
+    quality: str = "balanced",
+    max_requests: int | None = None,
+    case_name: str | None = None,
+    corner_snap: bool = False,
+    trace: bool = False,
+    trace_tolerance_m: float = 0.35,
 ) -> int:
     try:
         lon, lat, resolved_source = resolve_input_coordinates(hint, lon, lat)
@@ -872,27 +1226,63 @@ def run_method3_only(
         print("M3 FAIL")
         print(f"  {exc}")
         return 2
-    out_img, out_json = build_output_paths(lon, lat, "m3")
+    out_img, out_json = build_output_paths(lon, lat, "m3", case_name=case_name)
     try:
         m3 = method_3_raster_segmentation(base_url, lon, lat, radius)
     except Exception as exc:
-        m3 = MethodResult("M3 Raster color segmentation", False, f"Exception: {exc}", None, {
+        m3 = MethodResult("M3 Backend /parcel-geometry-m3", False, f"Exception: {exc}", None, {
             "traceback": traceback.format_exc(),
         })
 
-    draw_panel([m3], lon, lat, out_img)
+    results = [m3]
+    m3_refine = None
+    if refine:
+        try:
+            m3_refine = method_3_refine_border_tiles(
+                base_url,
+                lon,
+                lat,
+                m3,
+                quality=quality,
+                max_requests=max_requests,
+                corner_snap=corner_snap,
+            )
+        except Exception as exc:
+            m3_refine = MethodResult("M3 Refine border-only tiles", False, f"Exception: {exc}", None, {
+                "traceback": traceback.format_exc(),
+            })
+        results.append(m3_refine)
+
+    m3_trace = None
+    if trace:
+        try:
+            m3_trace = method_3_trace_contour_walk(
+                base_url,
+                lon,
+                lat,
+                m3,
+                tolerance_m=trace_tolerance_m,
+            )
+        except Exception as exc:
+            m3_trace = MethodResult("M3 Trace contour-walk", False, f"Exception: {exc}", None, {
+                "traceback": traceback.format_exc(),
+            })
+        results.append(m3_trace)
+
+    draw_panel(results, lon, lat, out_img, base_url=base_url, requested_radius=radius, case_name=case_name)
 
     report = {
         "base_url": base_url,
-        "target": {"lon": lon, "lat": lat, "hint": hint, "resolved_source": resolved_source},
+        "target": {"lon": lon, "lat": lat, "hint": hint, "resolved_source": resolved_source, "case_name": _normalize_case_name(case_name)},
         "results": [
             {
-                "name": m3.name,
-                "ok": m3.ok,
-                "details": m3.details,
-                "vertices": len(m3.ring_lonlat or []),
-                "debug": m3.debug,
+                "name": r.name,
+                "ok": r.ok,
+                "details": r.details,
+                "vertices": len(r.ring_lonlat or []),
+                "debug": r.debug,
             }
+            for r in results
         ],
         "output_image": str(out_img),
     }
@@ -915,9 +1305,71 @@ def run_method3_only(
         print("M3 FAIL")
         print(f"  radius requested: {radius}")
         print(f"  debug: {m3.debug}")
+
+    if refine and m3_refine is not None:
+        if m3_refine.ok:
+            def _safe_float(value: Any) -> float:
+                if isinstance(value, (int, float)):
+                    return float(value)
+                try:
+                    return float(value)
+                except Exception:
+                    return 0.0
+
+            print("M3 REFINE OK")
+            print(f"  quality: {m3_refine.debug.get('quality', quality)}")
+            print(f"  requests used: {m3_refine.debug.get('requestsUsed', 'n/a')}")
+            print(f"  snap accepted: {m3_refine.debug.get('snapAcceptedVertices', m3_refine.debug.get('snap_accepted_vertices', 'n/a'))}")
+            print(f"  snap kept: {m3_refine.debug.get('snapKeptVertices', m3_refine.debug.get('snap_kept_vertices', 'n/a'))}")
+            print(f"  mean snap: {_safe_float(m3_refine.debug.get('meanSnapMeters', m3_refine.debug.get('mean_snap_meters', 0.0))):.2f} m")
+            print(f"  mean confidence: {_safe_float(m3_refine.debug.get('meanConfidence', m3_refine.debug.get('mean_confidence', 0.0))):.3f}")
+            print(f"  ownership mode: {m3_refine.debug.get('ownershipMode', 'n/a')}")
+            print(f"  ownership accepted: {m3_refine.debug.get('ownershipAccepted', 'n/a')}")
+            print(f"  ownership rejected: {m3_refine.debug.get('ownershipRejected', 'n/a')}")
+            print(f"  ownership ambiguous: {m3_refine.debug.get('ownershipAmbiguous', 'n/a')}")
+            print(f"  mean ownership score: {_safe_float(m3_refine.debug.get('meanOwnershipScore', 0.0)):.3f}")
+            print(f"  ownership dir flips: {m3_refine.debug.get('ownershipDirectionFlips', 'n/a')}")
+            print(f"  inside failures: {m3_refine.debug.get('ownershipInsideFailures', 'n/a')}")
+            print(f"  outside failures: {m3_refine.debug.get('ownershipOutsideFailures', 'n/a')}")
+            print(f"  continuity boost mean: {_safe_float(m3_refine.debug.get('continuityBoostMean', 0.0)):.3f}")
+            print(f"  mean score gain: {_safe_float(m3_refine.debug.get('meanScoreGain', 0.0)):.3f}")
+            print(f"  rejected by distance: {m3_refine.debug.get('rejectedByDistance', 'n/a')}")
+            print(f"  rejected by weak gain: {m3_refine.debug.get('rejectedByWeakGain', 'n/a')}")
+            print(f"  delta area: {float(m3_refine.debug.get('delta_area_m2', 0.0)):.2f} m2")
+            print(f"  delta ratio: {float(m3_refine.debug.get('delta_area_ratio', 0.0)):.4f}")
+        else:
+            print("M3 REFINE FAIL")
+            print(f"  debug: {m3_refine.debug}")
+
+    if trace and m3_trace is not None:
+        if m3_trace.ok:
+            print("M3 TRACE OK")
+            print(f"  algorithm: {m3_trace.debug.get('algorithm', 'n/a')}")
+            print(f"  toleranceM: {m3_trace.debug.get('toleranceM', 'n/a')}")
+            print(f"  tiles fetched: {m3_trace.debug.get('tilesFetched', 'n/a')}")
+            print(f"  skeleton pixels full/filtered: {m3_trace.debug.get('skeletonPixelsFull', 'n/a')} / {m3_trace.debug.get('skeletonPixelsFiltered', 'n/a')}")
+            print(f"  coarse vertices: {m3_trace.debug.get('coarseVertices', 'n/a')}")
+            print(f"  snapped corners: {m3_trace.debug.get('snappedCorners', 'n/a')} (snap failures {m3_trace.debug.get('snapFailures', 'n/a')})")
+            print(f"  BFS failures: {m3_trace.debug.get('bfsFailures', 'n/a')}")
+            print(f"  final vertices: {m3_trace.debug.get('finalVertices', 'n/a')}")
+            print(f"  anti-fuga snapped/kept-atpoint/dropped: {m3_trace.debug.get('antiFugaSnapped', 'n/a')} / {m3_trace.debug.get('antiFugaKeptViaAtPoint', 'n/a')} / {m3_trace.debug.get('antiFugaDropped', 'n/a')}")
+            print(f"  atPoint calls: {m3_trace.debug.get('atPointCalls', 'n/a')}")
+            print(f"  delta area: {float(m3_trace.debug.get('delta_area_m2', 0.0)):.2f} m2")
+            print(f"  delta ratio: {float(m3_trace.debug.get('delta_area_ratio', 0.0)):.4f}")
+        else:
+            print("M3 TRACE FAIL")
+            print(f"  debug: {m3_trace.debug}")
+
     print(f"Image: {out_img}")
     print(f"Report: {out_json}")
 
+    if refine and trace:
+        all_ok = m3.ok and m3_refine is not None and m3_refine.ok and m3_trace is not None and m3_trace.ok
+        return 0 if all_ok else 2
+    if refine:
+        return 0 if (m3.ok and m3_refine is not None and m3_refine.ok) else 2
+    if trace:
+        return 0 if (m3.ok and m3_trace is not None and m3_trace.ok) else 2
     return 0 if m3.ok else 2
 
 
@@ -928,12 +1380,32 @@ if __name__ == "__main__":
     parser.add_argument("--lat", type=float, default=None)
     parser.add_argument("--hint", default=TARGET_HINT)
     parser.add_argument("--ref", default=None, help="Cadastral reference to use as lookup hint (e.g. B609_000200.333)")
-    parser.add_argument("--radius", type=int, default=2, help="Max neighbor-tile expansion radius for method 3")
+    parser.add_argument("--radius", type=int, default=2, help="Max progressive radius for endpoint M3 method")
+    parser.add_argument("--refine", action="store_true", help="Run M3 fine border alignment after coarse detect")
+    parser.add_argument("--quality", choices=["fast", "balanced", "precise", "aggressive"], default="balanced", help="Quality profile for refine mode")
+    parser.add_argument("--max-requests", type=int, default=None, help="Optional max request budget override for refine mode")
+    parser.add_argument("--corner-snap", action="store_true", help="Enable corner-aware line-fit consolidation in refine")
+    parser.add_argument("--trace", action="store_true", help="Run the new contour-walk trace algorithm (/parcel-geometry-m3-trace)")
+    parser.add_argument("--trace-tolerance", type=float, default=0.35, help="Tolerance in meters for trace adaptive subdivision (default 0.35)")
+    parser.add_argument("--case-name", default=None, help="Human-readable identifier for the test case")
     parser.add_argument("--method3-only", action="store_true", help="Run only method 3")
     args = parser.parse_args()
 
     hint = args.ref or args.hint
 
     if args.method3_only:
-        raise SystemExit(run_method3_only(args.base_url, args.lon, args.lat, hint, args.radius))
-    raise SystemExit(run(args.base_url, args.lon, args.lat, hint, args.radius))
+        raise SystemExit(run_method3_only(
+            args.base_url,
+            args.lon,
+            args.lat,
+            hint,
+            args.radius,
+            refine=args.refine,
+            quality=args.quality,
+            max_requests=args.max_requests,
+            case_name=args.case_name,
+            corner_snap=args.corner_snap,
+            trace=args.trace,
+            trace_tolerance_m=args.trace_tolerance,
+        ))
+    raise SystemExit(run(args.base_url, args.lon, args.lat, hint, args.radius, case_name=args.case_name))

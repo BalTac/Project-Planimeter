@@ -36,6 +36,13 @@
 - [x] Rendere il reverse lookup da riferimento catastale basato solo su riferimenti realmente osservati nel debug.
 - [x] Supportare anche `inspireId.localId` completo (es. IT.AGE.PLA.B609_000100.333) nel reverse lookup smoke test.
 - [x] Debuggare e ottimizzare metodo 3 (raster segmentation): fix da convex_hull → seed-based flood-fill (edge detection + flood-fill dal centro). Area accuracy migliorata 31x → 11x su particelle piccole, stabile su medie/grandi.
+- [x] Sostituire antispike con edge-attraction snap sul refine M3, mantenendo confidence gate e senza pruning topologico aggressivo.
+- [x] Aggiungere ownership continuity constraint nel refine M3 (inside/outside su ownership mask), con normal smoothing, relax tangenziale e micro-simplify anti-jitter.
+- [x] Rifinire il tuning ownership continuity M3 con centroide reale per orientamento normali, probe piu profondo, continuity hysteresis e diagnostica avanzata inside/outside.
+- [x] Tarare continuity hysteresis M3 per ridurre over-snap diagonale (peso 0.05 con decay distanza, clamp snap >0.45m e nuove metriche score-gain/reject reason).
+- [x] Eseguire micro-step fine tuning: continuity base `balanced` a 0.035 e clamp distanza `balanced` a 0.40 m (senza toccare probeMeters).
+- [x] Introdurre endpoint `/parcel-geometry-m3-trace` per ottenere il bordo catastale pixel-perfect via `findContours` sulla `ownership_mask` + RDP a tolleranza in metri (default 0.35 m). Validato su particelle 21 (+1.13 %) e 402 (-1.10 %).
+- [x] Migrare il frontend (`refineParcelM3ForFeature` + tab Settings) da `/parcel-geometry-m3-refine` a `/parcel-geometry-m3-trace`. Rimossi controlli `m3RefineQuality` e `m3RefineMaxRequests`, esposto unico setting `m3TraceToleranceM` (default 0.35 m, range 0.05-2.5 m). Endpoint legacy resta lato server per compatibilita test/tooling.
 
 ### P1 — Interpretation layer backend
 - [x] Estendere [server.py](server.py) con `OUTPUT=json` per `GetFeatureInfo`, senza rompere il path raw HTML/XML corrente.
@@ -148,7 +155,35 @@
 - [x] 1.22: Add visible floating spinner/message during M3 detect so wait state stays visible even on slow requests
 - [x] 1.23: Reuse same floating busy overlay for map tile loading and hide it when all tiles finish loading
 - [x] 1.24: Allineare README.md alle feature M3/Pertinenze/Resync, endpoint aggiornati e dipendenze Python correnti
+- [x] 1.25: Creare documento tecnico esaustivo in `raw/` sulla procedura autodetect M3 (pipeline, fallback, UX, troubleshooting)
+- [x] 1.26: Allineare smoke test M3 al flusso corrente app/backend (`/parcel-geometry-m3` progressivo + metadata proxy-first)
+- [x] 1.27: Ingest documento M3 da `raw/` a `wiki/` con aggiornamento indice e knowledge synthesis log
+- [x] 1.28: Definire e approvare design Fine Align M3 su tile solo lungo bordo (nessuna implementazione `server.py` prima di approvazione)
+- [x] 1.29: Definire metrica qualità refine (mean/p95 offset, Hausdorff, delta area, runtime, request usage) con soglie iniziali
+- [x] 1.30: Definire indicatore quota richieste giornaliere con contatore locale stimato (target 3000/day) e stato UI (green/amber/red)
+- [x] 1.31: Estendere smoke test particella 402 con confronto coarse vs refined e metriche consumo richieste (dopo approvazione)
+- [x] 1.32: Ripristinare refine v1 senza antispike, mantenendo il comportamento baseline piu attendibile
+- [x] 1.33: Sostituire nel context menu l'azione Detect parcel (M3) con Refine parcel (M3) disponibile solo su particella gia disegnata, aggiungendo in Settings i parametri configurabili Detect/Refine.
+- [x] 1.34: Ripristinare Detect parcel (M3) nel context menu solo quando il click non intercetta una feature disegnata (query su parcella non disegnata).
+- [x] 1.35: Aggiungere report flottante post-refine con confronto Prima/Dopo/Diff, summary snapped/rejected e decisione esplicita Accetta/Rifiuta con rollback geometria su rifiuto.
+- [x] 1.36: Aggiungere anteprima visuale diff geometrico before/after (overlay) nel report refine flottante.
+- [x] 1.37: Chiarire nel report refine i casi senza movimento visibile (snap accettati=0) e forzare renderSync mappa su preview/accept/reject per escludere dubbi di mancato redraw.
+- [x] 1.38: Introdurre profilo refine `aggressive` (backend+UI) e validarlo con smoke comparativo sulla particella 63.
+- [x] 1.39: Refine corner-aware — `_consolidate_corners` (line-fit PCA + corner intersection) come post-processing opt-in (`cornerSnap=true`) in `/parcel-geometry-m3-refine`, con flag CLI `--corner-snap` nel smoke test. Validato su particella 21 (10 vertici coarse → 8 corner snappati ai bordi catastali, delta 0.02%, 0 fallback intersezione).
+- [ ] 1.40: Esporre `cornerSnap` in UI Settings (toggle + parametri `angleThresholdDeg`, `minRunLength`, `maxCornerJumpM`) e/o abilitarlo by default nei profili `precise`/`aggressive` dopo validazione cross-parcella.
+- [x] 1.41: Aggiungere diagnostica RAW corner-alignment con script dedicato ([tests/preview_corner_alignment_raw.py](tests/preview_corner_alignment_raw.py)) e output 1:1 non compressi per confrontare refine corrente (blu) vs preview riallineata a bordo nero (verde) su particella 21.
 - [ ] **Testing**: Right-click WMS parcel in Navigate mode → "Rileva particella (M3)" → spinner → "2,500 m², 12 vertici" → feature appears on map in pertinenze layer with distinctive color
+- [ ] **Testing**: In Navigate, click destro su feature poligonale gia disegnata → appare solo "Refine parcel (M3)" (nessun detect) → refine in-place aggiorna geometria, area e version/modifiedAt.
+- [ ] **P4 Audit**: Code review `tests/test_smoke_parcel_402_methods.py` — area detection + refinement validation (2026-05-17)
+  - [x] Identified 6 bugs: ring_area() meaningless units, ownership_mask JSON crash, field name mismatch (camelCase/snake_case), no geometry validity, delta_ratio unbounded, ring closure redundancy
+  - [x] Created helpers: `_is_valid_polygon_ring()`, `_safe_serialize_ownership_mask()`, `_normalize_debug_response()`
+  - [x] Fixed CRITICAL issue: ownership_mask numpy array → JSON serialization crash with safe conversion + fallback
+  - [x] Fixed HIGH issue: added geometry validity checks (closure, duplicates) + bounds sanity (delta_ratio ±50% threshold with warning)
+  - [x] Fixed MEDIUM issue: probe camelCase/snake_case debug field names, consolidate to snake_case output
+  - [x] Validated all fixes with unit tests (pass 100%)
+  - [ ] Run smoke test with server online: baseline parcel 402 + compare coarse vs refined, area delta, snap metrics
+  - [ ] If results still unsatisfactory: consider simpler alternative algorithm (grid-based probing + convex hull fallback)
+  - [ ] Document findings in `raw/` and ingest to wiki/
 
 #### Phase 2: "Promote Parcel" UI Workflow
 - [ ] 2.1: Add "Promuovi a pertinenza" action in right-click menu (WMS parcel clicks)

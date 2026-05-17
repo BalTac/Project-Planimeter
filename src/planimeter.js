@@ -76,6 +76,12 @@ export default class Planimeter {
         this.state.exportImageQuality = this.sanitizeExportImageQuality(preferences.exportImageQuality);
         this.state.cacheTtlDays = this.sanitizeCacheTtlDays(preferences.cacheTtlDays);
         this.state.cacheSizeMb = this.sanitizeCacheSizeMb(preferences.cacheSizeMb);
+        this.state.m3DetectStartRadius = this.sanitizeM3DetectRadius(preferences.m3DetectStartRadius, 1);
+        this.state.m3DetectMaxRadius = this.sanitizeM3DetectRadius(preferences.m3DetectMaxRadius, 5);
+        if (this.state.m3DetectMaxRadius < this.state.m3DetectStartRadius) {
+            this.state.m3DetectMaxRadius = this.state.m3DetectStartRadius;
+        }
+        this.state.m3TraceToleranceM = this.sanitizeM3TraceToleranceM(preferences.m3TraceToleranceM);
         this.state.parcelInfoStatusKey = preferences.parcelInfoEnabled
             ? 'parcelInfo.clickHint'
             : 'parcelInfo.disabled';
@@ -131,6 +137,7 @@ export default class Planimeter {
             resyncParcelMetadata: (feature) => this.resyncParcelMetadataForFeature(feature),
             queryParcelAtPixel: (pixel) => this.fetchParcelInfoAtPixel(pixel),
             detectParcelM3AtPixel: (pixel) => this.detectParcelM3AtPixel(pixel),
+            refineParcelM3ForFeature: (feature, pixel) => this.refineParcelM3ForFeature(feature, pixel),
             refreshTileAtPixel: (pixel) => this.refreshTileAtPixel(pixel),
             copyCoordinatesAtPixel: (pixel) => this.copyCoordinatesAtPixel(pixel),
             exportView:      () => this.exportViewSnapshot(),
@@ -185,6 +192,7 @@ export default class Planimeter {
 
         this.selectionExport = null;
         this.dragPanInteractions = null;
+        this.pendingM3Refine = null;
     }
 
     // ── Interaction helpers ─────────────────────────────────────────────────────
@@ -300,6 +308,9 @@ export default class Planimeter {
             settingsExportQuality:     document.getElementById('settings-export-quality'),
             settingsCacheTtlDays:      document.getElementById('settings-cache-ttl-days'),
             settingsCacheSizeMb:       document.getElementById('settings-cache-size-mb'),
+            settingsM3DetectStartRadius: document.getElementById('settings-m3-detect-start-radius'),
+            settingsM3DetectMaxRadius: document.getElementById('settings-m3-detect-max-radius'),
+            settingsM3TraceToleranceM: document.getElementById('settings-m3-trace-tolerance-m'),
             settingsParcelInfoEnabled: document.getElementById('settings-parcel-info-enabled'),
             settingsPertenenzeColor:   document.getElementById('settings-pertenenze-color'),
             settingsWmsLayerParts:     [...document.querySelectorAll('[data-wms-layer-part]')],
@@ -309,6 +320,28 @@ export default class Planimeter {
             parcelInfoPopoverStatus:   document.getElementById('parcel-info-popover-status'),
             parcelInfoPopoverFrame:    document.getElementById('parcel-info-popover-frame'),
             parcelInfoCloseButton:     document.getElementById('parcel-info-close'),
+            m3RefineReport:            document.getElementById('m3-refine-report'),
+            m3RefineReportTitle:       document.getElementById('m3-refine-report-title'),
+            m3RefineEffectNote:        document.getElementById('m3-refine-effect-note'),
+            m3RefineDiffCanvas:        document.getElementById('m3-refine-diff-canvas'),
+            m3RefineBeforeArea:        document.getElementById('m3-refine-before-area'),
+            m3RefineBeforePerimeter:   document.getElementById('m3-refine-before-perimeter'),
+            m3RefineBeforeVertices:    document.getElementById('m3-refine-before-vertices'),
+            m3RefineAfterArea:         document.getElementById('m3-refine-after-area'),
+            m3RefineAfterPerimeter:    document.getElementById('m3-refine-after-perimeter'),
+            m3RefineAfterVertices:     document.getElementById('m3-refine-after-vertices'),
+            m3RefineDiffArea:          document.getElementById('m3-refine-diff-area'),
+            m3RefineDiffRatio:         document.getElementById('m3-refine-diff-ratio'),
+            m3RefineDiffPerimeter:     document.getElementById('m3-refine-diff-perimeter'),
+            m3RefineSnapAccepted:      document.getElementById('m3-refine-snap-accepted'),
+            m3RefineSnapRejected:      document.getElementById('m3-refine-snap-rejected'),
+            m3RefineSnapKept:          document.getElementById('m3-refine-snap-kept'),
+            m3RefineMeanSnap:          document.getElementById('m3-refine-mean-snap'),
+            m3RefineMeanConfidence:    document.getElementById('m3-refine-mean-confidence'),
+            m3RefineRejectedDistance:  document.getElementById('m3-refine-rejected-distance'),
+            m3RefineRejectedWeakGain:  document.getElementById('m3-refine-rejected-weak-gain'),
+            m3RefineAcceptButton:      document.getElementById('btn-m3-refine-accept'),
+            m3RefineRejectButton:      document.getElementById('btn-m3-refine-reject'),
             cacheStatsDisplay:         document.getElementById('cache-stats-display'),
             btnCacheApply:             document.getElementById('btn-cache-apply'),
             btnCacheClear:             document.getElementById('btn-cache-clear'),
@@ -605,6 +638,14 @@ export default class Planimeter {
             this.closeParcelInfoPopover();
         });
 
+        this.elements.m3RefineAcceptButton?.addEventListener('click', () => {
+            this.acceptPendingM3Refine();
+        });
+
+        this.elements.m3RefineRejectButton?.addEventListener('click', () => {
+            this.rejectPendingM3Refine();
+        });
+
         document.addEventListener('pointerdown', (ev) => {
             if (ev.button !== 0) return;
             const popover = this.elements.parcelInfoPopover;
@@ -644,6 +685,30 @@ export default class Planimeter {
 
         this.elements.settingsCacheSizeMb?.addEventListener('change', (ev) => {
             this.state.cacheSizeMb = this.sanitizeCacheSizeMb(ev.target.value);
+            this.syncPreferenceControls();
+            this.persistPreferences();
+        });
+
+        this.elements.settingsM3DetectStartRadius?.addEventListener('change', (ev) => {
+            this.state.m3DetectStartRadius = this.sanitizeM3DetectRadius(ev.target.value, 1);
+            if (this.state.m3DetectMaxRadius < this.state.m3DetectStartRadius) {
+                this.state.m3DetectMaxRadius = this.state.m3DetectStartRadius;
+            }
+            this.syncPreferenceControls();
+            this.persistPreferences();
+        });
+
+        this.elements.settingsM3DetectMaxRadius?.addEventListener('change', (ev) => {
+            this.state.m3DetectMaxRadius = this.sanitizeM3DetectRadius(ev.target.value, 5);
+            if (this.state.m3DetectMaxRadius < this.state.m3DetectStartRadius) {
+                this.state.m3DetectStartRadius = this.state.m3DetectMaxRadius;
+            }
+            this.syncPreferenceControls();
+            this.persistPreferences();
+        });
+
+        this.elements.settingsM3TraceToleranceM?.addEventListener('change', (ev) => {
+            this.state.m3TraceToleranceM = this.sanitizeM3TraceToleranceM(ev.target.value);
             this.syncPreferenceControls();
             this.persistPreferences();
         });
@@ -2880,6 +2945,15 @@ export default class Planimeter {
         if (this.elements.settingsCacheSizeMb) {
             this.elements.settingsCacheSizeMb.value = String(this.state.cacheSizeMb);
         }
+        if (this.elements.settingsM3DetectStartRadius) {
+            this.elements.settingsM3DetectStartRadius.value = String(this.state.m3DetectStartRadius);
+        }
+        if (this.elements.settingsM3DetectMaxRadius) {
+            this.elements.settingsM3DetectMaxRadius.value = String(this.state.m3DetectMaxRadius);
+        }
+        if (this.elements.settingsM3TraceToleranceM) {
+            this.elements.settingsM3TraceToleranceM.value = String(this.state.m3TraceToleranceM);
+        }
         if (this.elements.settingsParcelInfoEnabled) {
             this.elements.settingsParcelInfoEnabled.checked = this.state.parcelInfoEnabled;
         }
@@ -2927,6 +3001,9 @@ export default class Planimeter {
             exportImageQuality: this.state.exportImageQuality,
             cacheTtlDays: this.state.cacheTtlDays,
             cacheSizeMb: this.state.cacheSizeMb,
+            m3DetectStartRadius: this.state.m3DetectStartRadius,
+            m3DetectMaxRadius: this.state.m3DetectMaxRadius,
+            m3TraceToleranceM: this.state.m3TraceToleranceM,
         });
     }
 
@@ -2964,6 +3041,18 @@ export default class Planimeter {
         const value = Number.parseInt(String(sizeMb), 10);
         if (!Number.isFinite(value)) return 500;
         return Math.max(32, Math.min(4096, value));
+    }
+
+    sanitizeM3DetectRadius(radius, fallback = 1) {
+        const value = Number.parseInt(String(radius), 10);
+        if (!Number.isFinite(value)) return fallback;
+        return Math.max(1, Math.min(5, value));
+    }
+
+    sanitizeM3TraceToleranceM(valueRaw) {
+        const value = Number.parseFloat(String(valueRaw));
+        if (!Number.isFinite(value)) return 0.35;
+        return Math.max(0.05, Math.min(2.5, value));
     }
 
     sanitizePertenenzeColor(color) {
@@ -3486,12 +3575,14 @@ export default class Planimeter {
         this.setToolbarMessage(t('m3.detecting'));
 
         try {
-            let currentRadius = 1;
+            const startRadius = this.sanitizeM3DetectRadius(this.state.m3DetectStartRadius, 1);
+            const maxRadius = Math.max(startRadius, this.sanitizeM3DetectRadius(this.state.m3DetectMaxRadius, 5));
+            let currentRadius = startRadius;
             let bestFeature = null;
             let bestResult = null;
 
             // Progressive expansion loop
-            while (currentRadius <= 5) {
+            while (currentRadius <= maxRadius) {
                 const response = await fetch('/parcel-geometry-m3', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -3554,7 +3645,7 @@ export default class Planimeter {
                 bestResult = result;
 
                 // Check if touches border and can expand
-                if (result.debug?.touches_border && currentRadius < 5) {
+                if (result.debug?.touches_border && currentRadius < maxRadius) {
                     this.layers.pertenenza.changed();
                     this.map.renderSync();
                     await new Promise((resolve) => {
@@ -3602,6 +3693,398 @@ export default class Planimeter {
         } finally {
             this.setM3BusyVisible(false);
             this.updateBusyOverlay();
+        }
+    }
+
+    featureToCoarseRingLonLat(feature) {
+        if (!this.isPolygonFeature(feature)) return null;
+        const geometry = feature.getGeometry();
+        const type = geometry?.getType?.();
+        const projection = this.view?.getProjection();
+        if (!projection) return null;
+
+        let ringMap = null;
+        if (type === 'Polygon') {
+            ringMap = geometry.getCoordinates()?.[0] ?? null;
+        } else if (type === 'MultiPolygon') {
+            const polygons = geometry.getCoordinates() ?? [];
+            let bestRing = null;
+            let bestScore = -1;
+            for (const polygon of polygons) {
+                const outer = polygon?.[0];
+                if (!Array.isArray(outer) || outer.length < 4) continue;
+                const areaScore = Math.abs(new Polygon([outer]).getArea());
+                if (areaScore > bestScore) {
+                    bestScore = areaScore;
+                    bestRing = outer;
+                }
+            }
+            ringMap = bestRing;
+        }
+
+        if (!Array.isArray(ringMap) || ringMap.length < 4) return null;
+        const ringLonLat = ringMap.map((coord) => toLonLat(coord, projection));
+        const first = ringLonLat[0];
+        const last = ringLonLat[ringLonLat.length - 1];
+        if (!first || !last) return null;
+        if (first[0] !== last[0] || first[1] !== last[1]) {
+            ringLonLat.push([...first]);
+        }
+        return ringLonLat;
+    }
+
+    getFeatureReferenceLonLat(feature, pixel = null) {
+        const projection = this.view?.getProjection();
+        if (!projection) return null;
+
+        if (Array.isArray(pixel) && pixel.length >= 2) {
+            const coordinate = this.map.getCoordinateFromPixel(pixel);
+            if (Array.isArray(coordinate) && coordinate.length >= 2) {
+                return toLonLat(coordinate, projection);
+            }
+        }
+
+        const labelPoint = getFeatureLabelGeometry(feature);
+        const coord = labelPoint?.getCoordinates?.();
+        if (!Array.isArray(coord) || coord.length < 2) return null;
+        return toLonLat(coord, projection);
+    }
+
+    async refineParcelM3ForFeature(feature, pixel) {
+        if (!this.isPolygonFeature(feature)) return;
+
+        this.rejectPendingM3Refine(false);
+
+        const coarseRing = this.featureToCoarseRingLonLat(feature);
+        if (!coarseRing) {
+            this.setToolbarMessage(t('m3.error.detection'));
+            return;
+        }
+
+        const referenceLonLat = this.getFeatureReferenceLonLat(feature, pixel);
+        if (!referenceLonLat) {
+            this.setToolbarMessage(t('m3.error.coordinate'));
+            return;
+        }
+
+        const [lon, lat] = referenceLonLat;
+        this.setM3BusyVisible(true, t('m3.refine.wait'));
+        this.setToolbarMessage(t('m3.refine.running'));
+
+        try {
+            const response = await fetch('/parcel-geometry-m3-trace', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    lat,
+                    lon,
+                    coarseRing,
+                    toleranceM: this.state.m3TraceToleranceM,
+                }),
+            });
+
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok || !result?.ok || !Array.isArray(result?.ring) || result.ring.length < 4) {
+                this.setToolbarMessage(result?.message || t('m3.refine.error'));
+                return;
+            }
+
+            const projection = this.view.getProjection();
+            const ringInMapProj = result.ring.map((pt) => fromLonLat(pt, projection));
+            const geometry = feature.getGeometry();
+            const type = geometry?.getType?.();
+
+            const originalCoordinates = this.cloneGeometryCoordinates(feature.getGeometry());
+            const beforePrimaryRing = this.extractPrimaryOuterRingFromCoordinates(originalCoordinates, type);
+            const beforeAreaM2 = calculateArea(feature, projection);
+            const beforePerimeterM = calculatePerimeter(feature, projection);
+            const beforeVertices = this.countFeatureVertices(feature);
+
+            if (type === 'Polygon') {
+                geometry.setCoordinates([ringInMapProj]);
+            } else {
+                geometry.setCoordinates([[ringInMapProj]]);
+            }
+
+            const layer = this.getLayerForFeature(feature);
+            layer.changed();
+            const areaM2 = calculateArea(feature, projection);
+            const perimeterM = calculatePerimeter(feature, projection);
+            const vertexCount = Math.max(0, ringInMapProj.length - 1);
+            const deltaAreaM2 = areaM2 - beforeAreaM2;
+            const deltaAreaRatio = beforeAreaM2 > 1e-9 ? (deltaAreaM2 / beforeAreaM2) : 0;
+            const deltaPerimeterM = perimeterM - beforePerimeterM;
+            const snapAccepted = Number(result?.debug?.snapAcceptedVertices ?? result?.debug?.snap_accepted_vertices ?? 0);
+            // Per il trace endpoint snapAccepted e sempre 0 (campo non emesso): il giudizio
+            // "no visible change" si basa solo sui delta geometrici.
+            const noVisibleChange = Math.abs(deltaAreaM2) < 1.0
+                && Math.abs(deltaPerimeterM) < 0.20
+                && snapAccepted <= 0;
+
+            this.pendingM3Refine = {
+                feature,
+                originalCoordinates,
+                overlayLayer: this.getFeatureOverlayLayer(feature),
+                report: {
+                    beforeAreaM2,
+                    beforePerimeterM,
+                    beforeVertices,
+                    afterAreaM2: areaM2,
+                    afterPerimeterM: perimeterM,
+                    afterVertices: vertexCount,
+                    deltaAreaM2,
+                    deltaAreaRatio,
+                    deltaPerimeterM,
+                    beforePrimaryRing,
+                    afterPrimaryRing: ringInMapProj,
+                    noVisibleChange,
+                    debug: (result.debug && typeof result.debug === 'object') ? result.debug : {},
+                },
+            };
+
+            this.updateSummary();
+            this.map.renderSync();
+            this.renderM3RefineReport();
+            this.setToolbarMessage(t(noVisibleChange ? 'm3.refine.preview.noChange' : 'm3.refine.preview'));
+        } catch (error) {
+            console.error('M3 refine error:', error);
+            this.setToolbarMessage(t('m3.refine.error'));
+        } finally {
+            this.setM3BusyVisible(false);
+            this.updateBusyOverlay();
+        }
+    }
+
+    cloneGeometryCoordinates(geometry) {
+        const type = geometry?.getType?.();
+        if (type === 'Polygon' || type === 'MultiPolygon') {
+            return JSON.parse(JSON.stringify(geometry.getCoordinates()));
+        }
+        return null;
+    }
+
+    countFeatureVertices(feature) {
+        if (!this.isPolygonFeature(feature)) return 0;
+        const sets = this.getFeaturePolygonCoordinateSets(feature);
+        let total = 0;
+        for (const polygon of sets) {
+            const outer = polygon?.[0];
+            if (Array.isArray(outer) && outer.length > 1) {
+                total += Math.max(0, outer.length - 1);
+            }
+        }
+        return total;
+    }
+
+    formatSignedNumber(value, digits = 2) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return '-';
+        const sign = n >= 0 ? '+' : '';
+        return `${sign}${n.toFixed(digits)}`;
+    }
+
+    extractPrimaryOuterRingFromCoordinates(coordinates, geometryType) {
+        if (!Array.isArray(coordinates)) return null;
+
+        if (geometryType === 'Polygon') {
+            const outer = coordinates[0];
+            return Array.isArray(outer) ? outer : null;
+        }
+
+        if (geometryType === 'MultiPolygon') {
+            let bestRing = null;
+            let bestArea = -1;
+            for (const polygon of coordinates) {
+                const outer = polygon?.[0];
+                if (!Array.isArray(outer) || outer.length < 4) continue;
+                const areaScore = Math.abs(new Polygon([outer]).getArea());
+                if (areaScore > bestArea) {
+                    bestArea = areaScore;
+                    bestRing = outer;
+                }
+            }
+            return bestRing;
+        }
+
+        return null;
+    }
+
+    renderM3RefineDiffCanvas(beforeRing, afterRing) {
+        const canvas = this.elements.m3RefineDiffCanvas;
+        if (!(canvas instanceof HTMLCanvasElement)) return;
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        const width = canvas.width;
+        const height = canvas.height;
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = 'rgba(6,16,12,0.95)';
+        ctx.fillRect(0, 0, width, height);
+
+        const validBefore = Array.isArray(beforeRing) && beforeRing.length >= 4;
+        const validAfter = Array.isArray(afterRing) && afterRing.length >= 4;
+        if (!validBefore && !validAfter) {
+            ctx.fillStyle = '#9cb7aa';
+            ctx.font = '12px Aptos';
+            ctx.fillText('No geometry preview', 10, 18);
+            return;
+        }
+
+        const allPoints = [
+            ...(validBefore ? beforeRing : []),
+            ...(validAfter ? afterRing : []),
+        ].filter((pt) => Array.isArray(pt) && pt.length >= 2 && Number.isFinite(pt[0]) && Number.isFinite(pt[1]));
+
+        if (!allPoints.length) return;
+
+        const xs = allPoints.map((p) => p[0]);
+        const ys = allPoints.map((p) => p[1]);
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+
+        const pad = 12;
+        const spanX = Math.max(1e-9, maxX - minX);
+        const spanY = Math.max(1e-9, maxY - minY);
+        const scale = Math.min((width - 2 * pad) / spanX, (height - 2 * pad) / spanY);
+        const offsetX = (width - spanX * scale) * 0.5;
+        const offsetY = (height - spanY * scale) * 0.5;
+
+        const project = (pt) => [
+            offsetX + (pt[0] - minX) * scale,
+            height - (offsetY + (pt[1] - minY) * scale),
+        ];
+
+        const drawRing = (ring, fill, stroke, lineWidth = 1.8) => {
+            if (!Array.isArray(ring) || ring.length < 3) return;
+            ctx.beginPath();
+            const [x0, y0] = project(ring[0]);
+            ctx.moveTo(x0, y0);
+            for (let i = 1; i < ring.length; i += 1) {
+                const [x, y] = project(ring[i]);
+                ctx.lineTo(x, y);
+            }
+            ctx.closePath();
+            ctx.fillStyle = fill;
+            ctx.strokeStyle = stroke;
+            ctx.lineWidth = lineWidth;
+            ctx.fill();
+            ctx.stroke();
+        };
+
+        drawRing(beforeRing, 'rgba(255, 90, 90, 0.22)', 'rgba(255, 140, 140, 0.95)');
+        drawRing(afterRing, 'rgba(115, 240, 191, 0.24)', 'rgba(115, 240, 191, 0.98)', 2.2);
+
+        ctx.fillStyle = '#dff7ec';
+        ctx.font = '11px Aptos';
+        ctx.fillText('Before', 10, 16);
+        ctx.fillStyle = 'rgba(115, 240, 191, 0.98)';
+        ctx.fillText('After', 58, 16);
+    }
+
+    renderM3RefineReport() {
+        const pending = this.pendingM3Refine;
+        const panel = this.elements.m3RefineReport;
+        if (!panel) return;
+        if (!pending || !pending.report) {
+            panel.hidden = true;
+            return;
+        }
+
+        const report = pending.report;
+        const debug = report.debug || {};
+
+        if (this.elements.m3RefineReportTitle) {
+            const featureName = String(pending.feature?.get?.('featureName') || pending.feature?.get?.('featureId') || '-').trim() || '-';
+            this.elements.m3RefineReportTitle.textContent = t('m3.refine.report.title', { name: featureName });
+        }
+
+        this.elements.m3RefineBeforeArea.textContent = this.unitSystem.formatArea(report.beforeAreaM2);
+        this.elements.m3RefineBeforePerimeter.textContent = this.unitSystem.formatPerimeter(report.beforePerimeterM);
+        this.elements.m3RefineBeforeVertices.textContent = String(report.beforeVertices);
+
+        this.elements.m3RefineAfterArea.textContent = this.unitSystem.formatArea(report.afterAreaM2);
+        this.elements.m3RefineAfterPerimeter.textContent = this.unitSystem.formatPerimeter(report.afterPerimeterM);
+        this.elements.m3RefineAfterVertices.textContent = String(report.afterVertices);
+
+        this.elements.m3RefineDiffArea.textContent = `${this.formatSignedNumber(report.deltaAreaM2, 2)} m2`;
+        this.elements.m3RefineDiffRatio.textContent = `${this.formatSignedNumber(report.deltaAreaRatio * 100, 2)}%`;
+        this.elements.m3RefineDiffPerimeter.textContent = `${this.formatSignedNumber(report.deltaPerimeterM, 2)} m`;
+
+        const numOrDash = (value, digits = null) => {
+            const n = Number(value);
+            if (!Number.isFinite(n)) return '-';
+            if (typeof digits === 'number') return n.toFixed(digits);
+            return String(Math.round(n));
+        };
+
+        this.elements.m3RefineSnapAccepted.textContent = numOrDash(debug.snapAcceptedVertices ?? debug.snap_accepted_vertices);
+        this.elements.m3RefineSnapRejected.textContent = numOrDash(debug.snapRejectedVertices ?? debug.snap_rejected_vertices);
+        this.elements.m3RefineSnapKept.textContent = numOrDash(debug.snapKeptVertices ?? debug.snap_kept_vertices);
+        this.elements.m3RefineMeanSnap.textContent = `${numOrDash(debug.meanSnapMeters ?? debug.mean_snap_meters, 2)} m`;
+        this.elements.m3RefineMeanConfidence.textContent = numOrDash(debug.meanConfidence ?? debug.mean_confidence, 3);
+        this.elements.m3RefineRejectedDistance.textContent = numOrDash(debug.rejectedByDistance);
+        this.elements.m3RefineRejectedWeakGain.textContent = numOrDash(debug.rejectedByWeakGain);
+        this.renderM3RefineDiffCanvas(report.beforePrimaryRing, report.afterPrimaryRing);
+
+        if (this.elements.m3RefineEffectNote) {
+            const noteKey = report.noVisibleChange
+                ? 'm3.refine.report.effect.unchanged'
+                : 'm3.refine.report.effect.changed';
+            this.elements.m3RefineEffectNote.textContent = t(noteKey);
+            this.elements.m3RefineEffectNote.classList.toggle('is-unchanged', Boolean(report.noVisibleChange));
+        }
+
+        panel.hidden = false;
+    }
+
+    hideM3RefineReport() {
+        const panel = this.elements.m3RefineReport;
+        if (panel) panel.hidden = true;
+    }
+
+    acceptPendingM3Refine() {
+        if (!this.pendingM3Refine) return;
+
+        const { feature, overlayLayer, report } = this.pendingM3Refine;
+        const now = new Date().toISOString();
+        feature.set('version', (feature.get('version') ?? 1) + 1);
+        feature.set('modifiedAt', now);
+
+        const layer = overlayLayer === 'pertenenze' ? this.layers.pertenenza : this.layers.vector;
+        layer.changed();
+        this.map.renderSync();
+        schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource);
+        this.updateSummary();
+        this.hideM3RefineReport();
+        this.pendingM3Refine = null;
+
+        this.setToolbarMessage(t('m3.refine.success', {
+            area: this.unitSystem.formatArea(report.afterAreaM2),
+            vertices: report.afterVertices,
+        }));
+    }
+
+    rejectPendingM3Refine(showMessage = true) {
+        const pending = this.pendingM3Refine;
+        if (!pending) return;
+
+        const { feature, originalCoordinates, overlayLayer } = pending;
+        const geometry = feature.getGeometry();
+        if (geometry && originalCoordinates) {
+            geometry.setCoordinates(originalCoordinates);
+        }
+
+        const layer = overlayLayer === 'pertenenze' ? this.layers.pertenenza : this.layers.vector;
+        layer.changed();
+        this.map.renderSync();
+        this.updateSummary();
+        this.hideM3RefineReport();
+        this.pendingM3Refine = null;
+        if (showMessage) {
+            this.setToolbarMessage(t('m3.refine.rejected'));
         }
     }
 

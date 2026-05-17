@@ -4,6 +4,7 @@ __pycache__/
 *.pyd
 .env
 .vscode/
+.venv/
 wms-test.png
 _debug_*
 AGENTS.md
@@ -13,3 +14,8 @@ _tile_cache/
 wiki/
 raw/
 .agents/
+.planimeter_request_quota.json
+AUDIT_*.md
+SESSION_*.md
+TEST_RESULTS_*.md
+tests/preview_*.py

@@ -2,6 +2,175 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [2026-05-19] — Frontend migrato a `/parcel-geometry-m3-trace`
+
+### Changed
+- [src/planimeter.js](src/planimeter.js) `refineParcelM3ForFeature` ora chiama `POST /parcel-geometry-m3-trace` con payload `{lat, lon, coarseRing, toleranceM}` al posto di `/parcel-geometry-m3-refine` con `{quality, maxRequests}`.
+- Stato e preferenze: `m3RefineQuality`/`m3RefineMaxRequests` rimossi e sostituiti da un unico `m3TraceToleranceM` (default 0.35 m, range 0.05-2.5 m). Vecchie chiavi delle preferenze utente vengono ignorate al load (fallback al default).
+- [planimeter.html](planimeter.html) tab Settings: i due controlli "Refine M3: profilo qualita" e "Refine M3: max richieste tile" sono stati rimossi e sostituiti da un singolo input numerico "Trace M3: tolleranza (m)".
+- [src/i18n/it.js](src/i18n/it.js), [src/i18n/en.js](src/i18n/en.js): titolo sezione `M3 Detect & Refine` -> `M3 Detect & Trace`; aggiunte chiavi `settings.m3.traceToleranceM[.hint]`; rimosse chiavi `settings.m3.refineQuality*` / `settings.m3.refineMaxRequests*`.
+- [src/io/preferences.js](src/io/preferences.js) `DEFAULT_PREFERENCES` aggiornato.
+
+### Notes
+- L'endpoint legacy `/parcel-geometry-m3-refine` resta esposto lato server per compatibilita con eventuali smoke test e tooling esterno, ma non e piu raggiunto dall'app web.
+- Il pannello "report" M3 e invariato: i campi snap-specifici (snap_accepted, snap_rejected, mean_snap...) non sono emessi dal trace endpoint e vengono renderizzati come `-` dal helper `numOrDash`.
+
+## [2026-05-19] — Trace M3: contorno pixel-perfect dalla ownership mask
+
+### Added
+- [server.py](server.py) nuovo endpoint `POST /parcel-geometry-m3-trace` che produce un ring pixel-perfect del bordo catastale:
+  1. recupera (o ricalcola) coarse ring + `ownership_mask` + `mask_transform`;
+  2. `cv2.findContours(ownership_mask, RETR_EXTERNAL, CHAIN_APPROX_NONE)` -> contorno 1:1 in pixel;
+  3. seleziona il contorno che contiene il punto cliccato (`cv2.pointPolygonTest`, fallback area max);
+  4. `cv2.approxPolyDP` con `epsilon = toleranceM * pxPerM` (default `toleranceM = 0.35 m`, range 0.05-2.5 m);
+  5. converte pixel -> lon/lat e chiude l'anello via `_normalize_ring_lonlat`.
+- Body opzionali: `toleranceM`, `coarseRadius`, `coarseRing`, `ownershipMask`, `maskTransform`, `coarseDebug`.
+- Debug arricchito: `algorithm: "ownership-contour-rdp"`, `pxPerM`, `tolerancePx`, `ownershipPixels`, `contoursFound`, `targetContourIndex`, `rawContourPixels`, `rawContourAreaPx`, `coarseVertices`, `finalVertices`, `coarseAreaM2`, `tracedAreaM2`, `areaDeltaM2`, `areaDeltaRatio`.
+- [tests/test_smoke_parcel_402_methods.py](tests/test_smoke_parcel_402_methods.py) nuovo helper `method_3_trace_contour_walk` + flag CLI `--trace` / `--trace-tolerance`, payload arricchito con `coarseRing`, `ownershipMask`, `maskTransform`, `coarseDebug`.
+
+### Rationale
+La `ownership_mask` del coarse M3 e gia generata via `floodFill` su `cv2.bitwise_not(Canny(...))` + `dilate(2 px)`: il suo bordo coincide pixel-per-pixel con il bordo catastale nero. Tutta la pipeline complessa "skeleton + BFS + anti-fuga" del primo prototipo era ridondante (e fragile: produceva ring troncati di -45 % di area su particelle con T-junction agli incroci). `findContours` sulla mask + RDP a tolleranza in metri da il bordo nativo con un solo step di OpenCV.
+
+### Validation
+- `python tests/test_smoke_parcel_402_methods.py --method3-only --trace --trace-tolerance 0.35 --lon 12.567035 --lat 43.014121 --case-name trace-21-v3 --radius 2` -> particella 21 (~30156 m2): coarse 9 vertici, traced 24 vertici, **delta area +1.13 %**, notch a sinistra ben modellato.
+- `python tests/test_smoke_parcel_402_methods.py --method3-only --trace --trace-tolerance 0.35 --lon 12.561465 --lat 43.012393 --case-name trace-402-v3 --radius 2` -> particella 402 (555 m2): coarse 8 vertici, traced 13 vertici, **delta area -1.10 %**.
+
+## [2026-05-18] — Refine corner-aware: line-fit + corner intersection
+
+### Added
+- [server.py](server.py) nuovo helper `_consolidate_corners(ring, angle_threshold_deg, min_run_length, max_corner_jump_m)` che, partendo dall'anello densificato e snappato, raggruppa i vertici in "runs" omogenei per direzione (mod 180), fa il fit di una retta (PCA su covarianza 2x2) per ciascun run e ricostruisce i corner come **intersezione geometrica** delle rette adiacenti. Include fallback per rette quasi parallele (denom < 1e-9) e clamp di sicurezza (`max_corner_jump_m` = 6 m) che riporta al vertice "break" se l'intersezione esplode.
+- [server.py](server.py) handler `/parcel-geometry-m3-refine` ora accetta i parametri body opzionali `cornerSnap`, `cornerAngleDeg`, `cornerMinRun`, `cornerMaxJumpM`. Quando `cornerSnap=true`, il post-processing `_tangent_relax_one_pass` + `_rdp_ring` viene sostituito da `_consolidate_corners`. In caso di fallback (`applied=false`) il pipeline legacy viene comunque eseguito.
+- [server.py](server.py) risposta refine arricchita con blocco `debug.cornerSnap = {requested, applied, breaks, runs, corners, intersectionFailures, angleThresholdDeg, minRunLength, maxCornerJumpM}`.
+- [tests/test_smoke_parcel_402_methods.py](tests/test_smoke_parcel_402_methods.py) flag CLI `--corner-snap`, parametro `corner_snap` propagato in `method_3_refine_border_tiles` e `run_method3_only`, payload arricchito con `cornerSnap: true`.
+
+### Rationale
+Il refine edge-attraction sposta i vertici densificati lungo la propria normale: per i corner la normale e la media delle normali dei due edge adiacenti, quindi i vertici non raggiungono mai l'apice. Inoltre `_tangent_relax` smussa i corner e `_rdp_ring` (epsilon 0.20 m) puo rimuovere proprio i vertici critici. L'approccio line-fit + intersezione risolve geometricamente: ogni edge e una retta fittata sui pixel snappati, ogni corner e l'intersezione delle due rette adiacenti.
+
+### Validation
+- `python tests/test_smoke_parcel_402_methods.py --method3-only --refine --quality balanced --corner-snap --lon 12.567035 --lat 43.014121 --case-name 21-corner-snap`
+- Particella 21 (~30156 m²): coarse 10 vertici -> refined 8 vertici, 8 break/8 runs/8 corners, 0 intersection failures, delta 0.02%, corner visibilmente snappati ai bordi catastali neri.
+
+### Diagnostic tooling
+- [tests/preview_corner_alignment_raw.py](tests/preview_corner_alignment_raw.py) nuovo script diagnostico RAW (no resize/compression) che:
+  - ricostruisce il mosaico WMS 1:1 (tile 420 px, radius 2),
+  - sovrappone il ring refine corrente,
+  - calcola un'anteprima "aligned" con fit linea locale sui pixel neri (`cv2.fitLine`) per ogni edge e intersezione delle rette adiacenti,
+  - salva output in [tests/output](tests/output): `parcel_21_mosaic_raw.png`, `parcel_21_overlay_refined_vs_aligned_raw.png`, `parcel_21_aligned_preview_ring.json`.
+- Verifica RAW: il disallineamento residuo nei corner e ora misurabile visivamente su pixel originali; overlay blu (refine corrente) vs verde (preview allineata) evidenzia gli spostamenti necessari lato-corner.
+
+## [2026-05-17] — Core UX integration: refine-on-drawn parcel + M3 settings
+
+### Changed
+- [src/ui/context-menu.js](src/ui/context-menu.js) in modalita Navigate la voce M3 e ora `Refine drawn parcel (M3)` e compare solo quando il click destro intercetta una feature poligonale gia disegnata.
+- [src/ui/context-menu.js](src/ui/context-menu.js), [src/planimeter.js](src/planimeter.js) ripristinata anche la voce `Detect parcel (M3)` quando il click destro non intercetta feature disegnate (parcella non disegnata), mantenendo `Refine` solo sulle feature poligonali esistenti.
+- [src/planimeter.js](src/planimeter.js) introdotto flusso `refineParcelM3ForFeature(feature, pixel)` che invia `coarseRing` a `/parcel-geometry-m3-refine`, aggiorna la geometria in-place e incrementa metadati (`version`, `modifiedAt`) con persistenza immediata.
+- [src/planimeter.js](src/planimeter.js), [planimeter.html](planimeter.html), [styles.css](styles.css), [src/i18n/it.js](src/i18n/it.js), [src/i18n/en.js](src/i18n/en.js) aggiunto report flottante post-refine stile smoke test (Prima/Dopo/Diff + summary snapped/rejected) con workflow decisionale: `Accetta` conferma e persiste, `Rifiuta` ripristina immediatamente la geometria originale.
+- [src/planimeter.js](src/planimeter.js), [planimeter.html](planimeter.html), [styles.css](styles.css) aggiunta preview visuale del delta geometrico (overlay Before rosso / After verde) all'interno del report refine per confronto immediato della forma.
+- [src/planimeter.js](src/planimeter.js), [planimeter.html](planimeter.html), [styles.css](styles.css), [src/i18n/it.js](src/i18n/it.js), [src/i18n/en.js](src/i18n/en.js) aggiunto indicatore esplicito "nessuna modifica visibile" quando il refine non accetta snap utili (es. `snapAcceptedVertices=0`) e forzato `map.renderSync()` su preview/accept/reject per escludere casi di redraw ritardato.
+- [server.py](server.py), [planimeter.html](planimeter.html), [src/planimeter.js](src/planimeter.js), [src/i18n/it.js](src/i18n/it.js), [src/i18n/en.js](src/i18n/en.js), [tests/test_smoke_parcel_402_methods.py](tests/test_smoke_parcel_402_methods.py) introdotto profilo refine `aggressive` (search/spatial budget piu ampio e gate piu permissivi) ed esteso CLI smoke per accettare `--quality aggressive`.
+
+### Validation
+- `python -m py_compile server.py tests/test_smoke_parcel_402_methods.py`
+- `python tests/test_smoke_parcel_402_methods.py --method3-only --radius 2 --refine --quality balanced --max-requests 24 --lon 12.566588 --lat 43.012890 --base-url http://127.0.0.1:8000 --case-name 63-balanced`
+- `python tests/test_smoke_parcel_402_methods.py --method3-only --radius 2 --refine --quality aggressive --max-requests 72 --lon 12.566588 --lat 43.012890 --base-url http://127.0.0.1:8000 --case-name 63-aggressive`
+- [src/planimeter.js](src/planimeter.js), [src/io/preferences.js](src/io/preferences.js), [planimeter.html](planimeter.html), [src/i18n/it.js](src/i18n/it.js), [src/i18n/en.js](src/i18n/en.js) aggiunti parametri configurabili in tab Settings per Detect/Refine M3:
+  - detect start radius (1-5)
+  - detect max radius (1-5)
+  - refine quality (`fast`/`balanced`/`precise`)
+  - refine max requests (4-120)
+- [src/planimeter.js](src/planimeter.js) detection M3 progressiva aggiornata per usare i nuovi parametri utente (`m3DetectStartRadius`, `m3DetectMaxRadius`) invece dei limiti hardcoded.
+
+### Validation
+- `node --check src/planimeter.js`
+- `node --check src/ui/context-menu.js`
+- `node --check src/io/preferences.js`
+- `node --check src/i18n/it.js`
+- `node --check src/i18n/en.js`
+
+## [2026-05-17] — Fine-align micro-step follow-up (balanced profile)
+
+### Changed
+- [server.py](server.py) continuity base ridotta solo per profilo `balanced` (`0.05 -> 0.035`) mantenendo invariati gli altri profili.
+- [server.py](server.py) clamp distanza hard ridotto solo per `balanced` (`0.45 m -> 0.40 m`) con stessa eccezione `score_gain > 1.25`.
+- [server.py](server.py) debug esteso con `continuityBase` e `distanceHardClampM` per tracciare il tuning attivo nel report smoke.
+
+### Validation
+- `python -m py_compile server.py tests/test_smoke_parcel_402_methods.py`
+- `python tests/test_smoke_parcel_402_methods.py --method3-only --radius 2 --refine --quality balanced --lon 12.561465 --lat 43.012393 --base-url http://127.0.0.1:8000 --case-name 402-snap`
+- `python tests/test_smoke_parcel_402_methods.py --method3-only --radius 2 --refine --quality balanced --lon 12.562341 --lat 43.012963 --base-url http://127.0.0.1:8000 --case-name 304-snap`
+
+## [2026-05-17] — Fine-align continuity anti-drift tuning (observer follow-up)
+
+### Changed
+- [server.py](server.py) continuity hysteresis ridotta da `0.12` a base `0.05`, con decay sulla distanza di snap (`1 - snap_distance/searchMeters`) per favorire snap piccoli e coerenti.
+- [server.py](server.py) continuity bonus applicata solo a candidati ownership-valid e con evidenza geometrica minima (`candidate_confidence >= minConfidence` e `line_support >= lineFloor`).
+- [server.py](server.py) acceptance gate irrigidito: snap oltre `0.45 m` rifiutati salvo `score_gain > 1.25`; aggiunte metriche `meanScoreGain`, `rejectedByDistance`, `rejectedByWeakGain`.
+- [tests/test_smoke_parcel_402_methods.py](tests/test_smoke_parcel_402_methods.py) output CLI esteso con le nuove metriche di tuning (`mean score gain`, reject reasons).
+
+### Validation
+- `python -m py_compile server.py tests/test_smoke_parcel_402_methods.py`
+- `python tests/test_smoke_parcel_402_methods.py --method3-only --radius 2 --refine --quality balanced --lon 12.561465 --lat 43.012393 --base-url http://127.0.0.1:8000 --case-name 402-snap`
+- `python tests/test_smoke_parcel_402_methods.py --method3-only --radius 2 --refine --quality balanced --lon 12.562341 --lat 43.012963 --base-url http://127.0.0.1:8000 --case-name 304-snap`
+
+## [2026-05-17] — Fine-align ownership tuning round 2 (observer feedback)
+
+### Changed
+- [server.py](server.py) refine M3 ora orienta le normali verso l'interno usando il centroide reale del ring denso e l'edge midpoint locale, evitando incoerenze inside/outside su diagonali e cuspidi.
+- [server.py](server.py) profondita probe ownership aggiornata per profilo (`balanced=0.75 m`, `precise=0.55 m`) e scoring ownership reso leggibile come segnale positivo di continuita semantica invece che media dei candidati scartati.
+- [server.py](server.py) aggiunta continuity hysteresis tra snap consecutivi, relax tangenziale ridotto (`0.22`) e diagnostica estesa (`ownershipDirectionFlips`, `ownershipInsideFailures`, `ownershipOutsideFailures`, `continuityBoostMean`, samples temporanei score_before/after`).
+- [tests/test_smoke_parcel_402_methods.py](tests/test_smoke_parcel_402_methods.py) CLI smoke estesa con le nuove metriche di continuity/ownership per confronti rapidi con l'osservatore esterno.
+
+### Validation
+- `python -m py_compile server.py tests/test_smoke_parcel_402_methods.py`
+- `python tests/test_smoke_parcel_402_methods.py --method3-only --radius 2 --refine --quality balanced --lon 12.561465 --lat 43.012393 --base-url http://127.0.0.1:8000 --case-name 402-snap`
+- `python tests/test_smoke_parcel_402_methods.py --method3-only --radius 2 --refine --quality balanced --lon 12.562341 --lat 43.012963 --base-url http://127.0.0.1:8000 --case-name 304-snap`
+
+## [2026-05-16] — Fine-align ownership continuity constraint (observer feedback)
+
+### Changed
+- [server.py](server.py) `POST /parcel-geometry-m3-refine` ora applica ownership continuity: ogni candidato lungo la normale locale viene accettato solo se il probe interno resta nel seed region ownership mask e quello esterno esce dal seed region.
+- [server.py](server.py) `_m3_detect_parcel_boundary` ora preserva nel debug `ownershipMask` compresso + `maskTransform` per riuso nel refine senza query WMS aggiuntive.
+- [server.py](server.py) refine aggiornato con normal smoothing (finestra ±2 segmenti), tangent-only relax 1 pass (`factor=0.35`) e micro-simplify finale (`epsilon=0.20 m`) per ridurre jitter diagonale.
+- [server.py](server.py) preset di densificazione ridotti per stabilita raster: `balanced spacing_m=2.2`, `precise spacing_m=1.5`.
+- [tests/test_smoke_parcel_402_methods.py](tests/test_smoke_parcel_402_methods.py) payload refine esteso con ownership metadata (`ownershipMask`, `maskTransform`, `coarseDebug`) e stampa metrica ownership (`accepted/rejected/ambiguous/mean score`).
+
+### Validation
+- `python -m py_compile server.py tests/test_smoke_parcel_402_methods.py`
+- `python tests/test_smoke_parcel_402_methods.py --method3-only --radius 2 --quality balanced --lon 12.561465 --lat 43.012393 --base-url http://127.0.0.1:8000 --case-name 402-nosnap`
+- `python tests/test_smoke_parcel_402_methods.py --method3-only --radius 2 --refine --quality balanced --lon 12.561465 --lat 43.012393 --base-url http://127.0.0.1:8000 --case-name 402-snap`
+- `python tests/test_smoke_parcel_402_methods.py --method3-only --radius 2 --quality balanced --lon 12.562341 --lat 43.012963 --base-url http://127.0.0.1:8000 --case-name 304-nosnap`
+- `python tests/test_smoke_parcel_402_methods.py --method3-only --radius 2 --refine --quality balanced --lon 12.562341 --lat 43.012963 --base-url http://127.0.0.1:8000 --case-name 304-snap`
+
+## [2026-05-16] — Fine-align edge attraction: replace antispike pruning
+
+### Changed
+- [server.py](server.py) refine M3 aggiornato a uno snap di vertice edge-constrained: densificazione piu fitta, ricerca solo lungo la normale locale, confidence gate, nessun pruning topologico aggressivo.
+- [tests/test_smoke_parcel_402_methods.py](tests/test_smoke_parcel_402_methods.py) smoke allineato al nuovo refine con metriche di snap e confidence stampate nel report CLI.
+
+### Validation
+- `python -m py_compile server.py tests/test_smoke_parcel_402_methods.py`
+- `python tests/test_smoke_parcel_402_methods.py --method3-only --radius 2 --refine --quality balanced --lon 12.561465 --lat 43.012393 --base-url http://127.0.0.1:8000`
+
+## [2026-05-16] — Fine-align rollback: restored v1 baseline
+
+### Changed
+- [server.py](server.py) ripristinato il refine M3 alla baseline v1 senza antispike e senza filtro di verifica interna, mantenendo il solo border refinement.
+- [tests/test_smoke_parcel_402_methods.py](tests/test_smoke_parcel_402_methods.py) rimosso il toggle CLI `--antispike` per riportare lo smoke al confronto baseline.
+
+### Validation
+- `python -m py_compile server.py tests/test_smoke_parcel_402_methods.py`
+- `python tests/test_smoke_parcel_402_methods.py --method3-only --radius 2 --refine --quality balanced --lon 12.562341 --lat 43.012963 --base-url http://127.0.0.1:8000`
+
+## [2026-05-16] — Fine-align 402: interior spike filtering validated
+
+### Fixed
+- [server.py](server.py) `POST /parcel-geometry-m3-refine` ora verifica il target parcel dall'input click point, campiona il rientro verso il centroid e filtra i vertici di bordo sospetti usando `GetFeatureInfo` sul proxy locale.
+- [server.py](server.py) ottimizzata la densificazione del bordo per la modalita balanced, cosi il refine resta sotto il timeout del smoke test anche con la verifica interna attiva.
+
+### Validation
+- `python -m py_compile server.py`
+- `python tests/test_smoke_parcel_402_methods.py --method3-only --radius 2 --refine --quality balanced --lon 12.561465 --lat 43.012393 --base-url http://127.0.0.1:8000`
+
 ## [2026-05-15] — DM4 M3 hardening: fix runtime, nomenclatura pertinenze, stile dedicato, bordo esterno
 
 ### Fixed

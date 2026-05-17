@@ -335,6 +335,30 @@
                     </div>
                 </section>
 
+                <section class="toolbar-section" aria-labelledby="settings-m3-title">
+                    <div class="section-heading">
+                        <h2 id="settings-m3-title" data-i18n="section.settings.m3">M3 Detect & Trace</h2>
+                        <span class="section-kicker" data-i18n="section.settings.m3.kicker">Autodelineazione</span>
+                    </div>
+                    <div class="settings-grid">
+                        <label class="settings-field">
+                            <span data-i18n="settings.m3.detectStartRadius">Detect M3: raggio iniziale</span>
+                            <input type="number" id="settings-m3-detect-start-radius" min="1" max="5" step="1" value="1">
+                            <small data-i18n="settings.m3.detectStartRadius.hint">Range consentito: 1-5 tile.</small>
+                        </label>
+                        <label class="settings-field">
+                            <span data-i18n="settings.m3.detectMaxRadius">Detect M3: raggio massimo</span>
+                            <input type="number" id="settings-m3-detect-max-radius" min="1" max="5" step="1" value="5">
+                            <small data-i18n="settings.m3.detectMaxRadius.hint">Range consentito: 1-5 tile, sempre >= raggio iniziale.</small>
+                        </label>
+                        <label class="settings-field">
+                            <span data-i18n="settings.m3.traceToleranceM">Trace M3: tolleranza (m)</span>
+                            <input type="number" id="settings-m3-trace-tolerance-m" min="0.05" max="2.5" step="0.05" value="0.35">
+                            <small data-i18n="settings.m3.traceToleranceM.hint">Range consigliato: 0.05-2.5 m (default 0.35 m). Valori bassi = piu vertici/dettaglio.</small>
+                        </label>
+                    </div>
+                </section>
+
                 <section class="toolbar-section" aria-labelledby="settings-overlay-title">
                     <div class="section-heading">
                         <h2 id="settings-overlay-title" data-i18n="section.settings.overlay">Overlay</h2>
@@ -483,6 +507,65 @@
             </div>
             <p id="parcel-info-popover-status" class="section-help info-card-status" data-i18n="parcelInfo.clickHint">In modalità Navigate, usa il menu contestuale della mappa su una particella per leggerne i dati.</p>
             <iframe id="parcel-info-popover-frame" class="parcel-info-popover__frame" title="Dettaglio GetFeatureInfo" scrolling="no" hidden></iframe>
+        </section>
+
+        <section id="m3-refine-report" class="m3-refine-report" hidden aria-live="polite">
+            <header class="m3-refine-report__header">
+                <strong id="m3-refine-report-title" data-i18n="m3.refine.report.title">Report refine M3</strong>
+            </header>
+            <p id="m3-refine-effect-note" class="m3-refine-report__effect-note" data-i18n="m3.refine.report.effect.changed">Refine ha prodotto modifiche geometriche visibili.</p>
+
+            <div class="m3-refine-report__columns">
+                <div class="m3-refine-report__card">
+                    <h3 data-i18n="m3.refine.report.before">Prima</h3>
+                    <dl>
+                        <div><dt data-i18n="m3.refine.report.area">Area</dt><dd id="m3-refine-before-area">-</dd></div>
+                        <div><dt data-i18n="m3.refine.report.perimeter">Perimetro</dt><dd id="m3-refine-before-perimeter">-</dd></div>
+                        <div><dt data-i18n="m3.refine.report.vertices">Vertici</dt><dd id="m3-refine-before-vertices">-</dd></div>
+                    </dl>
+                </div>
+
+                <div class="m3-refine-report__card">
+                    <h3 data-i18n="m3.refine.report.after">Dopo</h3>
+                    <dl>
+                        <div><dt data-i18n="m3.refine.report.area">Area</dt><dd id="m3-refine-after-area">-</dd></div>
+                        <div><dt data-i18n="m3.refine.report.perimeter">Perimetro</dt><dd id="m3-refine-after-perimeter">-</dd></div>
+                        <div><dt data-i18n="m3.refine.report.vertices">Vertici</dt><dd id="m3-refine-after-vertices">-</dd></div>
+                    </dl>
+                </div>
+
+                <div class="m3-refine-report__card">
+                    <h3 data-i18n="m3.refine.report.diff">Diff</h3>
+                    <dl>
+                        <div><dt data-i18n="m3.refine.report.deltaArea">Delta area</dt><dd id="m3-refine-diff-area">-</dd></div>
+                        <div><dt data-i18n="m3.refine.report.deltaRatio">Delta ratio</dt><dd id="m3-refine-diff-ratio">-</dd></div>
+                        <div><dt data-i18n="m3.refine.report.deltaPerimeter">Delta perimetro</dt><dd id="m3-refine-diff-perimeter">-</dd></div>
+                    </dl>
+                </div>
+            </div>
+
+            <div class="m3-refine-report__visual">
+                <h3 data-i18n="m3.refine.report.visualDiff">Diff geometrico (overlay)</h3>
+                <canvas id="m3-refine-diff-canvas" width="560" height="180" aria-label="Anteprima differenze geometriche before/after"></canvas>
+            </div>
+
+            <div class="m3-refine-report__summary">
+                <h3 data-i18n="m3.refine.report.summary">Summary punti snapped/rejected</h3>
+                <dl>
+                    <div><dt data-i18n="m3.refine.report.snapAccepted">Snapped accettati</dt><dd id="m3-refine-snap-accepted">-</dd></div>
+                    <div><dt data-i18n="m3.refine.report.snapRejected">Snapped rifiutati</dt><dd id="m3-refine-snap-rejected">-</dd></div>
+                    <div><dt data-i18n="m3.refine.report.snapKept">Punti kept</dt><dd id="m3-refine-snap-kept">-</dd></div>
+                    <div><dt data-i18n="m3.refine.report.meanSnap">Mean snap</dt><dd id="m3-refine-mean-snap">-</dd></div>
+                    <div><dt data-i18n="m3.refine.report.meanConfidence">Mean confidence</dt><dd id="m3-refine-mean-confidence">-</dd></div>
+                    <div><dt data-i18n="m3.refine.report.rejectedDistance">Rejected by distance</dt><dd id="m3-refine-rejected-distance">-</dd></div>
+                    <div><dt data-i18n="m3.refine.report.rejectedWeakGain">Rejected by weak gain</dt><dd id="m3-refine-rejected-weak-gain">-</dd></div>
+                </dl>
+            </div>
+
+            <div class="m3-refine-report__actions">
+                <button type="button" id="btn-m3-refine-accept" class="action-button icon-button" data-i18n="m3.refine.accept" data-icon="✅">Accetta</button>
+                <button type="button" id="btn-m3-refine-reject" class="action-button action-button-danger icon-button" data-i18n="m3.refine.reject" data-icon="✖">Rifiuta</button>
+            </div>
         </section>
 
         <div id="pointer-coordinates" class="pointer-coordinates" hidden aria-live="polite">

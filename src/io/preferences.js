@@ -21,6 +21,9 @@ export const DEFAULT_PREFERENCES = {
     exportImageQuality: 'standard',
     cacheTtlDays: 30,
     cacheSizeMb: 500,
+    m3DetectStartRadius: 1,
+    m3DetectMaxRadius: 5,
+    m3TraceToleranceM: 0.35,
 };
 
 export function loadPreferences() {
