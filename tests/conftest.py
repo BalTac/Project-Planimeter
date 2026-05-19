@@ -22,7 +22,7 @@ def _free_port() -> int:
 def planimeter_base_url():
     port = _free_port()
     proc = subprocess.Popen(
-        [sys.executable, str(SERVER_SCRIPT), "--port", str(port)],
+        [sys.executable, str(SERVER_SCRIPT), "--port", str(port), "--instance-policy", "replace"],
         cwd=str(ROOT),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

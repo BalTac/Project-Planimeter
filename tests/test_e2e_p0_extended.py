@@ -2,6 +2,7 @@
 
 import io
 import json
+import re
 import zipfile
 
 import pytest
@@ -131,6 +132,7 @@ def _draw_polygon(page: Page) -> None:
     page.wait_for_timeout(300)
     canvas = page.locator("canvas").first
     box = canvas.bounding_box()
+    assert box is not None, "Map canvas bounding box unavailable"
     cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
     off = 50
     page.mouse.click(cx - off, cy - off)
@@ -254,6 +256,539 @@ class TestExportFormats:
                 meta = json.loads(zf.read("meta.json").decode("utf-8"))
                 for key in ("bbox", "crs", "width", "height", "layers", "timestamp"):
                     assert key in meta
+
+
+class TestHoleWorkflow:
+    def test_context_menu_draw_hole_available_in_navigate_and_switches_mode(self, page: Page, planimeter_base_url: str):
+        """
+        Navigate mode flow:
+        - draw a polygon
+        - right-click polygon in Navigate mode
+        - Draw hole action is visible
+        - click action -> app switches to Edit and activates hole draw interaction
+        """
+        go(page, planimeter_base_url)
+        page.select_option("#lang-switcher", "it")
+        page.wait_for_timeout(250)
+
+        _draw_polygon(page)
+
+        # Ensure we are in Navigate mode (default) and open context menu on polygon.
+        page.click("[data-mode='navigate']")
+        page.wait_for_timeout(200)
+
+        canvas = page.locator("canvas").first
+        box = canvas.bounding_box()
+        assert box is not None, "Map canvas bounding box unavailable"
+        cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+
+        page.mouse.click(cx, cy)
+        page.wait_for_timeout(180)
+        page.mouse.click(cx, cy, button="right")
+
+        draw_hole_item = page.locator("#map-context-menu button").filter(
+            has_text=re.compile(r"Disegna buco|Draw hole", re.IGNORECASE)
+        ).first
+        expect(draw_hole_item).to_be_visible()
+        draw_hole_item.click()
+        page.wait_for_timeout(260)
+
+        state = page.evaluate(
+            """
+            () => {
+                const app = window.planimeterApp;
+                if (!app) return { ok: false, reason: 'app-not-ready' };
+
+                return {
+                    ok: true,
+                    mode: app.state?.mode,
+                    holeActive: Boolean(app.holeDrawInteraction?.getActive?.()),
+                    selectedPolygon: ['Polygon', 'MultiPolygon'].includes(
+                        app.state?.selectedFeature?.getGeometry?.()?.getType?.() || ''
+                    ),
+                };
+            }
+            """
+        )
+
+        assert state["ok"], f"Unexpected app state: {state}"
+        assert state["mode"] == "edit", f"Expected edit mode after Draw hole from Navigate: {state}"
+        assert state["holeActive"], f"Hole draw interaction is not active: {state}"
+        assert state["selectedPolygon"], f"Selected feature is not polygonal: {state}"
+
+    def test_context_menu_draw_hole_ui_flow(self, page: Page, planimeter_base_url: str):
+        """
+        Pure UI flow (mouse + context menu):
+        - draw a polygon
+        - switch to edit mode and select it
+        - right-click -> Draw hole
+        - draw hole and accept preview
+        - verify inner ring persisted and draft overlay is cleared
+        """
+        go(page, planimeter_base_url)
+        page.select_option("#lang-switcher", "it")
+        page.wait_for_timeout(250)
+
+        _draw_polygon(page)
+
+        page.click("[data-mode='edit']")
+        page.wait_for_timeout(250)
+
+        canvas = page.locator("canvas").first
+        box = canvas.bounding_box()
+        assert box is not None, "Map canvas bounding box unavailable"
+        cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+
+        # Select polygon then open context menu at the same point.
+        page.mouse.click(cx, cy)
+        page.wait_for_timeout(220)
+        page.mouse.click(cx, cy, button="right")
+
+        draw_hole_item = page.locator("#map-context-menu button").filter(
+            has_text=re.compile(r"Disegna buco|Draw hole", re.IGNORECASE)
+        ).first
+        expect(draw_hole_item).to_be_visible()
+        draw_hole_item.click()
+        page.wait_for_timeout(220)
+
+        # Draw a smaller hole and close with double click.
+        off = 24
+        page.mouse.click(cx - off, cy - off)
+        page.wait_for_timeout(120)
+        page.mouse.click(cx + off, cy - off)
+        page.wait_for_timeout(120)
+        page.mouse.click(cx + off, cy + off)
+        page.wait_for_timeout(120)
+        page.mouse.dblclick(cx - off, cy + off)
+
+        expect(page.locator("#m3-refine-report")).to_be_visible()
+        page.click("#btn-m3-refine-accept")
+        page.wait_for_timeout(280)
+
+        result = page.evaluate(
+            """
+            () => {
+                const app = window.planimeterApp;
+                if (!app) return { ok: false, reason: 'app-not-ready' };
+
+                const collect = [
+                    ...app.vectorSource.getFeatures(),
+                    ...app.pertenenzaSource.getFeatures(),
+                ];
+
+                const candidate = collect.find((f) => {
+                    const geom = f?.getGeometry?.();
+                    if (!geom || geom.getType?.() !== 'Polygon') return false;
+                    const coords = geom.getCoordinates?.() ?? [];
+                    return Array.isArray(coords) && coords.length > 1;
+                });
+
+                const innerRingCount = candidate
+                    ? Math.max(0, (candidate.getGeometry().getCoordinates?.() ?? []).length - 1)
+                    : 0;
+
+                return {
+                    ok: true,
+                    innerRingCount,
+                    pendingPreview: Boolean(app.pendingM3Refine),
+                    holeDraftCount: app.holeDraftSource.getFeatures().length,
+                };
+            }
+            """
+        )
+
+        assert result["ok"], f"Unexpected app state: {result}"
+        assert result["innerRingCount"] >= 1, f"No persisted inner ring after accept: {result}"
+        assert not result["pendingPreview"], f"Preview still pending after accept: {result}"
+        assert result["holeDraftCount"] == 0, f"Draft overlay not cleared after accept: {result}"
+
+    def test_context_menu_draw_hole_outside_is_rejected(self, page: Page, planimeter_base_url: str):
+        """
+        Negative case:
+        - draw polygon
+        - start Draw hole from context menu
+        - draw a hole contour that goes outside polygon bounds
+        - expect rejection (no preview panel, no inner ring persisted)
+        """
+        go(page, planimeter_base_url)
+        page.select_option("#lang-switcher", "it")
+        page.wait_for_timeout(250)
+
+        _draw_polygon(page)
+
+        page.click("[data-mode='edit']")
+        page.wait_for_timeout(250)
+
+        canvas = page.locator("canvas").first
+        box = canvas.bounding_box()
+        assert box is not None, "Map canvas bounding box unavailable"
+        cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+
+        page.mouse.click(cx, cy)
+        page.wait_for_timeout(220)
+        page.mouse.click(cx, cy, button="right")
+
+        draw_hole_item = page.locator("#map-context-menu button").filter(
+            has_text=re.compile(r"Disegna buco|Draw hole", re.IGNORECASE)
+        ).first
+        expect(draw_hole_item).to_be_visible()
+        draw_hole_item.click()
+        page.wait_for_timeout(220)
+
+        # Draw a contour intentionally larger than the original polygon.
+        off = 90
+        page.mouse.click(cx - off, cy - off)
+        page.wait_for_timeout(120)
+        page.mouse.click(cx + off, cy - off)
+        page.wait_for_timeout(120)
+        page.mouse.click(cx + off, cy + off)
+        page.wait_for_timeout(120)
+        page.mouse.dblclick(cx - off, cy + off)
+        page.wait_for_timeout(350)
+
+        # Rejected holes should not open accept/reject preview.
+        expect(page.locator("#m3-refine-report")).to_be_hidden()
+
+        status_text = page.locator("#toolbar-status").inner_text()
+        assert (
+            "dentro il perimetro" in status_text.lower()
+            or "inside" in status_text.lower()
+        ), f"Unexpected status message after outside-hole reject: {status_text}"
+
+        result = page.evaluate(
+            """
+            () => {
+                const app = window.planimeterApp;
+                if (!app) return { ok: false, reason: 'app-not-ready' };
+
+                const collect = [
+                    ...app.vectorSource.getFeatures(),
+                    ...app.pertenenzaSource.getFeatures(),
+                ];
+
+                const candidate = collect.find((f) => {
+                    const geom = f?.getGeometry?.();
+                    if (!geom || geom.getType?.() !== 'Polygon') return false;
+                    const coords = geom.getCoordinates?.() ?? [];
+                    return Array.isArray(coords) && coords.length >= 1;
+                });
+
+                const rings = candidate ? (candidate.getGeometry().getCoordinates?.() ?? []) : [];
+                return {
+                    ok: true,
+                    innerRingCount: Array.isArray(rings) ? Math.max(0, rings.length - 1) : 0,
+                    pendingPreview: Boolean(app.pendingM3Refine),
+                    holeDraftCount: app.holeDraftSource.getFeatures().length,
+                };
+            }
+            """
+        )
+
+        assert result["ok"], f"Unexpected app state: {result}"
+        assert result["innerRingCount"] == 0, f"Outside-hole was persisted unexpectedly: {result}"
+        assert not result["pendingPreview"], f"Preview should not remain pending: {result}"
+        assert result["holeDraftCount"] == 0, f"Draft overlay not cleared after rejection: {result}"
+
+    def test_real_parcel_hole_accept_clears_draft_overlay(self, page: Page, planimeter_base_url: str):
+        """
+        Real-case regression (parcel 333 containing parcel 117):
+        - build outer/hole rings via backend detect endpoint
+        - run hole preview pipeline
+        - accept preview
+        - ensure dashed draft overlay source is empty and geometry keeps inner ring
+        """
+        go(page, planimeter_base_url)
+
+        result = page.evaluate(
+            """
+            async () => {
+                const app = window.planimeterApp;
+                if (!app) {
+                    return { ok: false, reason: 'app-not-ready' };
+                }
+
+                const fetchRing = async (lat, lon) => {
+                    const resp = await fetch('/parcel-geometry-m3', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ lat, lon, radius: 2 }),
+                    });
+                    if (!resp.ok) {
+                        return { ok: false, status: resp.status };
+                    }
+                    const data = await resp.json();
+                    if (!data?.ok || !Array.isArray(data?.ring) || data.ring.length < 4) {
+                        return { ok: false, status: 'invalid-payload' };
+                    }
+                    return { ok: true, ring: data.ring };
+                };
+
+                const outer = await fetchRing(43.013727, 12.560621); // parcel 333
+                const hole = await fetchRing(43.013670, 12.560484);  // parcel 117
+                if (!outer.ok || !hole.ok) {
+                    return { ok: false, reason: 'detect-failed', outer, hole };
+                }
+
+                const readOpts = {
+                    dataProjection: 'EPSG:4326',
+                    featureProjection: app.view.getProjection(),
+                };
+
+                const outerFeature = app.geoJsonFormat.readFeature({
+                    type: 'Feature',
+                    properties: {
+                        featureName: 'Regression-333',
+                        overlayLayer: 'pertenenze',
+                    },
+                    geometry: {
+                        type: 'Polygon',
+                        coordinates: [outer.ring],
+                    },
+                }, readOpts);
+
+                app.pertenenzaSource.addFeature(outerFeature);
+                app.setEditingLayer('pertenenze');
+                app.setMode('edit');
+                app.state.selectedFeature = outerFeature;
+
+                app.pendingHoleOperation = {
+                    feature: outerFeature,
+                    overlayLayer: 'pertenenze',
+                    originalCoordinates: app.cloneGeometryCoordinates(outerFeature.getGeometry()),
+                };
+
+                const draftFeature = app.geoJsonFormat.readFeature({
+                    type: 'Feature',
+                    properties: {},
+                    geometry: {
+                        type: 'Polygon',
+                        coordinates: [hole.ring],
+                    },
+                }, readOpts);
+
+                app.finalizeHoleDraft(draftFeature);
+
+                const previewPending = Boolean(app.pendingM3Refine?.operationType === 'hole');
+                const beforeAcceptDraftCount = app.holeDraftSource.getFeatures().length;
+
+                app.acceptPendingM3Refine();
+
+                const coords = outerFeature.getGeometry()?.getCoordinates?.() ?? [];
+                const innerRingCount = Array.isArray(coords) ? Math.max(0, coords.length - 1) : 0;
+                const afterAcceptDraftCount = app.holeDraftSource.getFeatures().length;
+
+                return {
+                    ok: true,
+                    previewPending,
+                    innerRingCount,
+                    beforeAcceptDraftCount,
+                    afterAcceptDraftCount,
+                };
+            }
+            """
+        )
+
+        if not result.get("ok"):
+            pytest.skip(f"Real parcel detect unavailable for hole regression: {result}")
+
+        assert result["previewPending"], f"Hole preview was not created: {result}"
+        assert result["innerRingCount"] >= 1, f"Hole not persisted as inner ring: {result}"
+        assert result["beforeAcceptDraftCount"] == 0, f"Draft overlay remained before accept: {result}"
+        assert result["afterAcceptDraftCount"] == 0, f"Draft overlay remained after accept: {result}"
+
+
+class TestVertexDeleteWorkflow:
+    def _seed_polygon(self, page: Page, with_inner_ring: bool = False) -> dict:
+        return page.evaluate(
+            """
+            ({ withInnerRing }) => {
+                const app = window.planimeterApp;
+                if (!app) return { ok: false, reason: 'app-not-ready' };
+
+                app.vectorSource.clear();
+                app.pertenenzaSource.clear();
+
+                const center = app.view.getCenter();
+                const centerPx = app.map.getPixelFromCoordinate(center);
+                const p = (dx, dy) => app.map.getCoordinateFromPixel([centerPx[0] + dx, centerPx[1] + dy]);
+
+                const outer = [
+                    p(-90, -90),
+                    p(90, -90),
+                    p(120, 0),
+                    p(90, 90),
+                    p(-90, 90),
+                    p(-90, -90),
+                ];
+
+                const rings = [outer];
+                if (withInnerRing) {
+                    const inner = [
+                        p(-24, -24),
+                        p(24, -24),
+                        p(24, 24),
+                        p(-24, 24),
+                        p(-24, -24),
+                    ];
+                    rings.push(inner);
+                }
+
+                const feature = app.geoJsonFormat.readFeature({
+                    type: 'Feature',
+                    properties: { featureName: 'E2E-Vertex-Target', overlayLayer: 'user' },
+                    geometry: { type: 'Polygon', coordinates: rings },
+                }, {
+                    dataProjection: app.view.getProjection(),
+                    featureProjection: app.view.getProjection(),
+                });
+
+                app.vectorSource.addFeature(feature);
+                app.setEditingLayer('user');
+                app.setMode('edit');
+                app.state.selectedFeature = feature;
+                app.refreshEditVertexOverlay();
+
+                const outerPxA = app.map.getPixelFromCoordinate(outer[0]);
+                const outerPxB = app.map.getPixelFromCoordinate(outer[1]);
+                const innerPx = withInnerRing ? app.map.getPixelFromCoordinate(rings[1][0]) : null;
+                return {
+                    ok: true,
+                    outerPxA,
+                    outerPxB,
+                    innerPx,
+                    beforeOpenVertices: outer.length - 1,
+                    beforeRingCount: rings.length,
+                };
+            }
+            """,
+            {"withInnerRing": with_inner_ring},
+        )
+
+    def test_ctrl_multiselect_then_delete_selected(self, page: Page, planimeter_base_url: str):
+        go(page, planimeter_base_url)
+
+        seeded = self._seed_polygon(page, with_inner_ring=False)
+        assert seeded.get("ok"), f"Cannot seed polygon: {seeded}"
+
+        result = page.evaluate(
+            """
+            ({ outerPxA, outerPxB, beforeOpenVertices }) => {
+                const app = window.planimeterApp;
+                const feature = app?.state?.selectedFeature;
+                if (!app || !feature) return { ok: false, reason: 'app-not-ready' };
+
+                const coordA = app.map.getCoordinateFromPixel(outerPxA);
+                const coordB = app.map.getCoordinateFromPixel(outerPxB);
+                const pickA = app.findNearestEditableVertex(feature, coordA, 12);
+                const pickB = app.findNearestEditableVertex(feature, coordB, 12);
+                if (!pickA || !pickB) return { ok: false, reason: 'vertex-not-found', pickA, pickB };
+
+                app.updateVertexSelectionFromPicked(pickA, false);
+                app.updateVertexSelectionFromPicked(pickB, true);
+                app.requestDeleteSelectedVertex();
+
+                const ring = feature.getGeometry()?.getCoordinates?.()?.[0] ?? [];
+                return {
+                    ok: true,
+                    openVertices: Math.max(0, ring.length - 1),
+                    expected: beforeOpenVertices - 2,
+                    selectedCount: Array.isArray(app.state.selectedEditVertices) ? app.state.selectedEditVertices.length : -1,
+                };
+            }
+            """,
+            {
+                "outerPxA": seeded["outerPxA"],
+                "outerPxB": seeded["outerPxB"],
+                "beforeOpenVertices": seeded["beforeOpenVertices"],
+            },
+        )
+
+        assert result["ok"], f"Delete selected flow failed: {result}"
+        assert result["openVertices"] == result["expected"], f"Unexpected vertex count after delete selected: {result}"
+        assert result["selectedCount"] == 0, f"Selection should be cleared after delete selected: {result}"
+
+    def test_delete_all_inner_ring_removes_hole(self, page: Page, planimeter_base_url: str):
+        go(page, planimeter_base_url)
+
+        seeded = self._seed_polygon(page, with_inner_ring=True)
+        assert seeded.get("ok"), f"Cannot seed polygon with hole: {seeded}"
+
+        result = page.evaluate(
+            """
+            ({ innerPx, beforeRingCount }) => {
+                const app = window.planimeterApp;
+                const f = app?.state?.selectedFeature;
+                if (!app || !f) return { ok: false, reason: 'app-not-ready' };
+
+                const coord = app.map.getCoordinateFromPixel(innerPx);
+                const pick = app.findNearestEditableVertex(f, coord, 12);
+                if (!pick) return { ok: false, reason: 'inner-vertex-not-found' };
+
+                app.updateVertexSelectionFromPicked(pick, false);
+                app.promptDeleteAllSelectedVertices();
+                const warningShown = !app.elements.vertexDeleteAllWarning.hidden;
+                app.confirmDeleteAllSelectedVertices();
+
+                const rings = f?.getGeometry?.()?.getCoordinates?.() ?? [];
+                return {
+                    ok: true,
+                    expected: beforeRingCount - 1,
+                    ringCount: Array.isArray(rings) ? rings.length : -1,
+                    warningShown,
+                    warningHidden: Boolean(app?.elements?.vertexDeleteAllWarning?.hidden),
+                };
+            }
+            """,
+            {
+                "innerPx": seeded["innerPx"],
+                "beforeRingCount": seeded["beforeRingCount"],
+            },
+        )
+
+        assert result["ok"], f"Delete-all inner flow failed: {result}"
+        assert result["warningShown"], f"Delete-all warning should be visible before accept: {result}"
+        assert result["ringCount"] == result["expected"], f"Inner ring not removed by delete all: {result}"
+        assert result["warningHidden"], f"Delete-all warning should be hidden after accept: {result}"
+
+    def test_delete_all_outer_ring_deletes_feature(self, page: Page, planimeter_base_url: str):
+        go(page, planimeter_base_url)
+
+        seeded = self._seed_polygon(page, with_inner_ring=True)
+        assert seeded.get("ok"), f"Cannot seed polygon with hole: {seeded}"
+
+        result = page.evaluate(
+            """
+            ({ outerPxA }) => {
+                const app = window.planimeterApp;
+                const f = app?.state?.selectedFeature;
+                if (!app || !f) return { ok: false, reason: 'app-not-ready' };
+
+                const coord = app.map.getCoordinateFromPixel(outerPxA);
+                const pick = app.findNearestEditableVertex(f, coord, 12);
+                if (!pick) return { ok: false, reason: 'outer-vertex-not-found' };
+
+                app.updateVertexSelectionFromPicked(pick, false);
+                app.promptDeleteAllSelectedVertices();
+                const warningShown = !app.elements.vertexDeleteAllWarning.hidden;
+                app.confirmDeleteAllSelectedVertices();
+
+                return {
+                    ok: true,
+                    userCount: app?.vectorSource?.getFeatures?.().length ?? -1,
+                    warningShown,
+                    warningHidden: Boolean(app?.elements?.vertexDeleteAllWarning?.hidden),
+                };
+            }
+            """,
+            {
+                "outerPxA": seeded["outerPxA"],
+            },
+        )
+
+        assert result["ok"], f"Delete-all outer flow failed: {result}"
+        assert result["warningShown"], f"Delete-all warning should be visible before accept: {result}"
+        assert result["userCount"] == 0, f"Feature should be deleted when delete all targets outer ring: {result}"
+        assert result["warningHidden"], f"Delete-all warning should be hidden after accept: {result}"
 
 # ---------------------------------------------------------------------------
 # Preferences: layer/tool state restored after reload

@@ -19,3 +19,4 @@ AUDIT_*.md
 SESSION_*.md
 TEST_RESULTS_*.md
 tests/preview_*.py
+app.js

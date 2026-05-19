@@ -537,20 +537,20 @@
                 <div class="m3-refine-report__card">
                     <h3 data-i18n="m3.refine.report.diff">Diff</h3>
                     <dl>
-                        <div><dt data-i18n="m3.refine.report.deltaArea">Delta area</dt><dd id="m3-refine-diff-area">-</dd></div>
-                        <div><dt data-i18n="m3.refine.report.deltaRatio">Delta ratio</dt><dd id="m3-refine-diff-ratio">-</dd></div>
-                        <div><dt data-i18n="m3.refine.report.deltaPerimeter">Delta perimetro</dt><dd id="m3-refine-diff-perimeter">-</dd></div>
+                        <div><dt id="m3-refine-diff-area-label" data-i18n="m3.refine.report.deltaArea">Delta area</dt><dd id="m3-refine-diff-area">-</dd></div>
+                        <div><dt id="m3-refine-diff-ratio-label" data-i18n="m3.refine.report.deltaRatio">Delta ratio</dt><dd id="m3-refine-diff-ratio">-</dd></div>
+                        <div><dt id="m3-refine-diff-perimeter-label" data-i18n="m3.refine.report.deltaPerimeter">Delta perimetro</dt><dd id="m3-refine-diff-perimeter">-</dd></div>
                     </dl>
                 </div>
             </div>
 
-            <div class="m3-refine-report__visual">
-                <h3 data-i18n="m3.refine.report.visualDiff">Diff geometrico (overlay)</h3>
+            <div id="m3-refine-visual-section" class="m3-refine-report__visual">
+                <h3 id="m3-refine-visual-title" data-i18n="m3.refine.report.visualDiff">Diff geometrico (overlay)</h3>
                 <canvas id="m3-refine-diff-canvas" width="560" height="180" aria-label="Anteprima differenze geometriche before/after"></canvas>
             </div>
 
-            <div class="m3-refine-report__summary">
-                <h3 data-i18n="m3.refine.report.summary">Summary punti snapped/rejected</h3>
+            <div id="m3-refine-summary-section" class="m3-refine-report__summary">
+                <h3 id="m3-refine-summary-title" data-i18n="m3.refine.report.summary">Summary punti snapped/rejected</h3>
                 <dl>
                     <div><dt data-i18n="m3.refine.report.snapAccepted">Snapped accettati</dt><dd id="m3-refine-snap-accepted">-</dd></div>
                     <div><dt data-i18n="m3.refine.report.snapRejected">Snapped rifiutati</dt><dd id="m3-refine-snap-rejected">-</dd></div>
@@ -565,6 +565,17 @@
             <div class="m3-refine-report__actions">
                 <button type="button" id="btn-m3-refine-accept" class="action-button icon-button" data-i18n="m3.refine.accept" data-icon="✅">Accetta</button>
                 <button type="button" id="btn-m3-refine-reject" class="action-button action-button-danger icon-button" data-i18n="m3.refine.reject" data-icon="✖">Rifiuta</button>
+            </div>
+        </section>
+
+        <section id="vertex-delete-all-warning" class="vertex-delete-all-warning" hidden aria-live="polite">
+            <header class="vertex-delete-all-warning__header">
+                <strong data-i18n="vertex.deleteAll.title">Conferma eliminazione completa</strong>
+            </header>
+            <p id="vertex-delete-all-warning-message" class="vertex-delete-all-warning__message" data-i18n="vertex.deleteAll.message.default">Stai per eliminare tutti i vertici collegati selezionati. Vuoi continuare?</p>
+            <div class="vertex-delete-all-warning__actions">
+                <button type="button" id="btn-vertex-delete-all-accept" class="action-button icon-button" data-i18n="vertex.deleteAll.accept" data-icon="✅">Accetta</button>
+                <button type="button" id="btn-vertex-delete-all-reject" class="action-button action-button-danger icon-button" data-i18n="vertex.deleteAll.reject" data-icon="✖">Rifiuta</button>
             </div>
         </section>
 

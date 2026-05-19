@@ -44,7 +44,7 @@
 |---|---|
 | Frontend | HTML + CSS + JavaScript ES modules (no bundler) |
 | Mappa | [OpenLayers 8.2.0](https://openlayers.org) via importmap su `esm.sh` |
-| Backend locale | Python 3.8+, `http.server`, `urllib`, `sqlite3` |
+| Backend locale | Python 3.10+, `http.server`, `urllib`, `sqlite3` |
 | Image stack | Pillow, OpenCV (`opencv-python`), numpy |
 | Cache tile WMS | SQLite con TTL e quota dimensione |
 | Persistenza utente | `localStorage` lato browser |
@@ -164,14 +164,26 @@ python server.py \
 # Compile check
 python -m py_compile server.py
 
-# Unit + integration test
+# Unit test (unittest)
 python -m unittest discover -s tests
+
+# Test suite completa (pytest + E2E Playwright)
+python -m pytest tests
+
+# Solo E2E Playwright
+python -m pytest tests/test_e2e_p0.py tests/test_e2e_p0_extended.py
 
 # Smoke test M3 (detect + trace su coordinata nota)
 python tests/test_smoke_parcel_402_methods.py \
   --method3-only --trace --trace-tolerance 0.35 \
   --lon 12.561465 --lat 43.012393 \
   --case-name trace-402 --radius 2
+```
+
+Nota E2E: al primo setup installare anche i browser Playwright:
+
+```bash
+python -m playwright install chromium
 ```
 
 Check sintassi JavaScript senza build (PowerShell):

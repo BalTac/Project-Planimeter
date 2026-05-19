@@ -20,12 +20,17 @@ import { t } from '../i18n/i18n.js';
  *   queryParcelAtPixel: (pixel: number[]) => void,
  *   detectParcelM3AtPixel?: (pixel: number[]) => void | Promise<void>,
  *   refineParcelM3ForFeature?: (feature: import('ol/Feature').default, pixel: number[]) => void | Promise<void>,
+ *   startHoleDrawForFeature?: (feature: import('ol/Feature').default, pixel: number[]) => void | Promise<void>,
  *   exportView?:        () => void,
  *   exportSelection?:   () => void,
  *   exportAreas?:       () => void,
  *   canRefreshWmsTile?: () => boolean,
  *   refreshTileAtPixel?: (pixel: number[]) => void,
  *   copyCoordinatesAtPixel?: (pixel: number[]) => void | Promise<void>,
+ *   resolveContextFeaturesAtPixel?: (pixel: number[]) => {
+ *     feature: import('ol/Feature').default | null,
+ *     candidates: import('ol/Feature').default[],
+ *   },
  *   getSpecialContextMenu?: (ctx: {
  *     event: MouseEvent,
  *     pixel: number[],
@@ -52,12 +57,14 @@ export function initContextMenu({
     queryParcelAtPixel,
     detectParcelM3AtPixel,
     refineParcelM3ForFeature,
+    startHoleDrawForFeature,
     exportView,
     exportSelection,
     exportAreas,
     canRefreshWmsTile,
     refreshTileAtPixel,
     copyCoordinatesAtPixel,
+    resolveContextFeaturesAtPixel,
     getSpecialContextMenu,
 }) {
     const { contextMenu } = elements;
@@ -69,7 +76,9 @@ export function initContextMenu({
         const mode      = getMode();
         const isDrawing = getIsDrawing();
         const pixel     = map.getEventPixel(event);
-        const feature   = map.forEachFeatureAtPixel(pixel, (f) => f) ?? null;
+        const resolved  = resolveContextFeaturesAtPixel?.(pixel);
+        const candidates = Array.isArray(resolved?.candidates) ? resolved.candidates : [];
+        const feature   = resolved?.feature ?? candidates[0] ?? map.forEachFeatureAtPixel(pixel, (f) => f) ?? null;
 
         const specialMenu = getSpecialContextMenu?.({
             event,
@@ -83,13 +92,14 @@ export function initContextMenu({
             renderMenu(contextMenu, specialMenu.items, {
                 ...specialMenu.actions,
                 abortActiveDraw,
-                editFeature:        () => editFeature(feature),
-                assignCategory:     () => assignCategory?.(feature),
-                deleteFeature:      () => deleteFeature(feature),
-                resyncParcelMetadata: () => resyncParcelMetadata?.(feature),
+                editFeature:        () => editFeature(feature, pixel, candidates),
+                assignCategory:     () => assignCategory?.(feature, pixel, candidates),
+                deleteFeature:      () => deleteFeature(feature, pixel, candidates),
+                resyncParcelMetadata: () => resyncParcelMetadata?.(feature, pixel, candidates),
                 queryParcelAtPixel: () => queryParcelAtPixel(pixel),
                 detectParcelM3AtPixel: () => detectParcelM3AtPixel?.(pixel),
-                refineParcelM3ForFeature: () => refineParcelM3ForFeature?.(feature, pixel),
+                refineParcelM3ForFeature: () => refineParcelM3ForFeature?.(feature, pixel, candidates),
+                startHoleDrawForFeature: () => startHoleDrawForFeature?.(feature, pixel, candidates),
                 refreshTileAtPixel: () => refreshTileAtPixel?.(pixel),
                 copyCoordinatesAtPixel: () => copyCoordinatesAtPixel?.(pixel),
                 exportView,
@@ -110,18 +120,20 @@ export function initContextMenu({
             canCopyCoordinates: typeof copyCoordinatesAtPixel === 'function',
             detectParcelM3AtPixel: typeof detectParcelM3AtPixel === 'function',
             refineParcelM3ForFeature: typeof refineParcelM3ForFeature === 'function',
+            startHoleDrawForFeature: typeof startHoleDrawForFeature === 'function',
         });
         if (!items.length) return;
 
         renderMenu(contextMenu, items, {
             abortActiveDraw,
-            editFeature:        () => editFeature(feature),
-            assignCategory:     () => assignCategory?.(feature),
-            deleteFeature:      () => deleteFeature(feature),
-            resyncParcelMetadata: () => resyncParcelMetadata?.(feature),
+            editFeature:        () => editFeature(feature, pixel, candidates),
+            assignCategory:     () => assignCategory?.(feature, pixel, candidates),
+            deleteFeature:      () => deleteFeature(feature, pixel, candidates),
+            resyncParcelMetadata: () => resyncParcelMetadata?.(feature, pixel, candidates),
             queryParcelAtPixel: () => queryParcelAtPixel(pixel),
             detectParcelM3AtPixel: () => detectParcelM3AtPixel?.(pixel),
-            refineParcelM3ForFeature: () => refineParcelM3ForFeature?.(feature, pixel),
+            refineParcelM3ForFeature: () => refineParcelM3ForFeature?.(feature, pixel, candidates),
+            startHoleDrawForFeature: () => startHoleDrawForFeature?.(feature, pixel, candidates),
             refreshTileAtPixel: () => refreshTileAtPixel?.(pixel),
             copyCoordinatesAtPixel: () => copyCoordinatesAtPixel?.(pixel),
             exportView,
@@ -152,7 +164,7 @@ export function initContextMenu({
  * Determine which menu items to show based on current application state.
  * @returns {Array<{key: string, action: string, danger?: boolean}>}
  */
-function buildMenuItems({ mode, isDrawing, feature, canQueryParcel, canRefreshWmsTile, canCopyCoordinates, detectParcelM3AtPixel, refineParcelM3ForFeature }) {
+function buildMenuItems({ mode, isDrawing, feature, canQueryParcel, canRefreshWmsTile, canCopyCoordinates, detectParcelM3AtPixel, refineParcelM3ForFeature, startHoleDrawForFeature }) {
     // During active drawing: single "cancel" item
     if (isDrawing && (mode === 'draw' || mode === 'measure-straight' || mode === 'measure-polyline')) {
         return [{ key: 'ctx.cancelDraw', action: 'abortActiveDraw' }];
@@ -166,6 +178,9 @@ function buildMenuItems({ mode, isDrawing, feature, canQueryParcel, canRefreshWm
             const isPolygon = type === 'Polygon' || type === 'MultiPolygon';
             items.push({ key: 'ctx.editFeature',   action: 'editFeature' });
             if (isPolygon) {
+                if (startHoleDrawForFeature) {
+                    items.push({ key: 'ctx.drawHole', action: 'startHoleDrawForFeature' });
+                }
                 items.push({ key: 'ctx.assignCategory', action: 'assignCategory' });
                 if (refineParcelM3ForFeature) {
                     items.push({ key: 'ctx.refineParcelM3', action: 'refineParcelM3ForFeature' });
@@ -194,6 +209,16 @@ function buildMenuItems({ mode, isDrawing, feature, canQueryParcel, canRefreshWm
         return items;
     }
 
+    if (mode === 'edit') {
+        const items = [];
+        const type = feature?.getGeometry?.()?.getType?.();
+        const isPolygon = type === 'Polygon' || type === 'MultiPolygon';
+        if (isPolygon && startHoleDrawForFeature) {
+            items.push({ key: 'ctx.drawHole', action: 'startHoleDrawForFeature' });
+        }
+        return items;
+    }
+
     return [];
 }
 
@@ -216,12 +241,10 @@ function renderMenu(menu, items, actions) {
         btn.className   = 'context-menu-item' + (item.danger ? ' context-menu-item--danger' : '');
         btn.textContent = t(item.key);
         btn.addEventListener('click', () => {
+            menu.hidden = true;
             Promise.resolve(actions[item.action]?.())
                 .catch((error) => {
                     console.error('Context menu action failed:', item.action, error);
-                })
-                .finally(() => {
-                    menu.hidden = true;
                 });
         });
         li.appendChild(btn);

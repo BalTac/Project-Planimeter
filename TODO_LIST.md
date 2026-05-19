@@ -95,7 +95,7 @@
 - [x] Pannello Operativo: sezione "Assegnazione categoria" con select dominio + dropdown categoria + campi fields dinamici per la feature selezionata.
 - [x] Feedback visivo immediato: al cambio categoria la feature si ri-colora senza reload pagina.
 - [x] Filtro visibilità categorie: toggle per nascondere/mostrare categorie specifiche nella mappa e nella tabella riepilogo.
-- [ ] Export bundle: includere report semantico per categoria nel pacchetto TIFF+GeoJSON+metadata.
+- [x] Export bundle: includere report semantico per categoria nel pacchetto TIFF+GeoJSON+metadata.
 
 ### P6 — UX e prodotto
 - [x] Aggiungere refresh tile WMS singolo da menu contestuale (tasto destro, modalità Navigate).
@@ -104,8 +104,36 @@
 - [x] Aggiungere widget coordinate live in modalità Navigate e voce menu contestuale per copia coordinate.
 - [ ] Migliorare UX mobile: toggle snapping dedicato (senza Ctrl).
 - [x] Migliorare UX edit vertici: marker su tutti i vertici (vuoto/non selezionato, pieno/selezionato), rimozione vertice opzionale via tasto destro o Canc con raddrizzamento automatico contorno.
+- [x] Evolvere UX cancellazione vertici: multi-selezione Ctrl+click, menu contestuale vertice con `Delete selected` senza confirm e `Delete all` con warning flottante Accept/Reject; regole topologiche inner ring (riempimento) / outer ring (eliminazione feature).
+- [x] Fix overlap edit-click: con feature selezionata, click su vertice in hover priorita alla selezione vertice (anche Ctrl multi-select) senza switch automatico alla feature sottostante.
 - [ ] Aggiungere tema chiaro opzionale.
 - [ ] Aggiungere mini guida interattiva primo avvio.
+
+### P0.5 — Smart Hole Tool (inner ring persistente)
+- [x] Definire policy unica overlap per target feature: considerare solo layer visibili; layer non visibili trattati come inesistenti.
+- [x] Applicare la policy overlap a menu contestuale "Modifica feature" e a cambio poligono durante edit.
+- [x] In caso overlap cross-layer visibile, chiedere esplicitamente su quale layer/feature operare.
+- [x] Aggiungere voce contestuale "Draw hole" disponibile solo in Edit mode con feature poligonale selezionata.
+- [x] Implementare draw del hole con chiusura via doppio click o Enter (nessun commit immediato).
+- [x] Esporre `Draw hole` anche in Navigate su feature poligonali: click destro -> `Draw hole` -> switch automatico a Edit + attivazione hole tool.
+- [x] Aggiungere preview stile refine con diff grafica + metriche (area prima, area hole, area dopo, delta) e azioni Accetta/Rifiuta.
+- [x] Su Accetta: convertire il draft in inner ring persistente nel GeoJSON; su Rifiuta: rollback completo.
+- [ ] Supportare edit manuale successivo dei vertici del ring interno come per l'outer ring.
+- [x] Rimosso vincolo v1 no-multi-hole: Draw Hole ora supporta piu inner ring sulla stessa feature (append dei ring esistenti).
+- [x] Aggiungere regressione E2E Playwright su caso reale parcel 333/117: accetta hole e verifica pulizia overlay draft + persistenza inner ring.
+- [x] Aggiungere test E2E Playwright negativo: hole fuori perimetro -> reject, nessun preview pending, nessun inner ring persistito.
+- [ ] Validare manualmente i casi: overlap due layer visibili, overlap con layer nascosto, cambio target in edit, export/import GeoJSON con inner ring.
+
+### P0.6 — Interaction consistency + overlap boolean workflow
+- [ ] Draw Hole sticky target: in Edit/Navigate mostrare `Draw hole` anche fuori pixel feature quando esiste una feature poligonale selezionata; target resta sempre la feature selezionata.
+- [ ] Draw Hole warning flottante contestuale: se click destro fuori target o se draft esce dal perimetro target, spiegare regola operativa (selezionare prima area target; non si puo disegnare fuori target).
+- [ ] Edit mode UX: click sinistro su area non disegnata -> switch automatico a Navigate mode.
+- [ ] Draw overlap guard (stesso layer): senza CTRL su finalize emit warning Accept/Reject; Reject annulla draft.
+- [ ] Draw overlap override con CTRL: se CTRL premuto durante draw/finalize, aprire preview+diff con azioni `Accept` / `Merge` / `Subtract` / `Reject`.
+- [ ] Boolean ops semantica v1 (solo stesso layer): `Merge` = union espansiva, `Subtract` = contrazione area target in overlap, `Accept` = keep-as-drawn.
+- [ ] Riuso pannello preview tipo Draw Hole/M3 per operazioni overlap (metriche prima/dopo/diff + rollback completo su Reject).
+- [ ] ESC global policy: ESC cancella tool attivo con rollback; ESC senza tool attivi forza Navigate; ESC ripetuto in Navigate resta no-op.
+- [ ] Tool Selection esplicito (fase successiva): selezione target+operanda in Edit per lanciare Merge/Subtract con stessa preview diff.
 
 ### DM4 Continuation — Gruppo C (Pertinenze Layer) M3 Integration
 **Background**: Dual VectorSource architecture completed (2026-05-15). User-drawn areas + M3-detected cadastral boundaries now live in separate layers with independent persistence, interaction sets, and toolbar selector.

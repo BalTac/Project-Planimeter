@@ -2,6 +2,47 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [2026-05-19] — Draw Hole: supporto multi inner ring sulla stessa feature
+
+### Changed
+- [src/planimeter.js](src/planimeter.js) `startHoleDrawForFeature` non blocca piu le feature con inner ring esistente: rimosso il gate `hasExistingInnerRing`.
+- [src/planimeter.js](src/planimeter.js) `finalizeHoleDraft` ora appende il nuovo hole ai ring gia presenti (`[outer, ...existingHoles, newHole]`) invece di sostituire la geometria con un solo hole.
+- [src/planimeter.js](src/planimeter.js) per `MultiPolygon` preserva anche gli altri poligoni del multipoligono durante l'append del nuovo hole.
+- Validazione hole aggiornata: controllo inside usa poligono con outer + hole gia esistenti per evitare inserimenti dentro buchi gia presenti.
+
+### Validation
+- `node --check src/planimeter.js`
+- `python -m pytest tests/test_e2e_p0_extended.py -k "draw_hole" -q` -> `3 passed`.
+
+## [2026-05-19] — Edit overlap: priorita selezione vertice sulla feature corrente
+
+### Fixed
+- [src/planimeter.js](src/planimeter.js) in modalita `edit`, il click sinistro ora prova prima la selezione vertice sulla feature gia selezionata; solo se nessun vertice e colpito valuta lo switch target su feature sovrapposte.
+- Risolto il caso non atteso in overlap dove il click su vertice in hover poteva selezionare la feature sottostante invece del vertice corrente.
+
+### Validation
+- `node --check src/planimeter.js`
+- `python -m pytest tests/test_e2e_p0_extended.py -k "draw_hole" -q` -> `3 passed`.
+
+## [2026-05-19] — Draw Hole disponibile anche da Navigate
+
+### Changed
+- [src/ui/context-menu.js](src/ui/context-menu.js) in modalità `navigate`, su feature poligonali, il menu contestuale ora include anche `Draw hole (inner ring)` oltre a `Edit feature`.
+- L'azione riusa il flusso esistente `startHoleDrawForFeature` in [src/planimeter.js](src/planimeter.js), quindi da Navigate esegue automaticamente switch a `edit` e attiva il tool hole draw.
+
+### Validation
+- [tests/test_e2e_p0_extended.py](tests/test_e2e_p0_extended.py) nuovo test `test_context_menu_draw_hole_available_in_navigate_and_switches_mode`.
+- Esecuzione mirata: `python -m pytest tests/test_e2e_p0_extended.py -k "navigate_and_switches_mode" -q` -> `1 passed`.
+
+## [2026-05-19] — Allineamento docs/test setup e dipendenze Python
+
+### Changed
+- [README.md](README.md) aggiornato requisito runtime Python da `3.8+` a `3.10+`, allineato alla sintassi effettiva usata in [server.py](server.py).
+- [README.md](README.md) sezione test aggiornata con comandi distinti per `unittest`, suite `pytest`, E2E Playwright e nota setup browser (`python -m playwright install chromium`).
+- [TODO_LIST.md](TODO_LIST.md) risolto punto duplicato su export bundle semantic report: voce ora marcata completata in coerenza con implementazione già presente.
+- [.gitignore](.gitignore) aggiunto `app.js` (entrypoint legacy non usato) alla lista ignore.
+- [requirements.txt](requirements.txt) completato con dipendenze test realmente usate (`pytest`, `playwright`, `pytest-playwright`) oltre allo stack runtime (`Pillow`, `opencv-python`, `numpy`).
+
 ## [2026-05-19] — Frontend migrato a `/parcel-geometry-m3-trace`
 
 ### Changed

@@ -12,6 +12,7 @@ import OLStyle from 'ol/style/Style.js';
 import Fill from 'ol/style/Fill.js';
 import Stroke from 'ol/style/Stroke.js';
 import CircleStyle from 'ol/style/Circle.js';
+import Draw from 'ol/interaction/Draw.js';
 
 import { createInitialState }            from './core/state.js';
 import { buildLayers }                   from './map/layers.js';
@@ -41,6 +42,10 @@ import { buildDslPayload } from './dsl/schema.js';
 const BASE_LAYER_KEYS = ['sat', 'openTopoMap', 'esriTopo', 'esriRelief'];
 const ADMIN_LAYER_KEYS = ['osm', 'catasto'];
 const DSL_UNASSIGNED_CATEGORY_KEY = '__unassigned__';
+const HOLE_DRAW_STYLE = new OLStyle({
+    fill: new Fill({ color: 'rgba(255,255,255,0.26)' }),
+    stroke: new Stroke({ color: '#f6d365', lineDash: [8, 6], width: 2.2 }),
+});
 
 export default class Planimeter {
     constructor() {
@@ -88,6 +93,7 @@ export default class Planimeter {
         this.m3BusyActive = false;
         this.m3BusyMessage = '';
         this.mapTileLoadCount = 0;
+        this.pendingVertexDeleteAll = null;
 
         this.vectorSource = new VectorSource();
         this.pertenenzaSource = new VectorSource();
@@ -112,12 +118,22 @@ export default class Planimeter {
                 }),
             }),
         });
+        this.holeDraftSource = new VectorSource();
+        this.holeDraftLayer = new VectorLayer({
+            source: this.holeDraftSource,
+            zIndex: 41,
+            updateWhileAnimating: true,
+            updateWhileInteracting: true,
+            style: HOLE_DRAW_STYLE,
+        });
         this.initMap();
+        this.map.addLayer(this.holeDraftLayer);
 
         // ── Interactions ──────────────────────────────────────────────────────
         this.allInteractions = buildInteractions(this.vectorSource, this.pertenenzaSource, this.layers.vector, this.layers.pertenenza);
         this.setActiveInteractions();
         this.addInteractionsToMap();
+        this.initHoleDrawInteraction();
         this.bindInteractionEvents();
 
         // ── UI bindings ───────────────────────────────────────────────────────
@@ -131,15 +147,17 @@ export default class Planimeter {
             abortActiveDraw: () => this.abortActiveDraw(),
             canQueryParcel:  () => this.canQueryParcelFromContextMenu(),
             canRefreshWmsTile: () => this.canRefreshWmsTile(),
-            editFeature:     (feature) => this.editFeatureFromContext(feature),
-            assignCategory:  (feature) => this.openCategoryAssignmentFromContext(feature),
-            deleteFeature:   (feature) => this.deleteFeatureFromContext(feature),
-            resyncParcelMetadata: (feature) => this.resyncParcelMetadataForFeature(feature),
+            editFeature:     (feature, pixel, candidates) => this.editFeatureFromContext(feature, pixel, candidates),
+            assignCategory:  (feature, pixel, candidates) => this.openCategoryAssignmentFromContext(feature, pixel, candidates),
+            deleteFeature:   (feature, pixel, candidates) => this.deleteFeatureFromContext(feature, pixel, candidates),
+            resyncParcelMetadata: (feature, pixel, candidates) => this.resyncParcelMetadataForFeature(feature, pixel, candidates),
             queryParcelAtPixel: (pixel) => this.fetchParcelInfoAtPixel(pixel),
             detectParcelM3AtPixel: (pixel) => this.detectParcelM3AtPixel(pixel),
-            refineParcelM3ForFeature: (feature, pixel) => this.refineParcelM3ForFeature(feature, pixel),
+            refineParcelM3ForFeature: (feature, pixel, candidates) => this.refineParcelM3ForFeature(feature, pixel, candidates),
+            startHoleDrawForFeature: (feature, pixel, candidates) => this.startHoleDrawForFeature(feature, pixel, candidates),
             refreshTileAtPixel: (pixel) => this.refreshTileAtPixel(pixel),
             copyCoordinatesAtPixel: (pixel) => this.copyCoordinatesAtPixel(pixel),
+            resolveContextFeaturesAtPixel: (pixel) => this.resolveContextFeaturesAtPixel(pixel),
             exportView:      () => this.exportViewSnapshot(),
             exportSelection: () => this.startSelectionExportMode(),
             exportAreas:     () => this.exportFeatures(),
@@ -193,6 +211,7 @@ export default class Planimeter {
         this.selectionExport = null;
         this.dragPanInteractions = null;
         this.pendingM3Refine = null;
+        this.pendingHoleOperation = null;
     }
 
     // ── Interaction helpers ─────────────────────────────────────────────────────
@@ -257,6 +276,90 @@ export default class Planimeter {
         this.setActiveInteractions();
         this.applyLayerGroupSelection();
         this.persistPreferences();
+    }
+
+    isOverlayLayerVisible(layerKey) {
+        if (layerKey === 'pertenenze') {
+            return this.state.pertenenzeVisible && Boolean(this.layers.pertenenza?.getVisible?.());
+        }
+        return this.state.userAreasVisible && Boolean(this.layers.vector?.getVisible?.());
+    }
+
+    getVisibleFeatureCandidatesAtPixel(pixel) {
+        if (!Array.isArray(pixel) || pixel.length < 2) return [];
+
+        const seen = new Set();
+        const candidates = [];
+        this.map.forEachFeatureAtPixel(pixel, (feature) => {
+            if (!feature) return undefined;
+
+            const overlayLayer = this.getFeatureOverlayLayer(feature);
+            if (!this.isOverlayLayerVisible(overlayLayer)) return undefined;
+
+            const featureId = feature.getId?.() ?? feature.ol_uid;
+            if (seen.has(featureId)) return undefined;
+
+            seen.add(featureId);
+            candidates.push(feature);
+            return undefined;
+        });
+
+        return candidates;
+    }
+
+    resolveContextFeaturesAtPixel(pixel) {
+        const candidates = this.getVisibleFeatureCandidatesAtPixel(pixel);
+        return {
+            feature: candidates[0] ?? null,
+            candidates,
+        };
+    }
+
+    chooseContextTargetFeature(primaryFeature, pixel, candidates, promptLayerChoice = false) {
+        const resolvedCandidates = Array.isArray(candidates) && candidates.length
+            ? candidates.filter((f) => this.isOverlayLayerVisible(this.getFeatureOverlayLayer(f)))
+            : this.getVisibleFeatureCandidatesAtPixel(pixel);
+
+        if (resolvedCandidates.length === 0) return primaryFeature ?? null;
+        if (resolvedCandidates.length === 1) return resolvedCandidates[0];
+
+        const layers = [...new Set(resolvedCandidates.map((f) => this.getFeatureOverlayLayer(f)))];
+        if (layers.length <= 1) return resolvedCandidates[0];
+
+        if (!promptLayerChoice) {
+            const preferred = resolvedCandidates.find((f) => this.getFeatureOverlayLayer(f) === this.state.activeEditingLayer);
+            return preferred ?? resolvedCandidates[0];
+        }
+
+        const defaultChoice = this.state.activeEditingLayer === 'pertenenze' ? '2' : '1';
+        const layerChoice = window.prompt(t('prompt.overlap.pickLayer'), defaultChoice);
+        if (!layerChoice) return null;
+
+        const normalized = String(layerChoice).trim();
+        const targetLayer = (normalized === '2' || /^p/i.test(normalized)) ? 'pertenenze' : 'user';
+        return resolvedCandidates.find((f) => this.getFeatureOverlayLayer(f) === targetLayer) ?? resolvedCandidates[0];
+    }
+
+    switchEditTargetAtPixel(pixel) {
+        const candidates = this.getVisibleFeatureCandidatesAtPixel(pixel);
+        if (candidates.length === 0) return false;
+
+        const selected = this.state.selectedFeature;
+        if (selected && candidates.includes(selected)) return false;
+
+        const target = this.chooseContextTargetFeature(candidates[0], pixel, candidates, true);
+        if (!target || target === selected) return false;
+
+        this.clearSelectedEditVertices();
+        this.setEditingLayer(this.getFeatureOverlayLayer(target));
+        this.state.selectedFeature = target;
+        this.getActiveInteractions().select.getFeatures().clear();
+        this.getActiveInteractions().select.getFeatures().push(target);
+        this.getLayerForFeature(target).changed();
+        this.refreshEditVertexOverlay();
+        this.updateSummary();
+        this.setToolbarMessage(this.formatSelectedFeatureMessage(target));
+        return true;
     }
 
     // ── DOM helpers ─────────────────────────────────────────────────────────────
@@ -330,9 +433,16 @@ export default class Planimeter {
             m3RefineAfterArea:         document.getElementById('m3-refine-after-area'),
             m3RefineAfterPerimeter:    document.getElementById('m3-refine-after-perimeter'),
             m3RefineAfterVertices:     document.getElementById('m3-refine-after-vertices'),
+            m3RefineDiffAreaLabel:     document.getElementById('m3-refine-diff-area-label'),
+            m3RefineDiffRatioLabel:    document.getElementById('m3-refine-diff-ratio-label'),
+            m3RefineDiffPerimeterLabel:document.getElementById('m3-refine-diff-perimeter-label'),
             m3RefineDiffArea:          document.getElementById('m3-refine-diff-area'),
             m3RefineDiffRatio:         document.getElementById('m3-refine-diff-ratio'),
             m3RefineDiffPerimeter:     document.getElementById('m3-refine-diff-perimeter'),
+            m3RefineVisualSection:     document.getElementById('m3-refine-visual-section'),
+            m3RefineVisualTitle:       document.getElementById('m3-refine-visual-title'),
+            m3RefineSummarySection:    document.getElementById('m3-refine-summary-section'),
+            m3RefineSummaryTitle:      document.getElementById('m3-refine-summary-title'),
             m3RefineSnapAccepted:      document.getElementById('m3-refine-snap-accepted'),
             m3RefineSnapRejected:      document.getElementById('m3-refine-snap-rejected'),
             m3RefineSnapKept:          document.getElementById('m3-refine-snap-kept'),
@@ -342,6 +452,10 @@ export default class Planimeter {
             m3RefineRejectedWeakGain:  document.getElementById('m3-refine-rejected-weak-gain'),
             m3RefineAcceptButton:      document.getElementById('btn-m3-refine-accept'),
             m3RefineRejectButton:      document.getElementById('btn-m3-refine-reject'),
+            vertexDeleteAllWarning:    document.getElementById('vertex-delete-all-warning'),
+            vertexDeleteAllWarningMessage: document.getElementById('vertex-delete-all-warning-message'),
+            btnVertexDeleteAllAccept:  document.getElementById('btn-vertex-delete-all-accept'),
+            btnVertexDeleteAllReject:  document.getElementById('btn-vertex-delete-all-reject'),
             cacheStatsDisplay:         document.getElementById('cache-stats-display'),
             btnCacheApply:             document.getElementById('btn-cache-apply'),
             btnCacheClear:             document.getElementById('btn-cache-clear'),
@@ -432,6 +546,201 @@ export default class Planimeter {
         addSet(this.allInteractions.pertenenze);
     }
 
+    initHoleDrawInteraction() {
+        this.holeDrawInteraction = new Draw({
+            source: this.holeDraftSource,
+            type: 'Polygon',
+            stopClick: true,
+            style: HOLE_DRAW_STYLE,
+        });
+        this.holeDrawInteraction.setActive(false);
+
+        this.holeDrawInteraction.on('drawstart', () => {
+            this.state.isDrawing = true;
+            this.holeDraftSource.clear();
+            this.setToolbarMessage(t('hole.draw.inProgress'));
+        });
+
+        this.holeDrawInteraction.on('drawabort', () => {
+            this.state.isDrawing = false;
+            this.setHoleDrawActive(false);
+            this.setToolbarMessage(t('hole.draw.cancelled'));
+        });
+
+        this.holeDrawInteraction.on('drawend', (ev) => {
+            this.state.isDrawing = false;
+            this.finalizeHoleDraft(ev.feature);
+        });
+
+        this.map.addInteraction(this.holeDrawInteraction);
+    }
+
+    setHoleDrawActive(active) {
+        if (!this.holeDrawInteraction) return;
+        this.holeDrawInteraction.setActive(Boolean(active));
+        const ix = this.getActiveInteractions();
+        ix.select.setActive(!active && (this.state.mode === 'edit' || this.state.mode === 'delete' || this.state.mode === 'navigate'));
+        ix.modify.setActive(!active && this.state.mode === 'edit');
+    }
+
+    hasExistingInnerRing(feature) {
+        if (!this.isPolygonFeature(feature)) return false;
+        const geometry = feature.getGeometry();
+        const type = geometry?.getType?.();
+        const coords = geometry?.getCoordinates?.();
+        if (type === 'Polygon') {
+            return Array.isArray(coords) && coords.length > 1;
+        }
+        if (type === 'MultiPolygon') {
+            if (!Array.isArray(coords) || !coords.length) return false;
+            return coords.some((poly) => Array.isArray(poly) && poly.length > 1);
+        }
+        return false;
+    }
+
+    startHoleDrawForFeature(feature, pixel, candidates) {
+        const target = this.chooseContextTargetFeature(feature, pixel, candidates, true);
+        if (!this.isPolygonFeature(target)) return;
+
+        this.rejectPendingM3Refine(false);
+        this.holeDraftSource.clear();
+        this.pendingHoleOperation = {
+            feature: target,
+            overlayLayer: this.getFeatureOverlayLayer(target),
+            originalCoordinates: this.cloneGeometryCoordinates(target.getGeometry()),
+        };
+
+        this.setEditingLayer(this.getFeatureOverlayLayer(target));
+        this.setMode('edit');
+        this.state.selectedFeature = target;
+        this.clearSelectedEditVertices();
+        this.getActiveInteractions().select.getFeatures().clear();
+        this.getActiveInteractions().select.getFeatures().push(target);
+        this.refreshEditVertexOverlay();
+        this.setHoleDrawActive(true);
+        this.setToolbarMessage(t('hole.draw.start'));
+    }
+
+    finalizeHoleDraft(draftFeature) {
+        const op = this.pendingHoleOperation;
+        this.setHoleDrawActive(false);
+        // Draw may append the finished feature to source after drawend callback.
+        // Clear once now and once on next tick to avoid lingering dashed draft.
+        this.holeDraftSource.clear();
+        window.setTimeout(() => this.holeDraftSource.clear(), 0);
+        if (!op || !draftFeature) {
+            return;
+        }
+
+        const holeGeometry = draftFeature.getGeometry();
+        const holeCoords = holeGeometry?.getCoordinates?.();
+        const holeRing = Array.isArray(holeCoords?.[0]) ? holeCoords[0] : null;
+        if (!Array.isArray(holeRing) || holeRing.length < 4) {
+            this.pendingHoleOperation = null;
+            this.setToolbarMessage(t('hole.error.invalid'));
+            return;
+        }
+
+        const feature = op.feature;
+        const geometry = feature.getGeometry();
+        const type = geometry?.getType?.();
+        const originalCoordinates = op.originalCoordinates;
+        let existingHolesForValidation = [];
+
+        const projection = this.view.getProjection();
+        const beforeAreaM2 = calculateArea(feature, projection);
+        const beforePerimeterM = calculatePerimeter(feature, projection);
+        const beforeVertices = this.countFeatureVertices(feature);
+        const beforePrimaryRing = this.extractPrimaryOuterRingFromCoordinates(originalCoordinates, type);
+        let outerRingForValidation = null;
+
+        if (type === 'Polygon') {
+            const rings = Array.isArray(originalCoordinates) ? originalCoordinates : [];
+            const outer = rings[0];
+            const existingHoles = rings.slice(1).filter((ring) => Array.isArray(ring));
+            if (!Array.isArray(outer)) {
+                this.pendingHoleOperation = null;
+                this.setToolbarMessage(t('hole.error.invalid'));
+                return;
+            }
+            outerRingForValidation = outer;
+            existingHolesForValidation = existingHoles;
+            geometry.setCoordinates([outer, ...existingHoles, holeRing]);
+        } else if (type === 'MultiPolygon') {
+            const polygons = Array.isArray(originalCoordinates) ? originalCoordinates : [];
+            const firstPoly = polygons[0];
+            const outer = firstPoly?.[0];
+            const existingHoles = Array.isArray(firstPoly) ? firstPoly.slice(1).filter((ring) => Array.isArray(ring)) : [];
+            if (!Array.isArray(outer)) {
+                this.pendingHoleOperation = null;
+                this.setToolbarMessage(t('hole.error.invalid'));
+                return;
+            }
+            outerRingForValidation = outer;
+            existingHolesForValidation = existingHoles;
+            const updatedFirstPolygon = [outer, ...existingHoles, holeRing];
+            geometry.setCoordinates([updatedFirstPolygon, ...polygons.slice(1)]);
+        }
+
+        const validationPolygon = Array.isArray(outerRingForValidation)
+            ? new Polygon([outerRingForValidation, ...existingHolesForValidation])
+            : null;
+        const holeInside = validationPolygon
+            ? holeRing.slice(0, -1).every((pt) => Array.isArray(pt) && pt.length >= 2 && validationPolygon.intersectsCoordinate(pt))
+            : false;
+        if (!holeInside) {
+            geometry.setCoordinates(originalCoordinates);
+            this.pendingHoleOperation = null;
+            this.setToolbarMessage(t('hole.error.outside'));
+            return;
+        }
+
+        const areaM2 = calculateArea(feature, projection);
+        const perimeterM = calculatePerimeter(feature, projection);
+        const vertexCount = Math.max(0, this.countFeatureVertices(feature));
+        const holeAreaM2 = Math.max(0, beforeAreaM2 - areaM2);
+        if (!(holeAreaM2 > 1e-4)) {
+            geometry.setCoordinates(originalCoordinates);
+            this.pendingHoleOperation = null;
+            this.setToolbarMessage(t('hole.error.invalid'));
+            return;
+        }
+        const deltaAreaM2 = areaM2 - beforeAreaM2;
+        const deltaAreaRatio = beforeAreaM2 > 1e-9 ? (deltaAreaM2 / beforeAreaM2) : 0;
+        const deltaPerimeterM = perimeterM - beforePerimeterM;
+
+        this.pendingM3Refine = {
+            feature,
+            originalCoordinates,
+            overlayLayer: op.overlayLayer,
+            operationType: 'hole',
+            report: {
+                beforeAreaM2,
+                beforePerimeterM,
+                beforeVertices,
+                afterAreaM2: areaM2,
+                afterPerimeterM: perimeterM,
+                afterVertices: vertexCount,
+                deltaAreaM2,
+                deltaAreaRatio,
+                deltaPerimeterM,
+                holeAreaM2,
+                holeRing,
+                beforePrimaryRing,
+                afterPrimaryRing: holeRing,
+                noVisibleChange: false,
+                debug: {},
+            },
+        };
+
+        this.pendingHoleOperation = null;
+        this.getLayerForFeature(feature).changed();
+        this.map.renderSync();
+        this.updateSummary();
+        this.renderM3RefineReport();
+        this.setToolbarMessage(t('hole.preview.ready'));
+    }
+
     // ── Interaction events ───────────────────────────────────────────────────────
 
     bindInteractionEvents() {
@@ -444,40 +753,39 @@ export default class Planimeter {
 
         this.map.on('singleclick', (event) => {
             if (this.state.mode !== 'edit') return;
-            if (!this.isPolygonFeature(this.state.selectedFeature)) return;
 
-            const picked = this.findNearestEditableVertex(this.state.selectedFeature, event.coordinate, 10);
-            if (!picked) {
-                this.state.selectedEditVertex = null;
-                this.layers.vector.changed();
-                this.layers.pertenenza.changed();
-                this.refreshEditVertexOverlay();
-                return;
+            // In overlap scenarios, keep vertex editing stable on current feature:
+            // if click is on a vertex of selected feature, select vertex first
+            // and do not switch to an underlying/adjacent feature.
+            if (this.isPolygonFeature(this.state.selectedFeature)) {
+                const picked = this.findNearestEditableVertex(this.state.selectedFeature, event.coordinate, 10);
+                if (picked) {
+                    this.updateVertexSelectionFromPicked(picked, Boolean(event.originalEvent?.ctrlKey));
+                    this.layers.vector.changed();
+                    this.layers.pertenenza.changed();
+                    this.refreshEditVertexOverlay();
+                    return;
+                }
             }
 
-            this.state.selectedEditVertex = {
-                featureId: this.state.selectedFeature.get('featureId'),
-                overlayLayer: this.getFeatureOverlayLayer(this.state.selectedFeature),
-                polygonIndex: picked.polygonIndex,
-                ringIndex: picked.ringIndex,
-                vertexIndex: picked.vertexIndex,
-            };
+            const switched = this.switchEditTargetAtPixel(event.pixel);
+            if (switched) return;
+
+            if (!this.isPolygonFeature(this.state.selectedFeature)) return;
+
+            this.clearSelectedEditVertices();
             this.layers.vector.changed();
             this.layers.pertenenza.changed();
             this.refreshEditVertexOverlay();
         });
 
-        this.map.getViewport().addEventListener('contextmenu', (event) => {
-            if (this.state.mode !== 'edit') return;
-            if (!this.state.selectedEditVertex) return;
-            if (!this.isPolygonFeature(this.state.selectedFeature)) return;
-
-            event.preventDefault();
-            event.stopPropagation();
-            this.requestDeleteSelectedVertex();
-        });
-
         document.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter' && this.holeDrawInteraction?.getActive?.()) {
+                this.holeDrawInteraction.finishDrawing();
+                ev.preventDefault();
+                return;
+            }
+
             if (ev.ctrlKey && !this.state.isCtrlPressed) {
                 this.state.isCtrlPressed = true;
                 this.refreshSnapState();
@@ -586,13 +894,7 @@ export default class Planimeter {
                 if (Array.isArray(anchor) && anchor.length >= 2) {
                     const picked = this.findNearestEditableVertex(this.state.selectedFeature, anchor, 14);
                     if (picked) {
-                        this.state.selectedEditVertex = {
-                            featureId: this.state.selectedFeature.get('featureId'),
-                            overlayLayer: this.getFeatureOverlayLayer(this.state.selectedFeature),
-                            polygonIndex: picked.polygonIndex,
-                            ringIndex: picked.ringIndex,
-                            vertexIndex: picked.vertexIndex,
-                        };
+                        this.updateVertexSelectionFromPicked(picked, false);
                         this.layers.vector.changed();
                         this.layers.pertenenza.changed();
                         this.refreshEditVertexOverlay();
@@ -644,6 +946,14 @@ export default class Planimeter {
 
         this.elements.m3RefineRejectButton?.addEventListener('click', () => {
             this.rejectPendingM3Refine();
+        });
+
+        this.elements.btnVertexDeleteAllAccept?.addEventListener('click', () => {
+            this.confirmDeleteAllSelectedVertices();
+        });
+
+        this.elements.btnVertexDeleteAllReject?.addEventListener('click', () => {
+            this.cancelDeleteAllSelectedVertices();
         });
 
         document.addEventListener('pointerdown', (ev) => {
@@ -777,10 +1087,13 @@ export default class Planimeter {
         }
 
         this.state.mode = mode;
-        if (mode !== 'edit' && this.state.selectedEditVertex) {
-            this.state.selectedEditVertex = null;
+        if (mode !== 'edit' && this.getSelectedEditVertices().length) {
+            this.clearSelectedEditVertices();
             this.layers.vector.changed();
             this.layers.pertenenza.changed();
+        }
+        if (mode !== 'edit') {
+            this.hideVertexDeleteAllWarning();
         }
 
         if (this.state.drawLockTimeoutId) {
@@ -889,7 +1202,7 @@ export default class Planimeter {
 
         if (!feature) {
             this.state.selectedFeature = null;
-            this.state.selectedEditVertex = null;
+            this.clearSelectedEditVertices();
             this.layers.vector.changed();
             this.layers.pertenenza.changed();
             this.refreshEditVertexOverlay();
@@ -905,7 +1218,7 @@ export default class Planimeter {
         }
 
         this.state.selectedFeature = feature;
-        this.state.selectedEditVertex = null;
+        this.clearSelectedEditVertices();
         this.layers.vector.changed();
         this.layers.pertenenza.changed();
         this.refreshEditVertexOverlay();
@@ -915,7 +1228,8 @@ export default class Planimeter {
 
     clearSelection() {
         this.state.selectedFeature = null;
-        this.state.selectedEditVertex = null;
+        this.clearSelectedEditVertices();
+        this.hideVertexDeleteAllWarning();
         this.allInteractions.user.select.getFeatures().clear();
         this.allInteractions.pertenenze.select.getFeatures().clear();
         this.layers.vector.changed();
@@ -1024,6 +1338,65 @@ export default class Planimeter {
         feature.set('parcel_label', String(parcel.label || '').trim() || null);
     }
 
+    getSelectedEditVertices() {
+        if (!Array.isArray(this.state.selectedEditVertices)) {
+            this.state.selectedEditVertices = [];
+        }
+        return this.state.selectedEditVertices;
+    }
+
+    setSelectedEditVertices(vertices) {
+        const normalized = Array.isArray(vertices) ? vertices.filter(Boolean) : [];
+        this.state.selectedEditVertices = normalized;
+        this.state.selectedEditVertex = normalized[0] ?? null;
+    }
+
+    clearSelectedEditVertices() {
+        this.setSelectedEditVertices([]);
+    }
+
+    isSameVertexDescriptor(a, b) {
+        if (!a || !b) return false;
+        return a.overlayLayer === b.overlayLayer
+            && a.polygonIndex === b.polygonIndex
+            && a.ringIndex === b.ringIndex
+            && a.vertexIndex === b.vertexIndex;
+    }
+
+    buildVertexDescriptor(feature, picked) {
+        if (!feature || !picked) return null;
+        return {
+            featureId: feature.get('featureId'),
+            overlayLayer: this.getFeatureOverlayLayer(feature),
+            polygonIndex: picked.polygonIndex,
+            ringIndex: picked.ringIndex,
+            vertexIndex: picked.vertexIndex,
+        };
+    }
+
+    updateVertexSelectionFromPicked(picked, additive = false) {
+        const feature = this.state.selectedFeature;
+        if (!feature || !picked) return false;
+
+        const descriptor = this.buildVertexDescriptor(feature, picked);
+        if (!descriptor) return false;
+
+        if (!additive) {
+            this.setSelectedEditVertices([descriptor]);
+            return true;
+        }
+
+        const current = [...this.getSelectedEditVertices()];
+        const existingIndex = current.findIndex((item) => this.isSameVertexDescriptor(item, descriptor));
+        if (existingIndex >= 0) {
+            current.splice(existingIndex, 1);
+        } else {
+            current.push(descriptor);
+        }
+        this.setSelectedEditVertices(current);
+        return true;
+    }
+
     refreshEditVertexOverlay() {
         this.editVertexSource.clear();
 
@@ -1047,13 +1420,12 @@ export default class Planimeter {
                     const overlayFeature = new Feature({
                         geometry: new PointGeom(coord),
                     });
-                    const isSelectedVertex = Boolean(
-                        this.state.selectedEditVertex
-                        && this.state.selectedEditVertex.featureId === featureId
-                        && this.state.selectedEditVertex.polygonIndex === polygonIndex
-                        && this.state.selectedEditVertex.ringIndex === ringIndex
-                        && this.state.selectedEditVertex.vertexIndex === vertexIndex,
-                    );
+                    const isSelectedVertex = this.getSelectedEditVertices().some((selected) => (
+                        selected.featureId === featureId
+                        && selected.polygonIndex === polygonIndex
+                        && selected.ringIndex === ringIndex
+                        && selected.vertexIndex === vertexIndex
+                    ));
                     overlayFeature.set('vertexSelected', isSelectedVertex);
                     this.editVertexSource.addFeature(overlayFeature);
                 }
@@ -1197,67 +1569,225 @@ export default class Planimeter {
 
     requestDeleteSelectedVertex() {
         if (this.state.mode !== 'edit') return false;
-        if (!this.state.selectedFeature || !this.state.selectedEditVertex) {
+        if (!this.state.selectedFeature || this.getSelectedEditVertices().length === 0) {
             this.setToolbarMessage(t('msg.vertexDeleteNoSel'));
             return false;
         }
-
-        const confirmed = window.confirm(t('confirm.deleteVertex'));
-        if (!confirmed) return true;
-
-        const deleted = this.deleteSelectedVertexFromFeature();
-        if (!deleted) {
+        const result = this.deleteSelectedVerticesFromFeature();
+        if (!result.deletedAny) {
             this.setToolbarMessage(t('msg.vertexDeleteMin'));
             return true;
         }
 
-        this.setToolbarMessage(t('msg.vertexDeleted'));
+        if (result.featureDeleted) {
+            this.setToolbarMessage(t('msg.featureDeletedByVertices'));
+        } else if (result.innerRingRemoved) {
+            this.setToolbarMessage(t('msg.vertexRingRemoved'));
+        } else if (result.deletedCount > 1) {
+            this.setToolbarMessage(t('msg.vertexDeletedMany'));
+        } else {
+            this.setToolbarMessage(t('msg.vertexDeleted'));
+        }
         return true;
     }
 
-    deleteSelectedVertexFromFeature() {
+    deleteSelectedVerticesFromFeature() {
         const feature = this.state.selectedFeature;
-        const sel = this.state.selectedEditVertex;
-        if (!feature || !sel || !this.isPolygonFeature(feature)) return false;
+        const selected = this.getSelectedEditVertices();
+        if (!feature || !selected.length || !this.isPolygonFeature(feature)) {
+            return { deletedAny: false, deletedCount: 0, innerRingRemoved: false, featureDeleted: false };
+        }
+
+        const groups = new globalThis.Map();
+        for (const vertex of selected) {
+            const key = `${vertex.polygonIndex}:${vertex.ringIndex}`;
+            if (!groups.has(key)) {
+                groups.set(key, {
+                    polygonIndex: vertex.polygonIndex,
+                    ringIndex: vertex.ringIndex,
+                    vertexIndexes: new Set(),
+                });
+            }
+            groups.get(key).vertexIndexes.add(vertex.vertexIndex);
+        }
 
         const geometry = feature.getGeometry();
         const type = geometry?.getType?.();
-        const now = new Date().toISOString();
+        let coords = type === 'Polygon' ? geometry.getCoordinates() : geometry.getCoordinates();
+        let deletedCount = 0;
+        let innerRingRemoved = false;
 
-        if (type === 'Polygon') {
-            const coords = geometry.getCoordinates();
-            const ring = coords[sel.ringIndex];
-            if (!Array.isArray(ring)) return false;
-            const openRing = ring.slice(0, -1);
-            if (openRing.length <= 3) return false;
+        const orderedGroups = [...groups.values()].sort((a, b) => {
+            if (a.polygonIndex !== b.polygonIndex) return b.polygonIndex - a.polygonIndex;
+            return b.ringIndex - a.ringIndex;
+        });
 
-            openRing.splice(sel.vertexIndex, 1);
-            coords[sel.ringIndex] = [...openRing, openRing[0]];
-            geometry.setCoordinates(coords);
-        } else if (type === 'MultiPolygon') {
-            const coords = geometry.getCoordinates();
-            const polygon = coords[sel.polygonIndex];
-            const ring = polygon?.[sel.ringIndex];
-            if (!Array.isArray(ring)) return false;
-            const openRing = ring.slice(0, -1);
-            if (openRing.length <= 3) return false;
+        for (const group of orderedGroups) {
+            if (type === 'Polygon') {
+                const rings = coords;
+                const ring = rings[group.ringIndex];
+                if (!Array.isArray(ring)) continue;
 
-            openRing.splice(sel.vertexIndex, 1);
-            polygon[sel.ringIndex] = [...openRing, openRing[0]];
-            geometry.setCoordinates(coords);
-        } else {
-            return false;
+                const openRing = ring.slice(0, -1);
+                const toDelete = [...group.vertexIndexes].filter((index) => index >= 0 && index < openRing.length);
+                if (!toDelete.length) continue;
+
+                if (openRing.length - toDelete.length < 3) {
+                    if (group.ringIndex === 0) {
+                        continue;
+                    }
+                    rings.splice(group.ringIndex, 1);
+                    innerRingRemoved = true;
+                    deletedCount += toDelete.length;
+                    continue;
+                }
+
+                toDelete.sort((a, b) => b - a).forEach((index) => openRing.splice(index, 1));
+                rings[group.ringIndex] = [...openRing, openRing[0]];
+                deletedCount += toDelete.length;
+                continue;
+            }
+
+            if (type === 'MultiPolygon') {
+                const polygon = coords[group.polygonIndex];
+                const ring = polygon?.[group.ringIndex];
+                if (!Array.isArray(ring)) continue;
+
+                const openRing = ring.slice(0, -1);
+                const toDelete = [...group.vertexIndexes].filter((index) => index >= 0 && index < openRing.length);
+                if (!toDelete.length) continue;
+
+                if (openRing.length - toDelete.length < 3) {
+                    if (group.ringIndex === 0) {
+                        continue;
+                    }
+                    polygon.splice(group.ringIndex, 1);
+                    innerRingRemoved = true;
+                    deletedCount += toDelete.length;
+                    continue;
+                }
+
+                toDelete.sort((a, b) => b - a).forEach((index) => openRing.splice(index, 1));
+                polygon[group.ringIndex] = [...openRing, openRing[0]];
+                deletedCount += toDelete.length;
+            }
         }
+
+        if (!deletedCount) {
+            return { deletedAny: false, deletedCount: 0, innerRingRemoved: false, featureDeleted: false };
+        }
+
+        const now = new Date().toISOString();
+        geometry.setCoordinates(coords);
 
         feature.set('version', (feature.get('version') ?? 1) + 1);
         feature.set('modifiedAt', now);
 
-        this.state.selectedEditVertex = null;
+        this.clearSelectedEditVertices();
         this.layers.vector.changed();
         this.layers.pertenenza.changed();
         this.refreshEditVertexOverlay();
         this.updateSummary();
-        return true;
+        return { deletedAny: true, deletedCount, innerRingRemoved, featureDeleted: false };
+    }
+
+    showVertexDeleteAllWarning(messageKey = 'vertex.deleteAll.message.default') {
+        this.elements.vertexDeleteAllWarningMessage.textContent = t(messageKey);
+        this.elements.vertexDeleteAllWarning.hidden = false;
+    }
+
+    hideVertexDeleteAllWarning() {
+        this.pendingVertexDeleteAll = null;
+        if (this.elements.vertexDeleteAllWarning) {
+            this.elements.vertexDeleteAllWarning.hidden = true;
+        }
+    }
+
+    promptDeleteAllSelectedVertices() {
+        const feature = this.state.selectedFeature;
+        const selected = this.getSelectedEditVertices();
+        if (this.state.mode !== 'edit' || !feature || !selected.length || !this.isPolygonFeature(feature)) {
+            this.setToolbarMessage(t('msg.vertexDeleteNoSel'));
+            return;
+        }
+
+        const groups = new globalThis.Map();
+        for (const vertex of selected) {
+            const key = `${vertex.polygonIndex}:${vertex.ringIndex}`;
+            if (!groups.has(key)) {
+                groups.set(key, {
+                    polygonIndex: vertex.polygonIndex,
+                    ringIndex: vertex.ringIndex,
+                });
+            }
+        }
+
+        const plans = [...groups.values()];
+        const hasOuter = plans.some((item) => item.ringIndex === 0);
+        const messageKey = hasOuter ? 'vertex.deleteAll.message.outer' : 'vertex.deleteAll.message.inner';
+        this.pendingVertexDeleteAll = { feature, plans, hasOuter };
+        this.showVertexDeleteAllWarning(messageKey);
+    }
+
+    confirmDeleteAllSelectedVertices() {
+        const pending = this.pendingVertexDeleteAll;
+        if (!pending || !pending.feature) {
+            this.hideVertexDeleteAllWarning();
+            return;
+        }
+
+        if (pending.hasOuter) {
+            this.getSourceForFeature(pending.feature).removeFeature(pending.feature);
+            if (this.state.selectedFeature === pending.feature) {
+                this.clearSelection();
+            }
+            this.hideVertexDeleteAllWarning();
+            this.setToolbarMessage(t('msg.featureDeletedByVertices'));
+            return;
+        }
+
+        const geometry = pending.feature.getGeometry();
+        const type = geometry?.getType?.();
+        if (type !== 'Polygon' && type !== 'MultiPolygon') {
+            this.hideVertexDeleteAllWarning();
+            return;
+        }
+
+        const coords = geometry.getCoordinates();
+        const plans = [...pending.plans].sort((a, b) => {
+            if (a.polygonIndex !== b.polygonIndex) return b.polygonIndex - a.polygonIndex;
+            return b.ringIndex - a.ringIndex;
+        });
+
+        for (const plan of plans) {
+            if (plan.ringIndex === 0) continue;
+            if (type === 'Polygon') {
+                if (Array.isArray(coords[plan.ringIndex])) {
+                    coords.splice(plan.ringIndex, 1);
+                }
+            } else {
+                const polygon = coords[plan.polygonIndex];
+                if (Array.isArray(polygon?.[plan.ringIndex])) {
+                    polygon.splice(plan.ringIndex, 1);
+                }
+            }
+        }
+
+        geometry.setCoordinates(coords);
+        pending.feature.set('version', (pending.feature.get('version') ?? 1) + 1);
+        pending.feature.set('modifiedAt', new Date().toISOString());
+        this.clearSelectedEditVertices();
+        this.hideVertexDeleteAllWarning();
+        this.layers.vector.changed();
+        this.layers.pertenenza.changed();
+        this.refreshEditVertexOverlay();
+        this.updateSummary();
+        this.setToolbarMessage(t('msg.vertexRingRemoved'));
+    }
+
+    cancelDeleteAllSelectedVertices() {
+        this.hideVertexDeleteAllWarning();
+        this.setToolbarMessage(t('msg.vertexDeleteAllRejected'));
     }
 
     // ── Summary ──────────────────────────────────────────────────────────────────
@@ -1619,19 +2149,20 @@ export default class Planimeter {
         return type === 'Polygon' || type === 'MultiPolygon';
     }
 
-    openCategoryAssignmentFromContext(feature) {
-        if (!this.isPolygonFeature(feature)) return;
-        this.setEditingLayer(this.getFeatureOverlayLayer(feature));
+    openCategoryAssignmentFromContext(feature, pixel, candidates) {
+        const target = this.chooseContextTargetFeature(feature, pixel, candidates, true);
+        if (!this.isPolygonFeature(target)) return;
+        this.setEditingLayer(this.getFeatureOverlayLayer(target));
         this.clearSelection();
-        this.state.selectedFeature = feature;
-        this.getActiveInteractions().select.getFeatures().push(feature);
+        this.state.selectedFeature = target;
+        this.getActiveInteractions().select.getFeatures().push(target);
         this.setToolbarPanel('operate');
-        this.getLayerForFeature(feature).changed();
+        this.getLayerForFeature(target).changed();
         this.updateSummary();
         this.updateDslAssignmentControls();
         this.elements.dslCategorySelect?.focus();
         this.setToolbarMessage(t('msg.categoryPanelReady', {
-            name: feature.get('featureName') || feature.get('featureId') || '-',
+            name: target.get('featureName') || target.get('featureId') || '-',
         }));
     }
 
@@ -2265,6 +2796,44 @@ export default class Planimeter {
     }
 
     getSpecialContextMenu(ctx) {
+        if (this.state.mode === 'edit' && this.isPolygonFeature(this.state.selectedFeature) && Array.isArray(ctx?.pixel)) {
+            const coordinate = this.map.getCoordinateFromPixel(ctx.pixel);
+            const picked = this.findNearestEditableVertex(this.state.selectedFeature, coordinate, 10);
+            if (picked) {
+                const descriptor = this.buildVertexDescriptor(this.state.selectedFeature, picked);
+                const selectedVertices = this.getSelectedEditVertices();
+                const alreadySelected = selectedVertices.some((vertex) => this.isSameVertexDescriptor(vertex, descriptor));
+                let selectionChanged = false;
+
+                if (!alreadySelected) {
+                    if (selectedVertices.length === 0) {
+                        this.setSelectedEditVertices([descriptor]);
+                        selectionChanged = true;
+                    } else if (Boolean(ctx?.event?.ctrlKey)) {
+                        this.updateVertexSelectionFromPicked(picked, true);
+                        selectionChanged = true;
+                    }
+                }
+
+                if (selectionChanged) {
+                    this.layers.vector.changed();
+                    this.layers.pertenenza.changed();
+                    this.refreshEditVertexOverlay();
+                }
+
+                return {
+                    items: [
+                        { key: 'ctx.vertexDeleteSelected', action: 'vertexDeleteSelected' },
+                        { key: 'ctx.vertexDeleteAll', action: 'vertexDeleteAll' },
+                    ],
+                    actions: {
+                        vertexDeleteSelected: () => this.requestDeleteSelectedVertex(),
+                        vertexDeleteAll: () => this.promptDeleteAllSelectedVertices(),
+                    },
+                };
+            }
+        }
+
         if (!this.selectionExport?.active) return null;
 
         const hasRect = Boolean(this.selectionExport.rect);
@@ -3233,33 +3802,36 @@ export default class Planimeter {
         }
     }
 
-    editFeatureFromContext(feature) {
-        if (!feature) return;
-        this.setEditingLayer(this.getFeatureOverlayLayer(feature));
+    editFeatureFromContext(feature, pixel, candidates) {
+        const target = this.chooseContextTargetFeature(feature, pixel, candidates, true);
+        if (!target) return;
+        this.setEditingLayer(this.getFeatureOverlayLayer(target));
         this.setMode('edit');
-        this.state.selectedFeature = feature;
-        this.state.selectedEditVertex = null;
+        this.state.selectedFeature = target;
+        this.clearSelectedEditVertices();
         this.getActiveInteractions().select.getFeatures().clear();
-        this.getActiveInteractions().select.getFeatures().push(feature);
-        this.getLayerForFeature(feature).changed();
+        this.getActiveInteractions().select.getFeatures().push(target);
+        this.getLayerForFeature(target).changed();
         this.refreshEditVertexOverlay();
         this.updateSummary();
-        this.setToolbarMessage(this.formatSelectedFeatureMessage(feature));
+        this.setToolbarMessage(this.formatSelectedFeatureMessage(target));
     }
 
-    deleteFeatureFromContext(feature) {
-        if (!feature) return;
-        this.getSourceForFeature(feature).removeFeature(feature);
-        if (this.state.selectedFeature === feature) this.clearSelection();
+    deleteFeatureFromContext(feature, pixel, candidates) {
+        const target = this.chooseContextTargetFeature(feature, pixel, candidates, true);
+        if (!target) return;
+        this.getSourceForFeature(target).removeFeature(target);
+        if (this.state.selectedFeature === target) this.clearSelection();
         this.setToolbarMessage(t('msg.featureDeleted'));
     }
 
-    async resyncParcelMetadataForFeature(feature) {
-        if (!this.isPolygonFeature(feature) || this.getFeatureOverlayLayer(feature) !== 'pertenenze') {
+    async resyncParcelMetadataForFeature(feature, pixel, candidates) {
+        const target = this.chooseContextTargetFeature(feature, pixel, candidates, true);
+        if (!this.isPolygonFeature(target) || this.getFeatureOverlayLayer(target) !== 'pertenenze') {
             return;
         }
 
-        const labelPoint = getFeatureLabelGeometry(feature);
+        const labelPoint = getFeatureLabelGeometry(target);
         const coord = labelPoint?.getCoordinates?.();
         if (!Array.isArray(coord) || coord.length < 2) {
             this.setToolbarMessage(t('msg.parcelResyncUnavailable'));
@@ -3273,10 +3845,10 @@ export default class Planimeter {
             return;
         }
 
-        this.applyParcelMetadataToFeature(feature, parcelSummary);
+        this.applyParcelMetadataToFeature(target, parcelSummary);
         const parcelId = String(parcelSummary.parcel.id || parcelSummary.parcel.local_id || '').trim();
         if (parcelId) {
-            const links = this.getOrCreateFeatureLinks(feature);
+            const links = this.getOrCreateFeatureLinks(target);
             if (!links.cadastral.some((entry) => String(entry?.parcel_id || '').trim() === parcelId)) {
                 links.cadastral.push({
                     parcel_id: parcelId,
@@ -3284,18 +3856,18 @@ export default class Planimeter {
                     coverage_ratio: null,
                     linkedAt: new Date().toISOString(),
                 });
-                feature.set('links', links);
+                target.set('links', links);
             }
         }
 
-        feature.set('version', (feature.get('version') ?? 1) + 1);
-        feature.set('modifiedAt', new Date().toISOString());
-        this.getLayerForFeature(feature).changed();
+        target.set('version', (target.get('version') ?? 1) + 1);
+        target.set('modifiedAt', new Date().toISOString());
+        this.getLayerForFeature(target).changed();
         schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource);
         this.updateSummary();
         this.setToolbarMessage(t('msg.parcelResyncDone', {
-            parcel: this.getPropertyScopeLabel(feature),
-            localId: this.getFeatureInspireLocalId(feature),
+            parcel: this.getPropertyScopeLabel(target),
+            localId: this.getFeatureInspireLocalId(target),
         }));
     }
 
@@ -3750,18 +4322,19 @@ export default class Planimeter {
         return toLonLat(coord, projection);
     }
 
-    async refineParcelM3ForFeature(feature, pixel) {
-        if (!this.isPolygonFeature(feature)) return;
+    async refineParcelM3ForFeature(feature, pixel, candidates) {
+        const target = this.chooseContextTargetFeature(feature, pixel, candidates, true);
+        if (!this.isPolygonFeature(target)) return;
 
         this.rejectPendingM3Refine(false);
 
-        const coarseRing = this.featureToCoarseRingLonLat(feature);
+        const coarseRing = this.featureToCoarseRingLonLat(target);
         if (!coarseRing) {
             this.setToolbarMessage(t('m3.error.detection'));
             return;
         }
 
-        const referenceLonLat = this.getFeatureReferenceLonLat(feature, pixel);
+        const referenceLonLat = this.getFeatureReferenceLonLat(target, pixel);
         if (!referenceLonLat) {
             this.setToolbarMessage(t('m3.error.coordinate'));
             return;
@@ -3791,14 +4364,14 @@ export default class Planimeter {
 
             const projection = this.view.getProjection();
             const ringInMapProj = result.ring.map((pt) => fromLonLat(pt, projection));
-            const geometry = feature.getGeometry();
+            const geometry = target.getGeometry();
             const type = geometry?.getType?.();
 
-            const originalCoordinates = this.cloneGeometryCoordinates(feature.getGeometry());
+            const originalCoordinates = this.cloneGeometryCoordinates(target.getGeometry());
             const beforePrimaryRing = this.extractPrimaryOuterRingFromCoordinates(originalCoordinates, type);
-            const beforeAreaM2 = calculateArea(feature, projection);
-            const beforePerimeterM = calculatePerimeter(feature, projection);
-            const beforeVertices = this.countFeatureVertices(feature);
+            const beforeAreaM2 = calculateArea(target, projection);
+            const beforePerimeterM = calculatePerimeter(target, projection);
+            const beforeVertices = this.countFeatureVertices(target);
 
             if (type === 'Polygon') {
                 geometry.setCoordinates([ringInMapProj]);
@@ -3806,10 +4379,10 @@ export default class Planimeter {
                 geometry.setCoordinates([[ringInMapProj]]);
             }
 
-            const layer = this.getLayerForFeature(feature);
+            const layer = this.getLayerForFeature(target);
             layer.changed();
-            const areaM2 = calculateArea(feature, projection);
-            const perimeterM = calculatePerimeter(feature, projection);
+            const areaM2 = calculateArea(target, projection);
+            const perimeterM = calculatePerimeter(target, projection);
             const vertexCount = Math.max(0, ringInMapProj.length - 1);
             const deltaAreaM2 = areaM2 - beforeAreaM2;
             const deltaAreaRatio = beforeAreaM2 > 1e-9 ? (deltaAreaM2 / beforeAreaM2) : 0;
@@ -3822,9 +4395,9 @@ export default class Planimeter {
                 && snapAccepted <= 0;
 
             this.pendingM3Refine = {
-                feature,
+                feature: target,
                 originalCoordinates,
-                overlayLayer: this.getFeatureOverlayLayer(feature),
+                overlayLayer: this.getFeatureOverlayLayer(target),
                 report: {
                     beforeAreaM2,
                     beforePerimeterM,
@@ -3909,7 +4482,7 @@ export default class Planimeter {
         return null;
     }
 
-    renderM3RefineDiffCanvas(beforeRing, afterRing) {
+    renderM3RefineDiffCanvas(beforeRing, afterRing, options = {}) {
         const canvas = this.elements.m3RefineDiffCanvas;
         if (!(canvas instanceof HTMLCanvasElement)) return;
 
@@ -3922,8 +4495,10 @@ export default class Planimeter {
         ctx.fillStyle = 'rgba(6,16,12,0.95)';
         ctx.fillRect(0, 0, width, height);
 
+        const holeRing = Array.isArray(options?.holeRing) ? options.holeRing : null;
         const validBefore = Array.isArray(beforeRing) && beforeRing.length >= 4;
         const validAfter = Array.isArray(afterRing) && afterRing.length >= 4;
+        const validHole = Array.isArray(holeRing) && holeRing.length >= 4;
         if (!validBefore && !validAfter) {
             ctx.fillStyle = '#9cb7aa';
             ctx.font = '12px Aptos';
@@ -3934,6 +4509,7 @@ export default class Planimeter {
         const allPoints = [
             ...(validBefore ? beforeRing : []),
             ...(validAfter ? afterRing : []),
+            ...(validHole ? holeRing : []),
         ].filter((pt) => Array.isArray(pt) && pt.length >= 2 && Number.isFinite(pt[0]) && Number.isFinite(pt[1]));
 
         if (!allPoints.length) return;
@@ -3974,14 +4550,41 @@ export default class Planimeter {
             ctx.stroke();
         };
 
+        const punchHole = (ring, fill, stroke) => {
+            if (!Array.isArray(ring) || ring.length < 3) return;
+            ctx.beginPath();
+            const [x0, y0] = project(ring[0]);
+            ctx.moveTo(x0, y0);
+            for (let i = 1; i < ring.length; i += 1) {
+                const [x, y] = project(ring[i]);
+                ctx.lineTo(x, y);
+            }
+            ctx.closePath();
+            ctx.fillStyle = fill;
+            ctx.strokeStyle = stroke;
+            ctx.lineWidth = 2;
+            ctx.fill();
+            ctx.stroke();
+        };
+
         drawRing(beforeRing, 'rgba(255, 90, 90, 0.22)', 'rgba(255, 140, 140, 0.95)');
-        drawRing(afterRing, 'rgba(115, 240, 191, 0.24)', 'rgba(115, 240, 191, 0.98)', 2.2);
+
+        if (validHole) {
+            punchHole(holeRing, 'rgba(255,255,255,0.92)', 'rgba(246, 211, 101, 0.95)');
+        } else {
+            drawRing(afterRing, 'rgba(115, 240, 191, 0.24)', 'rgba(115, 240, 191, 0.98)', 2.2);
+        }
 
         ctx.fillStyle = '#dff7ec';
         ctx.font = '11px Aptos';
         ctx.fillText('Before', 10, 16);
-        ctx.fillStyle = 'rgba(115, 240, 191, 0.98)';
-        ctx.fillText('After', 58, 16);
+        if (validHole) {
+            ctx.fillStyle = 'rgba(246, 211, 101, 0.98)';
+            ctx.fillText('Hole', 58, 16);
+        } else {
+            ctx.fillStyle = 'rgba(115, 240, 191, 0.98)';
+            ctx.fillText('After', 58, 16);
+        }
     }
 
     renderM3RefineReport() {
@@ -3996,9 +4599,14 @@ export default class Planimeter {
         const report = pending.report;
         const debug = report.debug || {};
 
+        const isHolePreview = pending.operationType === 'hole';
+
         if (this.elements.m3RefineReportTitle) {
             const featureName = String(pending.feature?.get?.('featureName') || pending.feature?.get?.('featureId') || '-').trim() || '-';
-            this.elements.m3RefineReportTitle.textContent = t('m3.refine.report.title', { name: featureName });
+            this.elements.m3RefineReportTitle.textContent = t(
+                isHolePreview ? 'hole.report.title' : 'm3.refine.report.title',
+                { name: featureName },
+            );
         }
 
         this.elements.m3RefineBeforeArea.textContent = this.unitSystem.formatArea(report.beforeAreaM2);
@@ -4009,7 +4617,30 @@ export default class Planimeter {
         this.elements.m3RefineAfterPerimeter.textContent = this.unitSystem.formatPerimeter(report.afterPerimeterM);
         this.elements.m3RefineAfterVertices.textContent = String(report.afterVertices);
 
-        this.elements.m3RefineDiffArea.textContent = `${this.formatSignedNumber(report.deltaAreaM2, 2)} m2`;
+        if (this.elements.m3RefineDiffAreaLabel) {
+            this.elements.m3RefineDiffAreaLabel.textContent = t(isHolePreview ? 'hole.report.removedArea' : 'm3.refine.report.deltaArea');
+        }
+        if (this.elements.m3RefineDiffRatioLabel) {
+            this.elements.m3RefineDiffRatioLabel.textContent = t(isHolePreview ? 'hole.report.removedRatio' : 'm3.refine.report.deltaRatio');
+        }
+        if (this.elements.m3RefineDiffPerimeterLabel) {
+            this.elements.m3RefineDiffPerimeterLabel.textContent = t('m3.refine.report.deltaPerimeter');
+        }
+        if (this.elements.m3RefineVisualTitle) {
+            this.elements.m3RefineVisualTitle.textContent = t(isHolePreview ? 'hole.report.visualDiff' : 'm3.refine.report.visualDiff');
+        }
+        if (this.elements.m3RefineSummarySection) {
+            this.elements.m3RefineSummarySection.hidden = isHolePreview;
+        }
+        if (this.elements.m3RefineSummaryTitle) {
+            this.elements.m3RefineSummaryTitle.textContent = t('m3.refine.report.summary');
+        }
+
+        if (isHolePreview) {
+            this.elements.m3RefineDiffArea.textContent = `${this.formatSignedNumber(report.holeAreaM2 ?? Math.abs(report.deltaAreaM2), 2)} m2`;
+        } else {
+            this.elements.m3RefineDiffArea.textContent = `${this.formatSignedNumber(report.deltaAreaM2, 2)} m2`;
+        }
         this.elements.m3RefineDiffRatio.textContent = `${this.formatSignedNumber(report.deltaAreaRatio * 100, 2)}%`;
         this.elements.m3RefineDiffPerimeter.textContent = `${this.formatSignedNumber(report.deltaPerimeterM, 2)} m`;
 
@@ -4027,7 +4658,9 @@ export default class Planimeter {
         this.elements.m3RefineMeanConfidence.textContent = numOrDash(debug.meanConfidence ?? debug.mean_confidence, 3);
         this.elements.m3RefineRejectedDistance.textContent = numOrDash(debug.rejectedByDistance);
         this.elements.m3RefineRejectedWeakGain.textContent = numOrDash(debug.rejectedByWeakGain);
-        this.renderM3RefineDiffCanvas(report.beforePrimaryRing, report.afterPrimaryRing);
+        this.renderM3RefineDiffCanvas(report.beforePrimaryRing, report.afterPrimaryRing, {
+            holeRing: isHolePreview ? report.holeRing : null,
+        });
 
         if (this.elements.m3RefineEffectNote) {
             const noteKey = report.noVisibleChange
@@ -4043,33 +4676,47 @@ export default class Planimeter {
     hideM3RefineReport() {
         const panel = this.elements.m3RefineReport;
         if (panel) panel.hidden = true;
+        if (this.elements.m3RefineSummarySection) {
+            this.elements.m3RefineSummarySection.hidden = false;
+        }
     }
 
     acceptPendingM3Refine() {
         if (!this.pendingM3Refine) return;
 
         const { feature, overlayLayer, report } = this.pendingM3Refine;
+        const isHolePreview = this.pendingM3Refine.operationType === 'hole';
         const now = new Date().toISOString();
         feature.set('version', (feature.get('version') ?? 1) + 1);
         feature.set('modifiedAt', now);
 
         const layer = overlayLayer === 'pertenenze' ? this.layers.pertenenza : this.layers.vector;
         layer.changed();
+        this.holeDraftSource.clear();
         this.map.renderSync();
         schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource);
         this.updateSummary();
         this.hideM3RefineReport();
         this.pendingM3Refine = null;
+        this.pendingHoleOperation = null;
 
-        this.setToolbarMessage(t('m3.refine.success', {
-            area: this.unitSystem.formatArea(report.afterAreaM2),
-            vertices: report.afterVertices,
-        }));
+        if (isHolePreview) {
+            this.setToolbarMessage(t('hole.accepted', {
+                area: this.unitSystem.formatArea(report.afterAreaM2),
+                holeArea: this.unitSystem.formatArea(report.holeAreaM2 ?? Math.abs(report.deltaAreaM2)),
+            }));
+        } else {
+            this.setToolbarMessage(t('m3.refine.success', {
+                area: this.unitSystem.formatArea(report.afterAreaM2),
+                vertices: report.afterVertices,
+            }));
+        }
     }
 
     rejectPendingM3Refine(showMessage = true) {
         const pending = this.pendingM3Refine;
         if (!pending) return;
+        const isHolePreview = pending.operationType === 'hole';
 
         const { feature, originalCoordinates, overlayLayer } = pending;
         const geometry = feature.getGeometry();
@@ -4079,12 +4726,14 @@ export default class Planimeter {
 
         const layer = overlayLayer === 'pertenenze' ? this.layers.pertenenza : this.layers.vector;
         layer.changed();
+        this.holeDraftSource.clear();
         this.map.renderSync();
         this.updateSummary();
         this.hideM3RefineReport();
         this.pendingM3Refine = null;
+        this.pendingHoleOperation = null;
         if (showMessage) {
-            this.setToolbarMessage(t('m3.refine.rejected'));
+            this.setToolbarMessage(t(isHolePreview ? 'hole.rejected' : 'm3.refine.rejected'));
         }
     }
 

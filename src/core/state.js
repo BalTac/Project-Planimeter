@@ -33,6 +33,7 @@ export function createInitialState() {
         userAreasVisible: true,
         pertenenzeVisible: false,
         selectedEditVertex: null,
+        selectedEditVertices: [],
         lastPointerCoordinate: null,
         pertenenzeColor: '#8a9199',
         catastoWmsLayerSettings: structuredClone(DEFAULT_CATASTO_WMS_LAYER_SETTINGS),
