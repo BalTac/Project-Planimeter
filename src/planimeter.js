@@ -13,12 +13,14 @@ import Fill from 'ol/style/Fill.js';
 import Stroke from 'ol/style/Stroke.js';
 import CircleStyle from 'ol/style/Circle.js';
 import Draw from 'ol/interaction/Draw.js';
+import { MultiPolygon } from 'ol/geom.js';
+import * as polygonClippingModule from 'https://esm.sh/polygon-clipping?bundle';
 
 import { createInitialState }            from './core/state.js';
 import { buildLayers }                   from './map/layers.js';
 import { buildInteractions }             from './map/interactions.js';
 import { calculateArea, calculatePerimeter, calculateLength } from './geometry/calculations.js';
-import { calculateIntersectionMetricsWithCache } from './geometry/intersection.js';
+import { calculateIntersectionMetrics, calculateIntersectionMetricsWithCache } from './geometry/intersection.js';
 import { buildFeatureStyle, getFeatureLabelGeometry } from './geometry/style.js';
 import { decorateFeature }               from './geometry/decorate.js';
 import { t, setLocale, detectLocale }    from './i18n/i18n.js';
@@ -42,6 +44,7 @@ import { buildDslPayload } from './dsl/schema.js';
 const BASE_LAYER_KEYS = ['sat', 'openTopoMap', 'esriTopo', 'esriRelief'];
 const ADMIN_LAYER_KEYS = ['osm', 'catasto'];
 const DSL_UNASSIGNED_CATEGORY_KEY = '__unassigned__';
+const polygonClipping = polygonClippingModule.default ?? polygonClippingModule;
 const HOLE_DRAW_STYLE = new OLStyle({
     fill: new Fill({ color: 'rgba(255,255,255,0.26)' }),
     stroke: new Stroke({ color: '#f6d365', lineDash: [8, 6], width: 2.2 }),
@@ -94,6 +97,9 @@ export default class Planimeter {
         this.m3BusyMessage = '';
         this.mapTileLoadCount = 0;
         this.pendingVertexDeleteAll = null;
+        this.holeDrawWarningTimeoutId = null;
+        this.state.isAltPressed = false;
+        this.lastPointerPixel = null;
 
         this.vectorSource = new VectorSource();
         this.pertenenzaSource = new VectorSource();
@@ -144,6 +150,7 @@ export default class Planimeter {
             elements:        this.elements,
             getIsDrawing:    () => this.state.isDrawing,
             getMode:         () => this.state.mode,
+            getSelectedFeature: () => this.state.selectedFeature,
             abortActiveDraw: () => this.abortActiveDraw(),
             canQueryParcel:  () => this.canQueryParcelFromContextMenu(),
             canRefreshWmsTile: () => this.canRefreshWmsTile(),
@@ -212,6 +219,7 @@ export default class Planimeter {
         this.dragPanInteractions = null;
         this.pendingM3Refine = null;
         this.pendingHoleOperation = null;
+        this.pendingEditSelectionOverlap = null;
     }
 
     // ── Interaction helpers ─────────────────────────────────────────────────────
@@ -452,15 +460,27 @@ export default class Planimeter {
             m3RefineRejectedWeakGain:  document.getElementById('m3-refine-rejected-weak-gain'),
             m3RefineAcceptButton:      document.getElementById('btn-m3-refine-accept'),
             m3RefineRejectButton:      document.getElementById('btn-m3-refine-reject'),
+            m3RefineMergeButton:       document.getElementById('btn-m3-refine-merge'),
+            m3RefineSubtractButton:    document.getElementById('btn-m3-refine-subtract'),
+            editSelectionOverlapButton:document.getElementById('btn-edit-selection-overlap'),
             vertexDeleteAllWarning:    document.getElementById('vertex-delete-all-warning'),
             vertexDeleteAllWarningMessage: document.getElementById('vertex-delete-all-warning-message'),
             btnVertexDeleteAllAccept:  document.getElementById('btn-vertex-delete-all-accept'),
             btnVertexDeleteAllReject:  document.getElementById('btn-vertex-delete-all-reject'),
+            holeDrawWarning:           document.getElementById('hole-draw-warning'),
+            holeDrawWarningMessage:    document.getElementById('hole-draw-warning-message'),
+            btnHoleDrawWarningClose:   document.getElementById('btn-hole-draw-warning-close'),
             cacheStatsDisplay:         document.getElementById('cache-stats-display'),
             btnCacheApply:             document.getElementById('btn-cache-apply'),
             btnCacheClear:             document.getElementById('btn-cache-clear'),
             pointerCoordinatesPanel:   document.getElementById('pointer-coordinates'),
             pointerCoordinatesValue:   document.getElementById('pointer-coordinates-value'),
+            pointerCoordinatesViewportX: document.getElementById('pointer-coordinates-vx'),
+            pointerCoordinatesViewportY: document.getElementById('pointer-coordinates-vy'),
+            pointerCoordinatesZoom:    document.getElementById('pointer-coordinates-zoom'),
+            pointerCoordinatesViewportXBar: document.getElementById('pointer-coordinates-vx-bar'),
+            pointerCoordinatesViewportYBar: document.getElementById('pointer-coordinates-vy-bar'),
+            pointerCoordinatesZoomBar: document.getElementById('pointer-coordinates-zoom-bar'),
             dslCategoriesSection:      document.getElementById('section-dsl-categories'),
             dslCategoryFilters:        document.getElementById('dsl-category-filters'),
             dslLegend:                 document.getElementById('dsl-legend'),
@@ -558,6 +578,8 @@ export default class Planimeter {
         this.holeDrawInteraction.on('drawstart', () => {
             this.state.isDrawing = true;
             this.holeDraftSource.clear();
+            this.hideHoleDrawWarning();
+            this.resetPointerCoordinatesValues();
             this.setToolbarMessage(t('hole.draw.inProgress'));
         });
 
@@ -580,7 +602,8 @@ export default class Planimeter {
         this.holeDrawInteraction.setActive(Boolean(active));
         const ix = this.getActiveInteractions();
         ix.select.setActive(!active && (this.state.mode === 'edit' || this.state.mode === 'delete' || this.state.mode === 'navigate'));
-        ix.modify.setActive(!active && this.state.mode === 'edit');
+        ix.modify.setActive(!active && this.state.mode === 'edit' && !this.pendingEditSelectionOverlap);
+        this.applyMapCursorState();
     }
 
     hasExistingInnerRing(feature) {
@@ -599,8 +622,23 @@ export default class Planimeter {
     }
 
     startHoleDrawForFeature(feature, pixel, candidates) {
+        const selected = this.state.selectedFeature;
         const target = this.chooseContextTargetFeature(feature, pixel, candidates, true);
-        if (!this.isPolygonFeature(target)) return;
+        if (!this.isPolygonFeature(target)) {
+            this.showHoleDrawWarning('hole.warning.selectTarget');
+            this.setToolbarMessage(t('hole.warning.selectTarget'));
+            return;
+        }
+
+        const visibleCandidates = Array.isArray(candidates) ? candidates : [];
+        const clickedPolygon = this.isPolygonFeature(feature) || visibleCandidates.some((f) => this.isPolygonFeature(f));
+        if (!clickedPolygon && selected && target === selected) {
+            this.showHoleDrawWarning('hole.warning.selectedTargetHint', {
+                name: target.get('featureName') || target.get('featureId') || '-',
+            });
+        } else {
+            this.hideHoleDrawWarning();
+        }
 
         this.rejectPendingM3Refine(false);
         this.holeDraftSource.clear();
@@ -691,6 +729,7 @@ export default class Planimeter {
         if (!holeInside) {
             geometry.setCoordinates(originalCoordinates);
             this.pendingHoleOperation = null;
+            this.showHoleDrawWarning('hole.warning.outsideTarget');
             this.setToolbarMessage(t('hole.error.outside'));
             return;
         }
@@ -734,6 +773,7 @@ export default class Planimeter {
         };
 
         this.pendingHoleOperation = null;
+        this.hideHoleDrawWarning();
         this.getLayerForFeature(feature).changed();
         this.map.renderSync();
         this.updateSummary();
@@ -754,6 +794,10 @@ export default class Planimeter {
         this.map.on('singleclick', (event) => {
             if (this.state.mode !== 'edit') return;
 
+            if (this.tryStartEditSelectionOverlapPreviewAtPixel(event.pixel)) {
+                return;
+            }
+
             // In overlap scenarios, keep vertex editing stable on current feature:
             // if click is on a vertex of selected feature, select vertex first
             // and do not switch to an underlying/adjacent feature.
@@ -773,6 +817,13 @@ export default class Planimeter {
 
             if (!this.isPolygonFeature(this.state.selectedFeature)) return;
 
+            const hasFeatureAtPixel = this.getVisibleFeatureCandidatesAtPixel(event.pixel).length > 0;
+            if (!hasFeatureAtPixel) {
+                this.setMode('navigate');
+                this.setToolbarMessage(t('msg.editClickEmptyNavigate'));
+                return;
+            }
+
             this.clearSelectedEditVertices();
             this.layers.vector.changed();
             this.layers.pertenenza.changed();
@@ -780,10 +831,21 @@ export default class Planimeter {
         });
 
         document.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Escape') {
+                if (this.handleGlobalEscape()) {
+                    ev.preventDefault();
+                }
+                return;
+            }
+
             if (ev.key === 'Enter' && this.holeDrawInteraction?.getActive?.()) {
                 this.holeDrawInteraction.finishDrawing();
                 ev.preventDefault();
                 return;
+            }
+
+            if (ev.key === 'Alt' && !this.state.isAltPressed) {
+                this.state.isAltPressed = true;
             }
 
             if (ev.ctrlKey && !this.state.isCtrlPressed) {
@@ -798,6 +860,9 @@ export default class Planimeter {
             }
         });
         document.addEventListener('keyup', (ev) => {
+            if (ev.key === 'Alt' && this.state.isAltPressed) {
+                this.state.isAltPressed = false;
+            }
             if (!ev.ctrlKey && this.state.isCtrlPressed) {
                 this.state.isCtrlPressed = false;
                 this.refreshSnapState();
@@ -808,7 +873,403 @@ export default class Planimeter {
                 this.state.isCtrlPressed = false;
                 this.refreshSnapState();
             }
+            if (this.state.isAltPressed) {
+                this.state.isAltPressed = false;
+            }
         });
+    }
+
+    handleGlobalEscape() {
+        if (this.holeDrawInteraction?.getActive?.()) {
+            this.holeDrawInteraction.abortDrawing();
+            this.pendingHoleOperation = null;
+            this.holeDraftSource.clear();
+            this.setToolbarMessage(t('msg.esc.toolCancelled'));
+            return true;
+        }
+
+        const drawInteraction = this.getActiveDrawInteraction();
+        if (this.state.isDrawing && drawInteraction) {
+            drawInteraction.abortDrawing();
+            this.setToolbarMessage(t('msg.esc.toolCancelled'));
+            return true;
+        }
+
+        if (this.pendingM3Refine) {
+            this.rejectPendingM3Refine(true);
+            return true;
+        }
+
+        if (this.pendingEditSelectionOverlap) {
+            this.cancelEditSelectionOverlap(true);
+            return true;
+        }
+
+        if (this.selectionExport?.active) {
+            this.cancelSelectionExportMode();
+            return true;
+        }
+
+        if (this.state.mode !== 'navigate') {
+            this.setMode('navigate');
+            this.setToolbarMessage(t('msg.navigateActive'));
+            return true;
+        }
+
+        return false;
+    }
+
+    findOverlappingPolygonFeatures(feature, source) {
+        if (!this.isPolygonFeature(feature) || !source?.getFeatures) return [];
+
+        const overlaps = [];
+        for (const other of source.getFeatures()) {
+            if (!other || other === feature) continue;
+            if (!this.isPolygonFeature(other)) continue;
+
+            const metrics = calculateIntersectionMetrics(feature, other);
+            if ((metrics?.intersectionArea ?? 0) > 1e-4) {
+                overlaps.push(other);
+            }
+        }
+        return overlaps;
+    }
+
+    enforceDrawOverlapGuard(feature, source, setName, drawEvent = null) {
+        const overlaps = this.findOverlappingPolygonFeatures(feature, source);
+        if (!overlaps.length) return true;
+
+        const altOverride = Boolean(drawEvent?.originalEvent?.altKey || this.state.isAltPressed);
+        if (altOverride) {
+            const started = this.startDrawOverlapPreview(feature, source, overlaps, setName);
+            if (!started) {
+                this.setToolbarMessage(t('msg.drawOverlapAccepted', { count: overlaps.length }));
+                return true;
+            }
+            return true;
+        }
+
+        const proceed = window.confirm(t('confirm.drawOverlap', { count: overlaps.length }));
+        if (!proceed) {
+            source.removeFeature(feature);
+            this.state.selectedFeature = null;
+            this.updateSummary();
+            this.setToolbarMessage(t('msg.drawOverlapRejected'));
+            return false;
+        }
+
+        this.setToolbarMessage(t('msg.drawOverlapAccepted', { count: overlaps.length }));
+        return true;
+    }
+
+    toMultiPolygonCoordinatesFromGeometry(geometry) {
+        const type = geometry?.getType?.();
+        const coords = geometry?.getCoordinates?.();
+        if (type === 'Polygon' && Array.isArray(coords)) {
+            return [JSON.parse(JSON.stringify(coords))];
+        }
+        if (type === 'MultiPolygon' && Array.isArray(coords)) {
+            return JSON.parse(JSON.stringify(coords));
+        }
+        return null;
+    }
+
+    normalizeMultiPolygonCoordinates(coords) {
+        if (!Array.isArray(coords)) return null;
+
+        const closeRing = (ring) => {
+            if (!Array.isArray(ring) || ring.length < 3) return null;
+            const normalized = ring
+                .filter((pt) => Array.isArray(pt) && pt.length >= 2 && Number.isFinite(pt[0]) && Number.isFinite(pt[1]))
+                .map((pt) => [Number(pt[0]), Number(pt[1])]);
+            if (normalized.length < 3) return null;
+            const first = normalized[0];
+            const last = normalized[normalized.length - 1];
+            if (first[0] !== last[0] || first[1] !== last[1]) {
+                normalized.push([...first]);
+            }
+            return normalized.length >= 4 ? normalized : null;
+        };
+
+        const normalized = coords
+            .map((polygon) => {
+                if (!Array.isArray(polygon) || !polygon.length) return null;
+                const rings = polygon
+                    .map((ring) => closeRing(ring))
+                    .filter(Boolean);
+                return rings.length ? rings : null;
+            })
+            .filter(Boolean);
+
+        return normalized.length ? normalized : null;
+    }
+
+    setFeatureGeometryFromMultiPolygon(feature, multiPolygonCoords) {
+        const normalized = this.normalizeMultiPolygonCoordinates(multiPolygonCoords);
+        if (!feature?.setGeometry || !normalized) return false;
+
+        if (normalized.length === 1) {
+            feature.setGeometry(new Polygon(normalized[0]));
+            return true;
+        }
+
+        feature.setGeometry(new MultiPolygon(normalized));
+        return true;
+    }
+
+    buildDrawOverlapReport(feature, beforeMultiPolygon, afterMultiPolygon) {
+        const normalizedBefore = this.normalizeMultiPolygonCoordinates(beforeMultiPolygon);
+        const normalizedAfter = this.normalizeMultiPolygonCoordinates(afterMultiPolygon);
+        if (!normalizedBefore || !normalizedAfter) return null;
+
+        const geometry = feature.getGeometry();
+        const beforeCoords = this.cloneGeometryCoordinates(geometry);
+        const beforeType = geometry?.getType?.();
+        const projection = this.view.getProjection();
+
+        const applyForMeasure = (coords) => {
+            this.setFeatureGeometryFromMultiPolygon(feature, coords);
+            return {
+                areaM2: calculateArea(feature, projection),
+                perimeterM: calculatePerimeter(feature, projection),
+                vertices: this.countFeatureVertices(feature),
+            };
+        };
+
+        const beforeStats = applyForMeasure(normalizedBefore);
+        const afterStats = applyForMeasure(normalizedAfter);
+        if (beforeCoords) {
+            if (beforeType === 'Polygon' || beforeType === 'MultiPolygon') {
+                feature.getGeometry()?.setCoordinates?.(beforeCoords);
+            }
+        }
+
+        const deltaAreaM2 = afterStats.areaM2 - beforeStats.areaM2;
+        const deltaPerimeterM = afterStats.perimeterM - beforeStats.perimeterM;
+
+        return {
+            beforeAreaM2: beforeStats.areaM2,
+            beforePerimeterM: beforeStats.perimeterM,
+            beforeVertices: beforeStats.vertices,
+            afterAreaM2: afterStats.areaM2,
+            afterPerimeterM: afterStats.perimeterM,
+            afterVertices: afterStats.vertices,
+            deltaAreaM2,
+            deltaAreaRatio: beforeStats.areaM2 > 1e-9 ? (deltaAreaM2 / beforeStats.areaM2) : 0,
+            deltaPerimeterM,
+            beforePrimaryRing: this.extractPrimaryOuterRingFromCoordinates(normalizedBefore, normalizedBefore.length > 1 ? 'MultiPolygon' : 'Polygon'),
+            afterPrimaryRing: this.extractPrimaryOuterRingFromCoordinates(normalizedAfter, normalizedAfter.length > 1 ? 'MultiPolygon' : 'Polygon'),
+            noVisibleChange: Math.abs(deltaAreaM2) < 1e-5 && Math.abs(deltaPerimeterM) < 1e-5,
+            debug: {},
+        };
+    }
+
+    startDrawOverlapPreview(feature, source, overlaps, setName) {
+        try {
+            const draftCoords = this.toMultiPolygonCoordinatesFromGeometry(feature?.getGeometry?.());
+            const overlapCoords = overlaps
+                .map((other) => this.toMultiPolygonCoordinatesFromGeometry(other?.getGeometry?.()))
+                .filter(Boolean);
+            if (!draftCoords || !overlapCoords.length) return false;
+
+            const mergeCoordsRaw = polygonClipping.union(draftCoords, ...overlapCoords);
+            const mergeCoords = this.normalizeMultiPolygonCoordinates(mergeCoordsRaw);
+
+            const overlapUnionRaw = overlapCoords.length === 1
+                ? overlapCoords[0]
+                : polygonClipping.union(...overlapCoords);
+            const subtractCoordsRaw = polygonClipping.difference(draftCoords, overlapUnionRaw);
+            const subtractCoords = this.normalizeMultiPolygonCoordinates(subtractCoordsRaw);
+            const acceptCoords = this.normalizeMultiPolygonCoordinates(draftCoords);
+            if (!acceptCoords || !mergeCoords) return false;
+
+            const reports = {
+                accept: this.buildDrawOverlapReport(feature, acceptCoords, acceptCoords),
+                merge: this.buildDrawOverlapReport(feature, acceptCoords, mergeCoords),
+                subtract: subtractCoords ? this.buildDrawOverlapReport(feature, acceptCoords, subtractCoords) : null,
+            };
+
+            this.pendingM3Refine = {
+                feature,
+                overlayLayer: setName === 'pertenenze' ? 'pertenenze' : 'user',
+                source,
+                overlaps,
+                operationType: 'draw-overlap',
+                overlapCount: overlaps.length,
+                drawOverlapCandidates: {
+                    accept: acceptCoords,
+                    merge: mergeCoords,
+                    subtract: subtractCoords,
+                },
+                drawOverlapReports: reports,
+                report: reports.accept,
+            };
+
+            this.getLayerForFeature(feature).changed();
+            this.map.renderSync();
+            this.updateSummary();
+            this.renderM3RefineReport();
+            this.setToolbarMessage(t('msg.drawOverlapPreviewReady', { count: overlaps.length }));
+            return true;
+        } catch (error) {
+            console.warn('Draw overlap preview unavailable:', error);
+            return false;
+        }
+    }
+
+    startEditSelectionOverlapPreview(baseFeature, operandFeature, source, overlayLayer) {
+        try {
+            if (!this.isPolygonFeature(baseFeature) || !this.isPolygonFeature(operandFeature)) {
+                return false;
+            }
+            if (baseFeature === operandFeature) {
+                this.setToolbarMessage(t('msg.editSelectionOverlapPickOperand'));
+                return false;
+            }
+            if (this.getFeatureOverlayLayer(baseFeature) !== this.getFeatureOverlayLayer(operandFeature)) {
+                this.setToolbarMessage(t('msg.editSelectionOverlapSameLayerOnly'));
+                return false;
+            }
+
+            const metrics = calculateIntersectionMetrics(baseFeature, operandFeature);
+            if ((metrics?.intersectionArea ?? 0) <= 1e-4) {
+                this.setToolbarMessage(t('msg.editSelectionOverlapNoIntersection'));
+                return false;
+            }
+
+            const baseCoords = this.toMultiPolygonCoordinatesFromGeometry(baseFeature?.getGeometry?.());
+            const operandCoords = this.toMultiPolygonCoordinatesFromGeometry(operandFeature?.getGeometry?.());
+            if (!baseCoords || !operandCoords) return false;
+
+            const mergeCoordsRaw = polygonClipping.union(baseCoords, operandCoords);
+            const mergeCoords = this.normalizeMultiPolygonCoordinates(mergeCoordsRaw);
+            const subtractCoordsRaw = polygonClipping.difference(baseCoords, operandCoords);
+            const subtractCoords = this.normalizeMultiPolygonCoordinates(subtractCoordsRaw);
+            const acceptCoords = this.normalizeMultiPolygonCoordinates(baseCoords);
+            if (!acceptCoords || !mergeCoords) return false;
+
+            const reports = {
+                accept: this.buildDrawOverlapReport(baseFeature, acceptCoords, acceptCoords),
+                merge: this.buildDrawOverlapReport(baseFeature, acceptCoords, mergeCoords),
+                subtract: subtractCoords ? this.buildDrawOverlapReport(baseFeature, acceptCoords, subtractCoords) : null,
+            };
+
+            this.pendingM3Refine = {
+                feature: baseFeature,
+                overlayLayer,
+                source,
+                overlaps: [operandFeature],
+                operationType: 'edit-selection-overlap',
+                overlapCount: 1,
+                drawOverlapCandidates: {
+                    accept: acceptCoords,
+                    merge: mergeCoords,
+                    subtract: subtractCoords,
+                },
+                drawOverlapReports: reports,
+                report: reports.accept,
+            };
+
+            this.pendingEditSelectionOverlap = null;
+            this.syncEditSelectionOverlapButton();
+            this.refreshEditModifyInteraction();
+
+            this.state.selectedFeature = baseFeature;
+            const selected = this.getActiveInteractions().select.getFeatures();
+            selected.clear();
+            selected.push(baseFeature);
+
+            this.getLayerForFeature(baseFeature).changed();
+            this.map.renderSync();
+            this.updateSummary();
+            this.renderM3RefineReport();
+            this.setToolbarMessage(t('msg.editSelectionOverlapPreviewReady'));
+            return true;
+        } catch (error) {
+            console.warn('Edit selection overlap preview unavailable:', error);
+            return false;
+        }
+    }
+
+    tryStartEditSelectionOverlapPreviewAtPixel(pixel) {
+        const armed = this.pendingEditSelectionOverlap;
+        if (!armed || this.state.mode !== 'edit') return false;
+
+        const { baseFeature, overlayLayer, source } = armed;
+        if (!baseFeature || !source?.getFeatures?.()?.includes(baseFeature)) {
+            this.cancelEditSelectionOverlap(false);
+            return false;
+        }
+
+        const candidates = this.getVisibleFeatureCandidatesAtPixel(pixel)
+            .filter((feature) => (
+                feature
+                && feature !== baseFeature
+                && this.isPolygonFeature(feature)
+                && this.getFeatureOverlayLayer(feature) === overlayLayer
+            ));
+
+        if (!candidates.length) {
+            return false;
+        }
+
+        return this.startEditSelectionOverlapPreview(baseFeature, candidates[0], source, overlayLayer);
+    }
+
+    applyPendingDrawOverlapAction(action) {
+        const pending = this.pendingM3Refine;
+        if (!pending || (pending.operationType !== 'draw-overlap' && pending.operationType !== 'edit-selection-overlap')) return;
+
+        const isEditSelectionOverlap = pending.operationType === 'edit-selection-overlap';
+
+        const candidate = pending.drawOverlapCandidates?.[action];
+        const feature = pending.feature;
+        const layer = pending.overlayLayer === 'pertenenze' ? this.layers.pertenenza : this.layers.vector;
+        const source = pending.source;
+
+        if (action === 'subtract' && !candidate) {
+            source.removeFeature(feature);
+            this.hideM3RefineReport();
+            this.pendingM3Refine = null;
+            this.state.selectedFeature = null;
+            this.updateSummary();
+            this.map.renderSync();
+            this.setToolbarMessage(t(isEditSelectionOverlap ? 'msg.editSelectionOverlapSubtractEmpty' : 'msg.drawOverlapSubtractEmpty'));
+            return;
+        }
+
+        if (!this.setFeatureGeometryFromMultiPolygon(feature, candidate)) {
+            this.setToolbarMessage(t('msg.drawOverlapRejected'));
+            return;
+        }
+
+        if (action === 'merge') {
+            for (const overlapFeature of pending.overlaps ?? []) {
+                if (overlapFeature && overlapFeature !== feature) {
+                    source.removeFeature(overlapFeature);
+                }
+            }
+        }
+
+        feature.set('overlayLayer', pending.overlayLayer);
+        feature.set('version', (feature.get('version') ?? 1) + 1);
+        feature.set('modifiedAt', new Date().toISOString());
+
+        this.state.selectedFeature = feature;
+        layer.changed();
+        this.map.renderSync();
+        schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource);
+        this.updateSummary();
+        this.hideM3RefineReport();
+        this.pendingM3Refine = null;
+
+        if (action === 'merge') {
+            this.setToolbarMessage(t(isEditSelectionOverlap ? 'msg.editSelectionOverlapAppliedMerge' : 'msg.drawOverlapAppliedMerge'));
+        } else if (action === 'subtract') {
+            this.setToolbarMessage(t(isEditSelectionOverlap ? 'msg.editSelectionOverlapAppliedSubtract' : 'msg.drawOverlapAppliedSubtract'));
+        } else {
+            this.setToolbarMessage(t(isEditSelectionOverlap ? 'msg.editSelectionOverlapAppliedAccept' : 'msg.drawOverlapAppliedAccept'));
+        }
     }
 
     bindInteractionEventsForSet(ix, setName) {
@@ -818,15 +1279,27 @@ export default class Planimeter {
         ix.draw.on('drawstart', () => {
             this.state.isDrawing = true;
             this.clearSelection();
+            this.resetPointerCoordinatesValues();
             this.setToolbarMessage(t('msg.drawInProgress'));
         });
         ix.draw.on('drawend', (ev) => {
             this.state.isDrawing = false;
             ev.feature.set('overlayLayer', setName);
+
+            if (!this.enforceDrawOverlapGuard(ev.feature, getSource(), setName, ev)) {
+                getLayer().changed();
+                return;
+            }
+
             decorateFeature(ev.feature, this.state, getSource().getFeatures().length);
             this.state.selectedFeature = ev.feature;
             getLayer().changed();
             this.updateSummary();
+
+            if (this.pendingM3Refine?.operationType === 'draw-overlap' && this.pendingM3Refine?.feature === ev.feature) {
+                return;
+            }
+
             this.setToolbarMessage(t('msg.drawDone'));
             this.pauseDrawAfterClose();
         });
@@ -838,6 +1311,7 @@ export default class Planimeter {
         ix.drawStraight.on('drawstart', () => {
             this.state.isDrawing = true;
             this.clearSelection();
+            this.resetPointerCoordinatesValues();
             this.setToolbarMessage(t('msg.straightInProgress'));
         });
         ix.drawStraight.on('drawend', (ev) => {
@@ -858,6 +1332,7 @@ export default class Planimeter {
         ix.drawPolyline.on('drawstart', () => {
             this.state.isDrawing = true;
             this.clearSelection();
+            this.resetPointerCoordinatesValues();
             this.setToolbarMessage(t('msg.polylineInProgress'));
         });
         ix.drawPolyline.on('drawend', (ev) => {
@@ -948,12 +1423,28 @@ export default class Planimeter {
             this.rejectPendingM3Refine();
         });
 
+        this.elements.m3RefineMergeButton?.addEventListener('click', () => {
+            this.applyPendingDrawOverlapAction('merge');
+        });
+
+        this.elements.m3RefineSubtractButton?.addEventListener('click', () => {
+            this.applyPendingDrawOverlapAction('subtract');
+        });
+
+        this.elements.editSelectionOverlapButton?.addEventListener('click', () => {
+            this.toggleEditSelectionOverlapTool();
+        });
+
         this.elements.btnVertexDeleteAllAccept?.addEventListener('click', () => {
             this.confirmDeleteAllSelectedVertices();
         });
 
         this.elements.btnVertexDeleteAllReject?.addEventListener('click', () => {
             this.cancelDeleteAllSelectedVertices();
+        });
+
+        this.elements.btnHoleDrawWarningClose?.addEventListener('click', () => {
+            this.hideHoleDrawWarning();
         });
 
         document.addEventListener('pointerdown', (ev) => {
@@ -1055,6 +1546,8 @@ export default class Planimeter {
         this.elements.settingsWmsLayerOpacity?.forEach((el) => {
             el.addEventListener('input', () => this.updateCatastoWmsLayerOpacityFromSettings());
         });
+
+        this.syncEditSelectionOverlapButton();
     }
 
     // ── Feature style ────────────────────────────────────────────────────────────
@@ -1086,6 +1579,10 @@ export default class Planimeter {
             this.cancelSelectionExportMode(false);
         }
 
+        if (mode !== 'edit') {
+            this.cancelEditSelectionOverlap(false);
+        }
+
         this.state.mode = mode;
         if (mode !== 'edit' && this.getSelectedEditVertices().length) {
             this.clearSelectedEditVertices();
@@ -1095,6 +1592,7 @@ export default class Planimeter {
         if (mode !== 'edit') {
             this.hideVertexDeleteAllWarning();
         }
+        this.hideHoleDrawWarning();
 
         if (this.state.drawLockTimeoutId) {
             window.clearTimeout(this.state.drawLockTimeoutId);
@@ -1106,7 +1604,7 @@ export default class Planimeter {
         ix.drawStraight.setActive(mode === 'measure-straight');
         ix.drawPolyline.setActive(mode === 'measure-polyline');
         ix.select.setActive(mode === 'edit' || mode === 'delete' || mode === 'navigate');
-        ix.modify.setActive(mode === 'edit');
+        ix.modify.setActive(mode === 'edit' && !this.pendingEditSelectionOverlap);
         this.refreshSnapState();
 
         if (this.isMeasureOrDrawMode(mode)) {
@@ -1147,6 +1645,8 @@ export default class Planimeter {
         this.refreshEditVertexOverlay();
         this.updatePointerCoordinatesVisibility();
         this.renderParcelInfo();
+        this.syncEditSelectionOverlapButton();
+        this.applyMapCursorState();
     }
 
     isMeasureOrDrawMode(mode) {
@@ -1215,6 +1715,19 @@ export default class Planimeter {
             this.clearSelection();
             this.setToolbarMessage(t('msg.featureDeleted'));
             return;
+        }
+
+        if (this.state.mode === 'edit' && this.pendingEditSelectionOverlap) {
+            const armed = this.pendingEditSelectionOverlap;
+            const started = this.startEditSelectionOverlapPreview(
+                armed.baseFeature,
+                feature,
+                armed.source,
+                armed.overlayLayer,
+            );
+            if (started) {
+                return;
+            }
         }
 
         this.state.selectedFeature = feature;
@@ -1694,6 +2207,30 @@ export default class Planimeter {
     showVertexDeleteAllWarning(messageKey = 'vertex.deleteAll.message.default') {
         this.elements.vertexDeleteAllWarningMessage.textContent = t(messageKey);
         this.elements.vertexDeleteAllWarning.hidden = false;
+    }
+
+    showHoleDrawWarning(messageKey = 'hole.warning.selectTarget', params = {}) {
+        if (!this.elements.holeDrawWarning || !this.elements.holeDrawWarningMessage) return;
+
+        this.elements.holeDrawWarningMessage.textContent = t(messageKey, params);
+        this.elements.holeDrawWarning.hidden = false;
+
+        if (this.holeDrawWarningTimeoutId) {
+            window.clearTimeout(this.holeDrawWarningTimeoutId);
+        }
+        this.holeDrawWarningTimeoutId = window.setTimeout(() => {
+            this.hideHoleDrawWarning();
+        }, 5000);
+    }
+
+    hideHoleDrawWarning() {
+        if (this.holeDrawWarningTimeoutId) {
+            window.clearTimeout(this.holeDrawWarningTimeoutId);
+            this.holeDrawWarningTimeoutId = null;
+        }
+        if (this.elements.holeDrawWarning) {
+            this.elements.holeDrawWarning.hidden = true;
+        }
     }
 
     hideVertexDeleteAllWarning() {
@@ -2649,6 +3186,8 @@ export default class Planimeter {
 
         viewport.classList.add('export-selection-active');
         this.setMapNavigationEnabled(false);
+        this.updatePointerCoordinatesVisibility();
+        this.applyMapCursorState();
         viewport.addEventListener('mousedown', onMouseDown);
         viewport.addEventListener('mousemove', onMouseMove);
         window.addEventListener('mouseup', onMouseUp);
@@ -2663,9 +3202,12 @@ export default class Planimeter {
                 viewport.removeEventListener('contextmenu', onContextMenu);
                 container.remove();
                 this.setMapNavigationEnabled(true);
+            this.updatePointerCoordinatesVisibility();
+            this.applyMapCursorState();
         };
 
         this.selectionExport = state;
+        this.updatePointerCoordinatesVisibility();
 
         this.setToolbarMessage(t('msg.exportSelectionMode'));
     }
@@ -2710,6 +3252,8 @@ export default class Planimeter {
         if (showMessage) {
             this.setToolbarMessage(t('msg.exportSelectionCancelled'));
         }
+        this.updatePointerCoordinatesVisibility();
+        this.applyMapCursorState();
     }
 
     buildViewportCompositeCanvas(scale = 1) {
@@ -3356,6 +3900,75 @@ export default class Planimeter {
         this.syncPreferenceControls();
         this.updatePointerCoordinatesVisibility();
         this.renderParcelInfo();
+        this.syncEditSelectionOverlapButton();
+        this.updatePointerCoordinatesZoomGauge();
+        this.applyMapCursorState();
+    }
+
+    toggleEditSelectionOverlapTool() {
+        if (this.state.mode !== 'edit') {
+            this.setMode('edit');
+        }
+
+        if (this.pendingEditSelectionOverlap) {
+            this.cancelEditSelectionOverlap(true);
+            return;
+        }
+
+        if (!this.isPolygonFeature(this.state.selectedFeature)) {
+            this.setToolbarMessage(t('msg.editSelectionOverlapNeedSelection'));
+            return;
+        }
+
+        if (this.pendingM3Refine?.operationType === 'edit-selection-overlap') {
+            this.rejectPendingM3Refine(false);
+        }
+
+        const baseFeature = this.state.selectedFeature;
+        this.pendingEditSelectionOverlap = {
+            baseFeature,
+            overlayLayer: this.getFeatureOverlayLayer(baseFeature),
+            source: this.getSourceForFeature(baseFeature),
+        };
+
+        const selected = this.getActiveInteractions().select.getFeatures();
+        selected.clear();
+        selected.push(baseFeature);
+
+        this.clearSelectedEditVertices();
+        this.refreshEditVertexOverlay();
+        this.refreshEditModifyInteraction();
+        this.syncEditSelectionOverlapButton();
+        this.setToolbarMessage(t('msg.editSelectionOverlapArmed'));
+        this.applyMapCursorState();
+    }
+
+    cancelEditSelectionOverlap(showMessage = false) {
+        if (!this.pendingEditSelectionOverlap) return;
+        this.pendingEditSelectionOverlap = null;
+        this.refreshEditModifyInteraction();
+        this.syncEditSelectionOverlapButton();
+        this.applyMapCursorState();
+        if (showMessage) {
+            this.setToolbarMessage(t('msg.editSelectionOverlapCancelled'));
+        }
+    }
+
+    refreshEditModifyInteraction() {
+        const ix = this.getActiveInteractions();
+        const holeActive = Boolean(this.holeDrawInteraction?.getActive?.());
+        ix.modify.setActive(this.state.mode === 'edit' && !holeActive && !this.pendingEditSelectionOverlap);
+    }
+
+    syncEditSelectionOverlapButton() {
+        const button = this.elements.editSelectionOverlapButton;
+        if (!button) return;
+
+        const active = Boolean(this.pendingEditSelectionOverlap);
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-pressed', String(active));
+        button.textContent = t(active ? 'tool.editSelectionOverlap.active' : 'tool.editSelectionOverlap');
+        button.title = t(active ? 'hint.tool.editSelectionOverlap.active' : 'hint.tool.editSelectionOverlap');
     }
 
     // ── Misc ─────────────────────────────────────────────────────────────────────
@@ -3404,6 +4017,7 @@ export default class Planimeter {
         const visible = this.m3BusyActive || this.mapTileLoadCount > 0;
         if (!visible) {
             indicator.hidden = true;
+            this.applyMapCursorState();
             return;
         }
 
@@ -3411,6 +4025,7 @@ export default class Planimeter {
         label.textContent = this.m3BusyActive
             ? (this.m3BusyMessage || t('m3.wait'))
             : t('map.loadingTiles');
+        this.applyMapCursorState();
     }
 
     bindPointerCoordinatesOverlay() {
@@ -3419,28 +4034,184 @@ export default class Planimeter {
 
         this.updatePointerCoordinatesVisibility();
         this.map.on('pointermove', (event) => {
-            if (event.dragging || this.state.mode !== 'navigate') return;
-            const lonLat = toLonLat(event.coordinate);
-            this.elements.pointerCoordinatesValue.textContent = `${lonLat[0].toFixed(6)}, ${lonLat[1].toFixed(6)}`;
+            this.lastPointerPixel = Array.isArray(event.pixel) ? [...event.pixel] : null;
+            if (event.dragging || this.isPointerCoordinatesUpdateBlocked()) return;
+            this.updatePointerCoordinatesFromEvent(event);
         });
 
         this.map.getViewport().addEventListener('mouseleave', () => {
-            if (this.state.mode === 'navigate') {
-                this.elements.pointerCoordinatesValue.textContent = t('coords.placeholder');
-            }
+            this.lastPointerPixel = null;
+            this.resetPointerCoordinatesValues();
         });
+
+        this.view.on('change:resolution', () => this.updatePointerCoordinatesZoomGauge());
+        this.view.on('change:center', () => {
+            if (this.isPointerCoordinatesUpdateBlocked()) return;
+            if (!Array.isArray(this.lastPointerPixel)) return;
+            const coordinate = this.map.getCoordinateFromPixel(this.lastPointerPixel);
+            this.updatePointerCoordinatesFromPixel(this.lastPointerPixel, coordinate);
+        });
+
+        this.updatePointerCoordinatesZoomGauge();
+        this.resetPointerCoordinatesValues();
     }
 
     updatePointerCoordinatesVisibility() {
         const panel = this.elements.pointerCoordinatesPanel;
-        const value = this.elements.pointerCoordinatesValue;
-        if (!panel || !value) return;
+        if (!panel) return;
 
-        const visible = this.state.mode === 'navigate';
-        panel.hidden = !visible;
-        if (!visible) {
-            value.textContent = t('coords.placeholder');
+        panel.hidden = this.selectionExport?.active === true;
+        if (this.isPointerCoordinatesUpdateBlocked()) {
+            return;
         }
+        this.updatePointerCoordinatesZoomGauge();
+    }
+
+    isPointerCoordinatesUpdateBlocked() {
+        return Boolean(
+            this.state.isDrawing
+            || this.holeDrawInteraction?.getActive?.()
+            || this.selectionExport?.active
+            || this.m3BusyActive
+        );
+    }
+
+    updatePointerCoordinatesFromEvent(event) {
+        const pixel = Array.isArray(event?.pixel) ? event.pixel : null;
+        const coordinate = Array.isArray(event?.coordinate) ? event.coordinate : null;
+        this.updatePointerCoordinatesFromPixel(pixel, coordinate);
+    }
+
+    updatePointerCoordinatesFromPixel(pixel, coordinate) {
+        const valueEl = this.elements.pointerCoordinatesValue;
+        const vxEl = this.elements.pointerCoordinatesViewportX;
+        const vyEl = this.elements.pointerCoordinatesViewportY;
+        if (!valueEl || !vxEl || !vyEl) return;
+        if (!Array.isArray(pixel) || pixel.length < 2 || !Array.isArray(coordinate) || coordinate.length < 2) {
+            this.resetPointerCoordinatesValues();
+            return;
+        }
+
+        const lonLat = toLonLat(coordinate);
+        valueEl.textContent = `${lonLat[0].toFixed(6)}, ${lonLat[1].toFixed(6)}`;
+
+        const size = this.map.getSize() || [1, 1];
+        const xPct = Math.max(0, Math.min(100, (pixel[0] / Math.max(1, size[0])) * 100));
+        const yPct = Math.max(0, Math.min(100, (pixel[1] / Math.max(1, size[1])) * 100));
+        vxEl.textContent = `${xPct.toFixed(1)}%`;
+        vyEl.textContent = `${yPct.toFixed(1)}%`;
+        this.setPointerGaugeState(vxEl, this.elements.pointerCoordinatesViewportXBar, xPct);
+        this.setPointerGaugeState(vyEl, this.elements.pointerCoordinatesViewportYBar, yPct);
+        this.updatePointerCoordinatesZoomGauge();
+    }
+
+    updatePointerCoordinatesZoomGauge() {
+        const zoomEl = this.elements.pointerCoordinatesZoom;
+        if (!zoomEl || !this.view) return;
+
+        const zoom = Number(this.view.getZoom());
+        if (!Number.isFinite(zoom)) {
+            zoomEl.textContent = '--';
+            this.setPointerGaugeState(zoomEl, this.elements.pointerCoordinatesZoomBar, null);
+            return;
+        }
+
+        const minZoom = Number.isFinite(Number(this.view.getMinZoom())) ? Number(this.view.getMinZoom()) : 0;
+        const maxZoom = Number.isFinite(Number(this.view.getMaxZoom())) ? Number(this.view.getMaxZoom()) : 24;
+        const span = Math.max(1e-6, maxZoom - minZoom);
+        const zoomPct = Math.max(0, Math.min(100, ((zoom - minZoom) / span) * 100));
+        zoomEl.textContent = `${zoom.toFixed(1)} (${zoomPct.toFixed(0)}%)`;
+        this.setPointerGaugeState(zoomEl, this.elements.pointerCoordinatesZoomBar, zoomPct);
+    }
+
+    setPointerGaugeState(valueEl, barEl, pct) {
+        const gauge = valueEl?.closest?.('.pointer-gauge');
+        if (!gauge || !barEl) return;
+
+        gauge.classList.remove('pointer-gauge--mid', 'pointer-gauge--high');
+
+        if (!Number.isFinite(Number(pct))) {
+            barEl.style.width = '0%';
+            return;
+        }
+
+        const value = Math.max(0, Math.min(100, Number(pct)));
+        barEl.style.width = `${value.toFixed(1)}%`;
+        if (value >= 67) {
+            gauge.classList.add('pointer-gauge--high');
+        } else if (value >= 34) {
+            gauge.classList.add('pointer-gauge--mid');
+        }
+    }
+
+    resetPointerCoordinatesValues() {
+        if (this.elements.pointerCoordinatesValue) {
+            this.elements.pointerCoordinatesValue.textContent = t('coords.placeholder');
+        }
+        if (this.elements.pointerCoordinatesViewportX) {
+            this.elements.pointerCoordinatesViewportX.textContent = t('coords.gaugePlaceholder');
+            this.setPointerGaugeState(this.elements.pointerCoordinatesViewportX, this.elements.pointerCoordinatesViewportXBar, null);
+        }
+        if (this.elements.pointerCoordinatesViewportY) {
+            this.elements.pointerCoordinatesViewportY.textContent = t('coords.gaugePlaceholder');
+            this.setPointerGaugeState(this.elements.pointerCoordinatesViewportY, this.elements.pointerCoordinatesViewportYBar, null);
+        }
+        this.updatePointerCoordinatesZoomGauge();
+    }
+
+    applyMapCursorState() {
+        const viewport = this.map?.getViewport?.();
+        if (!viewport) return;
+
+        const cursorClasses = [
+            'map-cursor-navigate',
+            'map-cursor-draw',
+            'map-cursor-measure',
+            'map-cursor-hole',
+            'map-cursor-edit',
+            'map-cursor-edit-selection',
+            'map-cursor-delete',
+            'map-cursor-busy',
+        ];
+        viewport.classList.remove(...cursorClasses);
+
+        const isBusy = this.m3BusyActive || this.mapTileLoadCount > 0;
+        if (isBusy) {
+            viewport.classList.add('map-cursor-busy');
+            return;
+        }
+
+        if (this.holeDrawInteraction?.getActive?.()) {
+            viewport.classList.add('map-cursor-hole');
+            return;
+        }
+
+        if (this.selectionExport?.active) {
+            viewport.classList.add('map-cursor-measure');
+            return;
+        }
+
+        if (this.state.mode === 'draw') {
+            viewport.classList.add('map-cursor-draw');
+            return;
+        }
+
+        if (this.state.mode === 'measure-straight' || this.state.mode === 'measure-polyline') {
+            viewport.classList.add('map-cursor-measure');
+            return;
+        }
+
+        if (this.state.mode === 'edit') {
+            viewport.classList.add(this.pendingEditSelectionOverlap ? 'map-cursor-edit-selection' : 'map-cursor-edit');
+            return;
+        }
+
+        if (this.state.mode === 'delete') {
+            viewport.classList.add('map-cursor-delete');
+            return;
+        }
+
+        viewport.classList.add('map-cursor-navigate');
     }
 
     async copyCoordinatesAtPixel(pixel) {
@@ -4600,12 +5371,19 @@ export default class Planimeter {
         const debug = report.debug || {};
 
         const isHolePreview = pending.operationType === 'hole';
+        const isDrawOverlapPreview = pending.operationType === 'draw-overlap';
+        const isEditSelectionOverlapPreview = pending.operationType === 'edit-selection-overlap';
+        const isOverlapPreview = isDrawOverlapPreview || isEditSelectionOverlapPreview;
 
         if (this.elements.m3RefineReportTitle) {
             const featureName = String(pending.feature?.get?.('featureName') || pending.feature?.get?.('featureId') || '-').trim() || '-';
             this.elements.m3RefineReportTitle.textContent = t(
-                isHolePreview ? 'hole.report.title' : 'm3.refine.report.title',
-                { name: featureName },
+                isHolePreview
+                    ? 'hole.report.title'
+                    : (isDrawOverlapPreview
+                        ? 'draw.overlap.report.title'
+                        : (isEditSelectionOverlapPreview ? 'edit.selection.report.title' : 'm3.refine.report.title')),
+                { name: featureName, count: pending.overlapCount ?? 0 },
             );
         }
 
@@ -4627,10 +5405,16 @@ export default class Planimeter {
             this.elements.m3RefineDiffPerimeterLabel.textContent = t('m3.refine.report.deltaPerimeter');
         }
         if (this.elements.m3RefineVisualTitle) {
-            this.elements.m3RefineVisualTitle.textContent = t(isHolePreview ? 'hole.report.visualDiff' : 'm3.refine.report.visualDiff');
+            this.elements.m3RefineVisualTitle.textContent = t(
+                isHolePreview
+                    ? 'hole.report.visualDiff'
+                    : (isDrawOverlapPreview
+                        ? 'draw.overlap.report.visualDiff'
+                        : (isEditSelectionOverlapPreview ? 'edit.selection.report.visualDiff' : 'm3.refine.report.visualDiff')),
+            );
         }
         if (this.elements.m3RefineSummarySection) {
-            this.elements.m3RefineSummarySection.hidden = isHolePreview;
+            this.elements.m3RefineSummarySection.hidden = isHolePreview || isOverlapPreview;
         }
         if (this.elements.m3RefineSummaryTitle) {
             this.elements.m3RefineSummaryTitle.textContent = t('m3.refine.report.summary');
@@ -4663,11 +5447,32 @@ export default class Planimeter {
         });
 
         if (this.elements.m3RefineEffectNote) {
-            const noteKey = report.noVisibleChange
-                ? 'm3.refine.report.effect.unchanged'
-                : 'm3.refine.report.effect.changed';
+            const noteKey = isDrawOverlapPreview
+                ? 'draw.overlap.report.effect'
+                : (isEditSelectionOverlapPreview
+                    ? 'edit.selection.report.effect'
+                    : (report.noVisibleChange
+                    ? 'm3.refine.report.effect.unchanged'
+                    : 'm3.refine.report.effect.changed'));
             this.elements.m3RefineEffectNote.textContent = t(noteKey);
-            this.elements.m3RefineEffectNote.classList.toggle('is-unchanged', Boolean(report.noVisibleChange));
+            this.elements.m3RefineEffectNote.classList.toggle('is-unchanged', !isOverlapPreview && Boolean(report.noVisibleChange));
+        }
+
+        if (this.elements.m3RefineMergeButton) {
+            this.elements.m3RefineMergeButton.hidden = !isOverlapPreview;
+        }
+        if (this.elements.m3RefineSubtractButton) {
+            this.elements.m3RefineSubtractButton.hidden = !isOverlapPreview;
+        }
+        if (this.elements.m3RefineAcceptButton) {
+            this.elements.m3RefineAcceptButton.textContent = t(
+                isOverlapPreview ? 'draw.overlap.accept' : 'm3.refine.accept',
+            );
+        }
+        if (this.elements.m3RefineRejectButton) {
+            this.elements.m3RefineRejectButton.textContent = t(
+                isOverlapPreview ? 'draw.overlap.reject' : 'm3.refine.reject',
+            );
         }
 
         panel.hidden = false;
@@ -4679,13 +5484,30 @@ export default class Planimeter {
         if (this.elements.m3RefineSummarySection) {
             this.elements.m3RefineSummarySection.hidden = false;
         }
+        if (this.elements.m3RefineMergeButton) {
+            this.elements.m3RefineMergeButton.hidden = true;
+        }
+        if (this.elements.m3RefineSubtractButton) {
+            this.elements.m3RefineSubtractButton.hidden = true;
+        }
+        if (this.elements.m3RefineAcceptButton) {
+            this.elements.m3RefineAcceptButton.textContent = t('m3.refine.accept');
+        }
+        if (this.elements.m3RefineRejectButton) {
+            this.elements.m3RefineRejectButton.textContent = t('m3.refine.reject');
+        }
     }
 
     acceptPendingM3Refine() {
         if (!this.pendingM3Refine) return;
 
         const { feature, overlayLayer, report } = this.pendingM3Refine;
-        const isHolePreview = this.pendingM3Refine.operationType === 'hole';
+        const operationType = this.pendingM3Refine.operationType;
+        const isHolePreview = operationType === 'hole';
+        if (operationType === 'draw-overlap' || operationType === 'edit-selection-overlap') {
+            this.applyPendingDrawOverlapAction('accept');
+            return;
+        }
         const now = new Date().toISOString();
         feature.set('version', (feature.get('version') ?? 1) + 1);
         feature.set('modifiedAt', now);
@@ -4717,6 +5539,38 @@ export default class Planimeter {
         const pending = this.pendingM3Refine;
         if (!pending) return;
         const isHolePreview = pending.operationType === 'hole';
+        const isDrawOverlapPreview = pending.operationType === 'draw-overlap';
+        const isEditSelectionOverlapPreview = pending.operationType === 'edit-selection-overlap';
+
+        if (isDrawOverlapPreview) {
+            pending.source?.removeFeature?.(pending.feature);
+            this.state.selectedFeature = null;
+            this.updateSummary();
+            this.hideM3RefineReport();
+            this.pendingM3Refine = null;
+            this.pendingHoleOperation = null;
+            if (showMessage) {
+                this.setToolbarMessage(t('msg.drawOverlapRejected'));
+            }
+            return;
+        }
+
+        if (isEditSelectionOverlapPreview) {
+            this.state.selectedFeature = pending.feature ?? null;
+            const active = this.getActiveInteractions().select.getFeatures();
+            active.clear();
+            if (pending.feature) {
+                active.push(pending.feature);
+            }
+            this.updateSummary();
+            this.hideM3RefineReport();
+            this.pendingM3Refine = null;
+            this.pendingHoleOperation = null;
+            if (showMessage) {
+                this.setToolbarMessage(t('msg.editSelectionOverlapRejected'));
+            }
+            return;
+        }
 
         const { feature, originalCoordinates, overlayLayer } = pending;
         const geometry = feature.getGeometry();

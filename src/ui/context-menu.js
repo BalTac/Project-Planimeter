@@ -11,6 +11,7 @@ import { t } from '../i18n/i18n.js';
  *   elements:           { contextMenu: HTMLElement },
  *   getIsDrawing:       () => boolean,
  *   getMode:            () => string,
+ *   getSelectedFeature?: () => import('ol/Feature').default | null,
  *   abortActiveDraw:    () => void,
  *   canQueryParcel:     () => boolean,
  *   editFeature:        (feature: import('ol/Feature').default) => void,
@@ -48,6 +49,7 @@ export function initContextMenu({
     elements,
     getIsDrawing,
     getMode,
+    getSelectedFeature,
     abortActiveDraw,
     canQueryParcel,
     editFeature,
@@ -78,7 +80,8 @@ export function initContextMenu({
         const pixel     = map.getEventPixel(event);
         const resolved  = resolveContextFeaturesAtPixel?.(pixel);
         const candidates = Array.isArray(resolved?.candidates) ? resolved.candidates : [];
-        const feature   = resolved?.feature ?? candidates[0] ?? map.forEachFeatureAtPixel(pixel, (f) => f) ?? null;
+        const selectedFeature = getSelectedFeature?.() ?? null;
+        const feature   = resolved?.feature ?? candidates[0] ?? map.forEachFeatureAtPixel(pixel, (f) => f) ?? selectedFeature ?? null;
 
         const specialMenu = getSpecialContextMenu?.({
             event,
