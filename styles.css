@@ -482,96 +482,6 @@ input[type="checkbox"] {
     letter-spacing: 0.02em;
 }
 
-.pointer-coordinates__gauges {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 6px;
-    margin-top: 4px;
-}
-
-.pointer-gauge {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 4px 6px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 6px;
-    background: rgba(255, 255, 255, 0.03);
-}
-
-.pointer-gauge__track {
-    display: block;
-    width: 100%;
-    height: 4px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.14);
-    overflow: hidden;
-}
-
-.pointer-gauge__fill {
-    display: block;
-    width: 0%;
-    height: 100%;
-    border-radius: 999px;
-    background: linear-gradient(90deg, rgba(115, 240, 191, 0.95), rgba(30, 207, 137, 0.95));
-    transition: width 220ms cubic-bezier(0.22, 1, 0.36, 1), background 180ms ease;
-}
-
-.pointer-gauge__label {
-    color: var(--text-muted);
-    font-size: 0.62rem;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-}
-
-.pointer-gauge__value {
-    color: #dff7ec;
-    font-size: 0.76rem;
-    font-weight: 700;
-}
-
-.pointer-gauge--mid .pointer-gauge__fill {
-    background: linear-gradient(90deg, rgba(255, 227, 138, 0.95), rgba(245, 189, 84, 0.95));
-}
-
-.pointer-gauge--high .pointer-gauge__fill {
-    background: linear-gradient(90deg, rgba(255, 152, 131, 0.95), rgba(255, 114, 98, 0.95));
-}
-
-.pointer-coordinates__legend {
-    margin-top: 4px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px 10px;
-    color: var(--text-muted);
-    font-size: 0.62rem;
-}
-
-.pointer-legend__item {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.pointer-legend__dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 999px;
-    display: inline-block;
-}
-
-.pointer-legend__dot--low {
-    background: rgba(73, 227, 168, 0.95);
-}
-
-.pointer-legend__dot--mid {
-    background: rgba(250, 199, 96, 0.95);
-}
-
-.pointer-legend__dot--high {
-    background: rgba(255, 126, 109, 0.95);
-}
-
 /* Context menu */
 .map-context-menu {
     position: absolute;
@@ -668,54 +578,6 @@ input[type="checkbox"] {
     background: var(--bg-panel-strong);
     box-shadow: var(--shadow);
     backdrop-filter: blur(16px);
-}
-
-.hole-draw-warning {
-    position: absolute;
-    right: 20px;
-    top: 20px;
-    z-index: 1145;
-    width: min(440px, calc(100vw - 40px));
-    padding: 12px;
-    border: 1px solid rgba(255, 227, 138, 0.35);
-    border-radius: var(--radius-md);
-    background: rgba(22, 18, 8, 0.92);
-    box-shadow: var(--shadow);
-    backdrop-filter: blur(16px);
-}
-
-.hole-draw-warning__header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    margin-bottom: 8px;
-    color: var(--accent-warm);
-}
-
-.hole-draw-warning__close {
-    min-width: 30px;
-    min-height: 30px;
-    padding: 5px;
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--text-main);
-    cursor: pointer;
-    font-weight: 700;
-}
-
-.hole-draw-warning__close:hover,
-.hole-draw-warning__close:focus-visible {
-    border-color: rgba(255, 227, 138, 0.6);
-    outline: none;
-}
-
-.hole-draw-warning__message {
-    margin: 0;
-    color: #ffedb5;
-    font-size: 0.88rem;
-    line-height: 1.45;
 }
 
 .vertex-delete-all-warning__header {
@@ -895,36 +757,6 @@ input[type="checkbox"] {
     cursor: crosshair;
 }
 
-.map-cursor-navigate {
-    cursor: grab;
-}
-
-.map-cursor-navigate:active {
-    cursor: grabbing;
-}
-
-.map-cursor-draw,
-.map-cursor-measure,
-.map-cursor-hole {
-    cursor: crosshair;
-}
-
-.map-cursor-edit {
-    cursor: default;
-}
-
-.map-cursor-edit-selection {
-    cursor: alias;
-}
-
-.map-cursor-delete {
-    cursor: not-allowed;
-}
-
-.map-cursor-busy {
-    cursor: progress;
-}
-
 .export-selection-box {
     position: absolute;
     z-index: 1150;
@@ -1008,10 +840,6 @@ input[type="checkbox"] {
         padding: 7px 8px;
     }
 
-    .pointer-coordinates__gauges {
-        grid-template-columns: 1fr;
-    }
-
     .ol-scale-line {
         right: 0;
         bottom: 32px;
@@ -1050,13 +878,6 @@ input[type="checkbox"] {
     }
 
     .vertex-delete-all-warning {
-        right: 16px;
-        left: 16px;
-        top: 16px;
-        width: auto;
-    }
-
-    .hole-draw-warning {
         right: 16px;
         left: 16px;
         top: 16px;

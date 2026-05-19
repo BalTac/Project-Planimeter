@@ -157,9 +157,6 @@
                             <option value="pertenenze" data-i18n="tool.editingLayer.pertenenze">Pertinenze</option>
                         </select>
                     </div>
-                    <div class="action-grid">
-                        <button type="button" id="btn-edit-selection-overlap" class="action-button icon-button" data-i18n="tool.editSelectionOverlap" data-i18n-title="hint.tool.editSelectionOverlap" data-icon="🧲" aria-pressed="false">Selection Merge/Subtract</button>
-                    </div>
                     <p id="snap-status" class="section-help" data-i18n="snap.on">Magnete: ON. Tieni premuto Ctrl per disattivarlo temporaneamente.</p>
                     <p class="section-help" data-i18n="snap.hint">Retta misura distanza tra due punti. Polyline misura percorso a vertici multipli (doppio clic per chiudere).</p>
                 </section>
@@ -567,8 +564,6 @@
 
             <div class="m3-refine-report__actions">
                 <button type="button" id="btn-m3-refine-accept" class="action-button icon-button" data-i18n="m3.refine.accept" data-icon="✅">Accetta</button>
-                <button type="button" id="btn-m3-refine-merge" class="action-button icon-button" data-i18n="draw.overlap.merge" data-icon="🧩" hidden>Merge</button>
-                <button type="button" id="btn-m3-refine-subtract" class="action-button icon-button" data-i18n="draw.overlap.subtract" data-icon="➖" hidden>Subtract</button>
                 <button type="button" id="btn-m3-refine-reject" class="action-button action-button-danger icon-button" data-i18n="m3.refine.reject" data-icon="✖">Rifiuta</button>
             </div>
         </section>
@@ -584,39 +579,9 @@
             </div>
         </section>
 
-        <section id="hole-draw-warning" class="hole-draw-warning" hidden aria-live="polite">
-            <header class="hole-draw-warning__header">
-                <strong data-i18n="hole.warning.title">Avviso Draw Hole</strong>
-                <button type="button" id="btn-hole-draw-warning-close" class="hole-draw-warning__close" aria-label="Chiudi avviso">X</button>
-            </header>
-            <p id="hole-draw-warning-message" class="hole-draw-warning__message" data-i18n="hole.warning.selectTarget">Seleziona prima una feature poligonale target e poi usa Draw Hole.</p>
-        </section>
-
         <div id="pointer-coordinates" class="pointer-coordinates" hidden aria-live="polite">
             <span class="pointer-coordinates__label" data-i18n="coords.label">Coordinate</span>
             <span id="pointer-coordinates-value" class="pointer-coordinates__value">--, --</span>
-            <div class="pointer-coordinates__gauges" aria-hidden="true">
-                <div class="pointer-gauge">
-                    <span class="pointer-gauge__label" data-i18n="coords.viewportX">Viewport X</span>
-                    <span id="pointer-coordinates-vx" class="pointer-gauge__value">--%</span>
-                    <span class="pointer-gauge__track"><span id="pointer-coordinates-vx-bar" class="pointer-gauge__fill"></span></span>
-                </div>
-                <div class="pointer-gauge">
-                    <span class="pointer-gauge__label" data-i18n="coords.viewportY">Viewport Y</span>
-                    <span id="pointer-coordinates-vy" class="pointer-gauge__value">--%</span>
-                    <span class="pointer-gauge__track"><span id="pointer-coordinates-vy-bar" class="pointer-gauge__fill"></span></span>
-                </div>
-                <div class="pointer-gauge">
-                    <span class="pointer-gauge__label" data-i18n="coords.zoom">Zoom</span>
-                    <span id="pointer-coordinates-zoom" class="pointer-gauge__value">--</span>
-                    <span class="pointer-gauge__track"><span id="pointer-coordinates-zoom-bar" class="pointer-gauge__fill"></span></span>
-                </div>
-            </div>
-            <div class="pointer-coordinates__legend" aria-hidden="true">
-                <span class="pointer-legend__item"><span class="pointer-legend__dot pointer-legend__dot--low"></span><span data-i18n="coords.legend.low">Low</span></span>
-                <span class="pointer-legend__item"><span class="pointer-legend__dot pointer-legend__dot--mid"></span><span data-i18n="coords.legend.mid">Mid</span></span>
-                <span class="pointer-legend__item"><span class="pointer-legend__dot pointer-legend__dot--high"></span><span data-i18n="coords.legend.high">High</span></span>
-            </div>
         </div>
 
         <nav id="map-context-menu" class="map-context-menu" hidden aria-label="Menu contestuale mappa">
