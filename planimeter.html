@@ -46,6 +46,10 @@
                     </div>
                 </div>
                 <h1 data-i18n="app.title">Planimeter Overlay</h1>
+                <div class="toolbar-meta-row">
+                    <span class="toolbar-meta-label" data-i18n="sync.label">Sync locale</span>
+                    <span id="local-sync-status" class="sync-pill sync-pill--checking" role="status" aria-live="polite" data-i18n="sync.status.checking">Verifica...</span>
+                </div>
                 <p class="toolbar-copy" data-i18n="app.tagline">Misura, modifica, esporta e reimporta poligoni senza uscire dalla mappa.</p>
                 <p id="toolbar-status" class="toolbar-status" role="status" aria-live="polite" data-i18n="app.statusInit">Modalità disegno attiva.</p>
             </header>
@@ -213,7 +217,10 @@
                             <div id="dsl-cadastral-links" class="dsl-cadastral-links"></div>
                         </div>
                         <div id="dsl-fields-form" class="dsl-fields-form" role="group" aria-labelledby="dsl-fields-title"></div>
-                        <button type="button" id="btn-dsl-assign" class="action-button icon-button" data-i18n="dsl.category.assign" data-icon="🏷">Assegna categoria</button>
+                        <div class="dsl-assignment-actions">
+                            <button type="button" id="btn-dsl-assign" class="action-button icon-button" data-i18n="dsl.category.assign" data-icon="🏷">Assegna categoria</button>
+                            <button type="button" id="btn-dsl-unassign" class="action-button action-button-danger icon-button" data-i18n="dsl.category.unassign" data-icon="🧹" hidden>Unassign</button>
+                        </div>
                     </div>
                     <p id="dsl-assign-hint" class="section-help" data-i18n="dsl.assign.hintNoFeature">Seleziona una feature poligonale per assegnare una categoria.</p>
                 </section>
@@ -582,6 +589,28 @@
         <div id="pointer-coordinates" class="pointer-coordinates" hidden aria-live="polite">
             <span class="pointer-coordinates__label" data-i18n="coords.label">Coordinate</span>
             <span id="pointer-coordinates-value" class="pointer-coordinates__value">--, --</span>
+            <div class="pointer-coordinates__gauges" aria-hidden="true">
+                <div class="pointer-gauge">
+                    <span class="pointer-gauge__label" data-i18n="coords.viewportX">Viewport X</span>
+                    <span id="pointer-coordinates-vx" class="pointer-gauge__value">--%</span>
+                    <span class="pointer-gauge__track"><span id="pointer-coordinates-vx-bar" class="pointer-gauge__fill"></span></span>
+                </div>
+                <div class="pointer-gauge">
+                    <span class="pointer-gauge__label" data-i18n="coords.viewportY">Viewport Y</span>
+                    <span id="pointer-coordinates-vy" class="pointer-gauge__value">--%</span>
+                    <span class="pointer-gauge__track"><span id="pointer-coordinates-vy-bar" class="pointer-gauge__fill"></span></span>
+                </div>
+                <div class="pointer-gauge">
+                    <span class="pointer-gauge__label" data-i18n="coords.zoom">Zoom</span>
+                    <span id="pointer-coordinates-zoom" class="pointer-gauge__value">--</span>
+                    <span class="pointer-gauge__track"><span id="pointer-coordinates-zoom-bar" class="pointer-gauge__fill"></span></span>
+                </div>
+            </div>
+            <div class="pointer-coordinates__legend" aria-hidden="true">
+                <span class="pointer-legend__item"><span class="pointer-legend__dot pointer-legend__dot--low"></span><span data-i18n="coords.legend.low">Low</span></span>
+                <span class="pointer-legend__item"><span class="pointer-legend__dot pointer-legend__dot--mid"></span><span data-i18n="coords.legend.mid">Mid</span></span>
+                <span class="pointer-legend__item"><span class="pointer-legend__dot pointer-legend__dot--high"></span><span data-i18n="coords.legend.high">High</span></span>
+            </div>
         </div>
 
         <nav id="map-context-menu" class="map-context-menu" hidden aria-label="Menu contestuale mappa">

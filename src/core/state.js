@@ -7,6 +7,7 @@ export function createInitialState() {
         nextFeatureId: 1,
         nextPertenenzaId: 1,
         selectedFeature: null,
+        selectedFeatures: [],
         catastoSource: 'official',
         drawLockTimeoutId: null,
         isCtrlPressed: false,

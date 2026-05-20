@@ -3,7 +3,7 @@
 > Web app standalone per misurare superfici e distanze su mappa, con GIS leggero, overlay catastale ufficiale e **autodetect particella** pixel-perfect tramite proxy WMS locale.
 
 <p align="center">
-  <img alt="Python" src="https://img.shields.io/badge/python-3.8%2B-blue?logo=python&logoColor=white">
+  <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white">
   <img alt="OpenLayers" src="https://img.shields.io/badge/OpenLayers-8.2.0-1f6feb?logo=openlayers">
   <img alt="No bundler" src="https://img.shields.io/badge/build-no%20bundler-success">
   <img alt="License" src="https://img.shields.io/badge/license-see%20LICENSE-lightgrey">
@@ -37,6 +37,7 @@
 - **M3 Trace** (nuovo): rifinisce il bordo pixel-per-pixel sulla `ownership_mask` via `findContours` + RDP a tolleranza in metri (default 0.35 m, validato a ±1 % di delta area su particelle reali).
 - **Export raster geo-referenziato**: TIFF, PNG+PGW, bundle ZIP con metadati.
 - **UI bilingue** IT/EN, sistema metrico/imperiale, layer Pertinenze separato dalle aree utente.
+- **Persistenza locale cross-browser**: `localStorage` + mirror locale backend (file JSON) con fallback automatico.
 
 ## Stack
 
@@ -47,7 +48,7 @@
 | Backend locale | Python 3.10+, `http.server`, `urllib`, `sqlite3` |
 | Image stack | Pillow, OpenCV (`opencv-python`), numpy |
 | Cache tile WMS | SQLite con TTL e quota dimensione |
-| Persistenza utente | `localStorage` lato browser |
+| Persistenza utente | Ibrida: `localStorage` browser + mirror locale backend (`.planimeter_state_store.json`) |
 
 ## Quick start
 
@@ -80,9 +81,12 @@ Launcher pronti all'uso:
 - Autodetect M3 con espansione progressiva del raggio, preview live e conferma step-by-step.
 - Trace M3: contorno catastale pixel-perfect con un singolo parametro (`toleranceM`) esposto in Settings.
 - Layer Pertinenze separato dalle aree utente, con colore configurabile e toggle indipendente.
+- Pannello categoria: `Assign`/`Unassign` per campagna corrente (rimozione assegnazione senza cancellare area).
+- Naming coerente: nome canonico area (`Area XX`) in toolbar, crop assegnata mostrata nella label mappa.
 - Risincronizzazione metadati catastali da menu contestuale.
 - Lookup metadati proxy-first con fallback semantico (robusto su 502 upstream).
 - Overlay busy flottante durante detect M3 e caricamento tile.
+- Badge toolbar `Sync locale` con stati `Checking/OK/Degraded/Offline` + timestamp ultimo sync riuscito.
 
 ## Architettura
 
@@ -111,8 +115,10 @@ tests/                  smoke e regression test
 | GET  | `/proxy-health`           | Stato proxy, contatori, rate-limit budget |
 | GET  | `/cache-stats`            | Statistiche cache tile |
 | GET  | `/cache-config`           | Lettura config cache runtime |
+| GET  | `/local-state-load`       | Lettura snapshot campagne dal mirror locale backend |
 | POST | `/cache-config`           | Aggiornamento TTL/quota cache |
 | POST | `/cache-clear`            | Pulizia cache tile |
+| POST | `/local-state-save`       | Scrittura snapshot campagne nel mirror locale backend |
 | POST | `/export-geotiff`         | Export TIFF georeferenziato |
 | POST | `/export-pgw`             | Export PNG + sidecar PGW |
 | POST | `/export-bundle`          | Export ZIP bundle (image + GeoJSON + meta) |
@@ -207,7 +213,7 @@ Get-ChildItem src -Recurse -Filter *.js | ForEach-Object { node --check $_.FullN
 
 - Overlay catastale ufficiale dipende dalla disponibilità upstream WMS.
 - UX touch/mobile da migliorare per snapping e precisione vertici.
-- Nessuna persistenza cloud o multiutente.
+- Nessuna persistenza cloud o multiutente remoto (scope attuale: single-user locale, con sync cross-browser sulla stessa macchina).
 - TIFF esportato senza tag GeoTIFF embedded (PGW sidecar resta opzione georeferenziata).
 
 ## Attribuzioni

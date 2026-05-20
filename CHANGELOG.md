@@ -2,6 +2,53 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [2026-05-20] — Persistenza locale cross-browser con mirror file backend
+
+### Added
+- [server.py](server.py) aggiunti endpoint `GET /local-state-load` e `POST /local-state-save` per condividere lo stato campagne tra browser sulla stessa macchina.
+- [server.py](server.py) introdotta persistenza atomica su file locale `.planimeter_state_store.json` (write su `.tmp` + replace) con lock thread-safe e validazione payload/size.
+
+### Changed
+- [src/io/persistence.js](src/io/persistence.js) `persistFeatures` mantiene il salvataggio su `localStorage` e aggiunge mirror asincrono best-effort verso backend (`/local-state-save`) con debounce.
+- [src/io/persistence.js](src/io/persistence.js) aggiunta `syncPersistenceFromLocalMirror(...)`: al bootstrap carica lo stato backend (`/local-state-load`), confronta `savedAt` e, se piu recente del `localStorage`, applica restore completo delle feature.
+- [src/io/persistence.js](src/io/persistence.js) consolidata logica di restore in helper unico `restoreFromCampaignStore(...)` per mantenere comportamento coerente tra restore locale e sync mirror.
+- [src/planimeter.js](src/planimeter.js) bootstrap aggiornato: dopo restore da `localStorage` tenta sync dal mirror backend e riallinea mappa/summary quando trova uno snapshot piu recente.
+- [planimeter.html](planimeter.html), [styles.css](styles.css), [src/planimeter.js](src/planimeter.js), [src/io/persistence.js](src/io/persistence.js) aggiunto indicatore toolbar `Sync locale` con stati runtime `Checking/OK/Degraded/Offline`, alimentato dagli esiti load/save del mirror backend.
+- [src/planimeter.js](src/planimeter.js), [src/io/persistence.js](src/io/persistence.js), [src/i18n/it.js](src/i18n/it.js), [src/i18n/en.js](src/i18n/en.js) tooltip `Sync locale` esteso con timestamp dell'ultimo sync riuscito, formattato secondo la lingua attiva.
+- [src/planimeter.js](src/planimeter.js) fix assegnazione categoria DSL: risolto bug su `categoryLabel` usata prima della dichiarazione, mantenendo separato il nome canonico area dalla categoria assegnata.
+
+### Fixed
+- [src/planimeter.js](src/planimeter.js), [src/geometry/style.js](src/geometry/style.js) separato il concetto di nome area e assegnazione categoria: il nome canonico area (`Area XX`) resta nella toolbar/feature metadata, mentre la label in mappa mostra la crop assegnata (senza parentesi quadre).
+- [src/planimeter.js](src/planimeter.js) rimosso overwrite di `featureName` durante `Assign category`; introdotta normalizzazione legacy per ripristinare nomi area se presenti valori storici in formato `[crop]`.
+- [planimeter.html](planimeter.html), [styles.css](styles.css), [src/planimeter.js](src/planimeter.js), [src/i18n/it.js](src/i18n/it.js), [src/i18n/en.js](src/i18n/en.js) aggiunto pulsante `Unassign` nel pannello Category assignment per rimuovere l'assegnazione DSL sulla campagna corrente.
+- [src/planimeter.js](src/planimeter.js), [planimeter.html](planimeter.html) affinata UX del pulsante `Unassign`: visibile solo quando la selezione corrente contiene almeno una feature con assegnazione attiva.
+
+### Notes
+- Strategia ibrida: `localStorage` resta primaria/offline-first; mirror backend e fallback automatici in caso endpoint non disponibili.
+
+## [2026-05-20] — Ripristino live coordinates complete senza zoom-lock
+
+### Changed
+- [planimeter.html](planimeter.html) ripristinato il pannello coordinate live con gauge Viewport X, Viewport Y e Zoom + legenda intensità.
+- [src/planimeter.js](src/planimeter.js) esteso `bindPointerCoordinatesOverlay` con aggiornamento continuo coordinate/gauge in tutte le modalità non conflittuali (`navigate`, `draw`, `measure-straight`, `measure-polyline`, `edit`, `delete`), blocco durante export selection e reset sicuro su `mouseleave`.
+- [src/planimeter.js](src/planimeter.js) aggiunti metodi `updatePointerCoordinatesFromPixel`, `updatePointerCoordinatesZoomGauge`, `setPointerGaugeState`, `resetPointerCoordinatesValues`, `applyMapCursorState`.
+- [src/planimeter.js](src/planimeter.js) integrato refresh cursore/overlay nei flussi `setMode`, `setHoleDrawActive`, `startSelectionExportMode`, `cancelSelectionExportMode`, `refreshUIText`.
+- [src/planimeter.js](src/planimeter.js) introdotta gestione ESC globale (`handleEscapeCancel`): annulla in ordine export selection, warning delete-all vertici, preview refine/hole pending, hole draw attivo, draw/measure in corso; in assenza di tool attivi forza modalità `navigate`.
+- [src/core/state.js](src/core/state.js), [src/planimeter.js](src/planimeter.js), [src/i18n/it.js](src/i18n/it.js), [src/i18n/en.js](src/i18n/en.js) introdotta selezione multipla lato aree utente (`Ctrl/Cmd+click` in Navigate) con assegnazione categoria DSL bulk su più aree; form campi dinamici mantenuto per assegnazione singola.
+- [src/planimeter.js](src/planimeter.js) fix runtime multi-selezione: uso esplicito `globalThis.Map` (evita conflitto con import `Map` OpenLayers) e toggle stabile della feature cliccata con Ctrl/Cmd.
+- [tests/test_e2e_p0_extended.py](tests/test_e2e_p0_extended.py) aggiunto test di regressione `test_ctrl_click_multi_select_and_bulk_assign_category` per verificare selezione multipla + assegnazione categoria massiva.
+- [styles.css](styles.css) migliorato contrasto di tutte le combo box (`select`, `option`, `option:disabled`) con palette coerente alla toolbar; corrette anche variabili colore nei campi DSL (`--text-main`/`--accent`) per mantenere leggibilità uniforme.
+- [src/geometry/style.js](src/geometry/style.js), [src/planimeter.js](src/planimeter.js) aggiornate label aree utente: rimosso il perimetro dalla label Drawn Areas e dalla metrica di selezione area; all'assegnazione categoria DSL il nome area viene ora aggiornato in formato `[nome crop]`.
+- [styles.css](styles.css) aggiunti stili dei gauge (track/fill + stati low/mid/high) e classi cursore mode-aware (`map-cursor-*`).
+- [src/i18n/it.js](src/i18n/it.js), [src/i18n/en.js](src/i18n/en.js) aggiunte stringhe `coords.*` per gauge e legenda.
+
+### Notes
+- Ripristino mirato dalla feature locale precedente senza reintrodurre controlli `zoom-lock` / `max-zoom` WMS.
+
+### Validation
+- `get_errors` su [src/planimeter.js](src/planimeter.js), [planimeter.html](planimeter.html), [styles.css](styles.css), [src/i18n/it.js](src/i18n/it.js), [src/i18n/en.js](src/i18n/en.js): nessun errore.
+- `python -m pytest tests/test_e2e_p0_extended.py -k "ctrl_click_multi_select_and_bulk_assign_category" -q` -> `1 passed`.
+
 ## [2026-05-19] — Draw Hole: supporto multi inner ring sulla stessa feature
 
 ### Changed

@@ -97,6 +97,22 @@ function getPropertyScopeLabel(feature) {
     return name || featureId || '-';
 }
 
+function getUserAreaMapLabel(feature) {
+    const dsl = feature.get('dsl');
+    if (dsl?.categoryId && dsl?.domainId) {
+        const domain = getDomain(dsl.domainId);
+        const category = domain ? getCategoryById(domain, dsl.categoryId) : null;
+        const label = String(category?.label || '').trim();
+        if (label) return label;
+    }
+
+    const raw = String(feature.get('featureName') || '').trim();
+    if (!raw) return t('feature.area');
+
+    const bracketed = /^\[(.+)\]$/.exec(raw);
+    return bracketed ? String(bracketed[1]).trim() : raw;
+}
+
 /**
  * Return a geometry suitable for placing a label on a feature.
  * @param {import('ol').Feature} feature
@@ -149,14 +165,13 @@ export function buildFeatureStyle(feature, selectedFeature, projection, unitSyst
 
     const nameLabel    = isPropertyScope
         ? getPropertyScopeLabel(feature)
-        : (feature.get('featureName') || t('feature.area'));
+        : (isArea ? getUserAreaMapLabel(feature) : (feature.get('featureName') || t('feature.area')));
     const areaLabel    = unitSystem.formatArea(calculateArea(feature, projection));
-    const perimLabel   = unitSystem.formatPerimeter(calculatePerimeter(feature, projection));
     const lengthLabel  = unitSystem.formatLength(calculateLength(feature, projection));
     const measureLabel = isPropertyScope
         ? nameLabel
         : (isArea
-        ? `${areaLabel}\n${t('feature.perimPrefix')}${perimLabel}`
+        ? `${areaLabel}`
         : lengthLabel);
 
     const labelGeom = getFeatureLabelGeometry(feature);

@@ -12,6 +12,7 @@
 ### P0 — Stabilizzazione e validazione corrente
 - [x] Verificare resa responsive desktop/mobile toolbar e tool icons senza overflow.
 - [x] Verificare hint hover IT/EN e accessibilita keyboard/screen-reader dei pulsanti.
+- [x] Correggere contrasto testo/sfondo delle combo box (`select/option`) per mantenere leggibilità coerente con il tema toolbar.
 - [x] Verificare gruppi layer A/B: mutua esclusione nel gruppo e massimo 2 layer attivi totali.
 - [x] Verificare ripristino preferenze layer corretto dopo refresh.
 - [x] Verificare cache WMS: primo caricamento MISS, secondo HIT, anche su layer differenti.
@@ -72,7 +73,9 @@
 - [ ] DM4 Geometria utente primaria + pertinenze dinamiche: set pertinenze selezionabile su reticolo WMS e modificabile nel tempo (aggiunta/rimozione anche dopo setup iniziale).
 - [x] Separare il layer Pertinenze dal layer aree utente, con ordine di rendering dedicato tra WMS e layer utente, selector toolbar del target di editing e persistenza locale multi-layer.
 - [x] Consentire deselezione completa dei layer base/amministrativi e toggle indipendente del gruppo C Pertinenze.
-- [ ] DM5 Single-user locale: mantenere architettura locale con schema versionato e percorsi pronti a futura estensione.
+- [x] DM5 Single-user locale: mantenere architettura locale con schema versionato e percorsi pronti a futura estensione.
+- [x] Aggiungere indicatore UI stato sync mirror locale (ok/degraded/offline) per diagnosi immediata tra browser.
+- [x] Estendere tooltip indicatore sync locale con timestamp ultimo sync riuscito (formattazione per locale IT/EN).
 
 - [x] Definire schema DSL v1 domain-agnostic (`domainId`, `version`, `categories[]`, `fields[]`, regole di validazione, palette colore).
 - [x] Introdurre registry domini (`domains/default/*.json`) con dominio iniziale `agriculture` e categorie colture base.
@@ -93,6 +96,11 @@
 #### UX wiring DSL (prossimi step)
 - [x] Context menu: voce "Assegna categoria" su feature poligonale selezionata → apre pannello/modal di selezione categoria.
 - [x] Pannello Operativo: sezione "Assegnazione categoria" con select dominio + dropdown categoria + campi fields dinamici per la feature selezionata.
+- [x] Supportare selezione multipla lato aree utente (Ctrl/Cmd+click in Navigate) e assegnazione categoria unica a più aree in un'unica azione.
+- [x] Correggere regressione runtime multi-selezione (`Map` OpenLayers vs `Map` nativa) e aggiungere test E2E di regressione sul bulk assign categoria.
+- [x] Drawn Areas: rimuovere il perimetro dalla label area; mantenere nome canonico area (`Area XX`) e mostrare crop assegnata solo nella label mappa.
+- [x] Distinguere naming area vs assegnazione crop: in toolbar mantenere nome area canonico (`Area XX`), in label mappa mostrare la crop assegnata (senza parentesi quadre).
+- [x] Aggiungere azione `Unassign` in pannello assegnazione DSL per rimuovere l'assegnazione della campagna/anno corrente sulla feature selezionata.
 - [x] Feedback visivo immediato: al cambio categoria la feature si ri-colora senza reload pagina.
 - [x] Filtro visibilità categorie: toggle per nascondere/mostrare categorie specifiche nella mappa e nella tabella riepilogo.
 - [x] Export bundle: includere report semantico per categoria nel pacchetto TIFF+GeoJSON+metadata.
@@ -102,6 +110,7 @@
 - [x] Mostrare riferimento tile ricaricato (`layer:z/x/y`) nella toolbar dopo refresh WMS singolo.
 - [x] Aggiungere attribution/licenze cartografiche persistenti in basso a destra, con scala metrica visibile.
 - [x] Aggiungere widget coordinate live in modalità Navigate e voce menu contestuale per copia coordinate.
+- [x] Ripristinare live view coordinate in modalità non conflittuali con gauge Viewport X/Y e Zoom, più cursori mappa coerenti con la modalità operativa corrente.
 - [ ] Migliorare UX mobile: toggle snapping dedicato (senza Ctrl).
 - [x] Migliorare UX edit vertici: marker su tutti i vertici (vuoto/non selezionato, pieno/selezionato), rimozione vertice opzionale via tasto destro o Canc con raddrizzamento automatico contorno.
 - [x] Evolvere UX cancellazione vertici: multi-selezione Ctrl+click, menu contestuale vertice con `Delete selected` senza confirm e `Delete all` con warning flottante Accept/Reject; regole topologiche inner ring (riempimento) / outer ring (eliminazione feature).
@@ -132,7 +141,7 @@
 - [ ] Draw overlap override con CTRL: se CTRL premuto durante draw/finalize, aprire preview+diff con azioni `Accept` / `Merge` / `Subtract` / `Reject`.
 - [ ] Boolean ops semantica v1 (solo stesso layer): `Merge` = union espansiva, `Subtract` = contrazione area target in overlap, `Accept` = keep-as-drawn.
 - [ ] Riuso pannello preview tipo Draw Hole/M3 per operazioni overlap (metriche prima/dopo/diff + rollback completo su Reject).
-- [ ] ESC global policy: ESC cancella tool attivo con rollback; ESC senza tool attivi forza Navigate; ESC ripetuto in Navigate resta no-op.
+- [x] ESC global policy: ESC cancella tool attivo con rollback; ESC senza tool attivi forza Navigate; ESC ripetuto in Navigate resta no-op.
 - [ ] Tool Selection esplicito (fase successiva): selezione target+operanda in Edit per lanciare Merge/Subtract con stessa preview diff.
 
 ### DM4 Continuation — Gruppo C (Pertinenze Layer) M3 Integration

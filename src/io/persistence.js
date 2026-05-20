@@ -9,6 +9,20 @@ import { decorateFeature } from '../geometry/decorate.js';
 
 const geoJsonFormat = new GeoJSON();
 const DEFAULT_CAMPAIGN_SEASON = 'annual';
+const LOCAL_STATE_LOAD_ENDPOINT = '/local-state-load';
+const LOCAL_STATE_SAVE_ENDPOINT = '/local-state-save';
+
+let localMirrorSaveTimeoutId = null;
+let lastLocalMirrorSavedAt = null;
+let localMirrorStatusListener = null;
+
+/**
+ * Subscribe to local mirror status updates.
+ * @param {(event: {status: 'checking'|'ok'|'degraded'|'offline', savedAt?: string|null, source?: string|null}) => void | null} listener
+ */
+export function setLocalMirrorStatusListener(listener) {
+    localMirrorStatusListener = typeof listener === 'function' ? listener : null;
+}
 
 /**
  * @typedef {Object} CampaignSnapshot
@@ -71,6 +85,7 @@ export function persistFeatures(state, ...vectorSources) {
         store.savedAt = campaign.savedAt;
 
         window.localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(store));
+        scheduleLocalMirrorSave(store);
     } catch (err) {
         console.error('Persistence save failed:', err);
     }
@@ -90,46 +105,63 @@ export function restorePersistedFeatures(state, vectorSource, pertenenzaSource, 
     try {
         const store = loadCampaignStore();
         if (!store.campaigns.length) return;
-
-        const activeCampaign = resolveActiveCampaign(store, state);
-        if (!activeCampaign) return;
-
-        state.activeCampaignId = activeCampaign.id;
-        state.activeCampaignYear = activeCampaign.year;
-        state.activeCampaignSeason = activeCampaign.season;
-
-        const restored = geoJsonFormat
-            .readFeatures(activeCampaign.features, {
-                dataProjection: 'EPSG:4326',
-                featureProjection: 'EPSG:3857',
-            })
-            .filter((f) => SUPPORTED_GEOMETRY_TYPES.has(f.getGeometry()?.getType()));
-
-        state.persistenceMuted = true;
-        try {
-            const userFeatures = [];
-            const pertenenzaFeatures = [];
-
-            restored.forEach((f, index) => {
-                const targetSource = f.get('overlayLayer') === 'pertenenze' ? pertenenzaSource : vectorSource;
-                decorateFeature(f, state, targetSource.getFeatures().length + index);
-                if (targetSource === pertenenzaSource) {
-                    pertenenzaFeatures.push(f);
-                } else {
-                    userFeatures.push(f);
-                }
-            });
-
-            vectorSource.addFeatures(userFeatures);
-            pertenenzaSource.addFeatures(pertenenzaFeatures);
-        } finally {
-            state.persistenceMuted = false;
-        }
-
-        onRestored(restored.length);
+        restoreFromCampaignStore(store, state, vectorSource, pertenenzaSource, onRestored);
     } catch (err) {
         console.error('Persistence restore failed:', err);
         state.persistenceMuted = false;
+    }
+}
+
+/**
+ * Pull campaign store from backend local mirror and apply it when newer than localStorage.
+ */
+export async function syncPersistenceFromLocalMirror(state, vectorSource, pertenenzaSource, onRestored = () => {}) {
+    if (typeof window.fetch !== 'function') {
+        emitLocalMirrorStatus('offline', { source: 'fetch-unavailable' });
+        return false;
+    }
+    emitLocalMirrorStatus('checking', { source: 'load' });
+    try {
+        const response = await window.fetch(LOCAL_STATE_LOAD_ENDPOINT, {
+            method: 'GET',
+            cache: 'no-store',
+            headers: {
+                'Accept': 'application/json',
+            },
+        });
+        if (!response.ok) {
+            emitLocalMirrorStatus('degraded', { source: 'load' });
+            return false;
+        }
+
+        const payload = await response.json();
+        if (!payload || payload.ok !== true || !payload.store || typeof payload.store !== 'object') {
+            emitLocalMirrorStatus('degraded', { source: 'load' });
+            return false;
+        }
+
+        const incomingStore = normalizeCampaignStore(payload.store);
+        const localStore = loadCampaignStore();
+        if (!isIncomingStoreNewer(incomingStore, localStore)) {
+            emitLocalMirrorStatus('ok', {
+                source: 'load',
+                savedAt: incomingStore?.savedAt ?? payload?.store?.savedAt ?? null,
+            });
+            return false;
+        }
+
+        state.activeCampaignId = incomingStore.activeCampaignId ?? null;
+        window.localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(incomingStore));
+        restoreFromCampaignStore(incomingStore, state, vectorSource, pertenenzaSource, onRestored);
+        emitLocalMirrorStatus('ok', {
+            source: 'load',
+            savedAt: incomingStore?.savedAt ?? payload?.store?.savedAt ?? null,
+        });
+        return true;
+    } catch (err) {
+        console.warn('Local mirror sync failed:', err);
+        emitLocalMirrorStatus('degraded', { source: 'load' });
+        return false;
     }
 }
 
@@ -176,6 +208,120 @@ export function historyAtParcel(parcelId) {
 
 function createEmptyFeatureCollection() {
     return { type: 'FeatureCollection', features: [] };
+}
+
+function scheduleLocalMirrorSave(store) {
+    if (typeof window.fetch !== 'function') {
+        emitLocalMirrorStatus('offline', { source: 'fetch-unavailable' });
+        return;
+    }
+
+    const savedAt = String(store?.savedAt || '').trim();
+    if (!savedAt || savedAt === lastLocalMirrorSavedAt) return;
+
+    if (localMirrorSaveTimeoutId) {
+        window.clearTimeout(localMirrorSaveTimeoutId);
+    }
+
+    localMirrorSaveTimeoutId = window.setTimeout(async () => {
+        localMirrorSaveTimeoutId = null;
+        try {
+            const response = await window.fetch(LOCAL_STATE_SAVE_ENDPOINT, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                },
+                body: JSON.stringify({ store }),
+            });
+            if (!response.ok) {
+                emitLocalMirrorStatus('degraded', { source: 'save' });
+                return;
+            }
+            lastLocalMirrorSavedAt = savedAt;
+            emitLocalMirrorStatus('ok', { source: 'save', savedAt });
+        } catch {
+            // Keep browser-local persistence functional even if local mirror fails.
+            emitLocalMirrorStatus('degraded', { source: 'save' });
+        }
+    }, 180);
+}
+
+function emitLocalMirrorStatus(status, meta = {}) {
+    if (typeof localMirrorStatusListener === 'function') {
+        localMirrorStatusListener({
+            status,
+            savedAt: typeof meta.savedAt === 'string' ? meta.savedAt : null,
+            source: typeof meta.source === 'string' ? meta.source : null,
+        });
+    }
+}
+
+function normalizeCampaignStore(rawStore) {
+    const migrated = migrateLegacyPayload(rawStore);
+    const campaigns = (migrated.campaigns ?? [])
+        .map((c, idx) => sanitizeCampaign(c, idx))
+        .filter(Boolean);
+
+    return {
+        version: LOCAL_STORAGE_SCHEMA_VERSION,
+        activeCampaignId: migrated.activeCampaignId ?? campaigns.at(-1)?.id ?? null,
+        savedAt: migrated.savedAt ?? new Date().toISOString(),
+        campaigns,
+    };
+}
+
+function restoreFromCampaignStore(store, state, vectorSource, pertenenzaSource, onRestored) {
+    const activeCampaign = resolveActiveCampaign(store, state);
+    if (!activeCampaign) return;
+
+    state.activeCampaignId = activeCampaign.id;
+    state.activeCampaignYear = activeCampaign.year;
+    state.activeCampaignSeason = activeCampaign.season;
+
+    const restored = geoJsonFormat
+        .readFeatures(activeCampaign.features, {
+            dataProjection: 'EPSG:4326',
+            featureProjection: 'EPSG:3857',
+        })
+        .filter((f) => SUPPORTED_GEOMETRY_TYPES.has(f.getGeometry()?.getType()));
+
+    state.persistenceMuted = true;
+    try {
+        vectorSource.clear();
+        pertenenzaSource.clear();
+
+        const userFeatures = [];
+        const pertenenzaFeatures = [];
+
+        restored.forEach((f, index) => {
+            const targetSource = f.get('overlayLayer') === 'pertenenze' ? pertenenzaSource : vectorSource;
+            decorateFeature(f, state, targetSource.getFeatures().length + index);
+            if (targetSource === pertenenzaSource) {
+                pertenenzaFeatures.push(f);
+            } else {
+                userFeatures.push(f);
+            }
+        });
+
+        vectorSource.addFeatures(userFeatures);
+        pertenenzaSource.addFeatures(pertenenzaFeatures);
+    } finally {
+        state.persistenceMuted = false;
+    }
+
+    onRestored(restored.length);
+}
+
+function toEpochMs(value) {
+    const ts = Date.parse(String(value || ''));
+    return Number.isFinite(ts) ? ts : 0;
+}
+
+function isIncomingStoreNewer(incomingStore, localStore) {
+    const incomingTs = toEpochMs(incomingStore?.savedAt);
+    const localTs = toEpochMs(localStore?.savedAt);
+    return incomingTs > localTs;
 }
 
 /**

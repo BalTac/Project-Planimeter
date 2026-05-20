@@ -30,6 +30,8 @@ import {
     historyAtPoint,
     schedulePersistenceSync,
     restorePersistedFeatures,
+    setLocalMirrorStatusListener,
+    syncPersistenceFromLocalMirror,
 } from './io/persistence.js';
 import { buildExportConfig, triggerDownload, requestBackendExport } from './io/export.js';
 import { detectImportFormat, readImportedFeatures } from './io/import.js';
@@ -92,7 +94,10 @@ export default class Planimeter {
             : 'parcelInfo.disabled';
         this.m3BusyActive = false;
         this.m3BusyMessage = '';
+        this.localMirrorSyncStatus = 'checking';
+        this.localMirrorSyncLastSuccessAt = null;
         this.mapTileLoadCount = 0;
+        this.lastPointerPixel = null;
         this.pendingVertexDeleteAll = null;
 
         this.vectorSource = new VectorSource();
@@ -102,6 +107,8 @@ export default class Planimeter {
 
         // ── DOM ───────────────────────────────────────────────────────────────
         this.elements = this.collectElements();
+        setLocalMirrorStatusListener((event) => this.updateLocalMirrorSyncStatus(event?.status, event?.savedAt));
+        this.updateLocalMirrorSyncStatus('checking');
 
         // ── Layers & map ──────────────────────────────────────────────────────
         this.layers = buildLayers(this.vectorSource, this.pertenenzaSource, this.featureStyle.bind(this));
@@ -188,10 +195,21 @@ export default class Planimeter {
                 this.fitToFeatures();
             },
         );
+        syncPersistenceFromLocalMirror(
+            this.state,
+            this.vectorSource,
+            this.pertenenzaSource,
+            (count) => {
+                this.setToolbarMessage(t('msg.featuresRestored', { count }));
+                this.fitToFeatures();
+                this.updateSummary();
+            },
+        );
 
         // ── DSL init (async, non-blocking) ────────────────────────────────────
         initDsl().then(() => {
             this.state.dslReady = true;
+            this.normalizeUserAreaNames();
             this.layers.vector.changed();
             this.layers.pertenenza.changed();
             this.updateSummary();
@@ -393,6 +411,7 @@ export default class Planimeter {
             importInput:               document.getElementById('file-import'),
             modeButtons:               [...document.querySelectorAll('[data-mode]')],
             status:                    document.getElementById('toolbar-status'),
+            localSyncStatus:           document.getElementById('local-sync-status'),
             m3BusyIndicator:           document.getElementById('m3-busy-indicator'),
             m3BusyLabel:               document.getElementById('m3-busy-label'),
             statCount:                 document.getElementById('stat-count'),
@@ -461,6 +480,12 @@ export default class Planimeter {
             btnCacheClear:             document.getElementById('btn-cache-clear'),
             pointerCoordinatesPanel:   document.getElementById('pointer-coordinates'),
             pointerCoordinatesValue:   document.getElementById('pointer-coordinates-value'),
+            pointerCoordinatesViewportX: document.getElementById('pointer-coordinates-vx'),
+            pointerCoordinatesViewportY: document.getElementById('pointer-coordinates-vy'),
+            pointerCoordinatesZoom:    document.getElementById('pointer-coordinates-zoom'),
+            pointerCoordinatesViewportXBar: document.getElementById('pointer-coordinates-vx-bar'),
+            pointerCoordinatesViewportYBar: document.getElementById('pointer-coordinates-vy-bar'),
+            pointerCoordinatesZoomBar: document.getElementById('pointer-coordinates-zoom-bar'),
             dslCategoriesSection:      document.getElementById('section-dsl-categories'),
             dslCategoryFilters:        document.getElementById('dsl-category-filters'),
             dslLegend:                 document.getElementById('dsl-legend'),
@@ -471,6 +496,7 @@ export default class Planimeter {
             dslCategorySelect:         document.getElementById('dsl-category-select'),
             dslFieldsForm:             document.getElementById('dsl-fields-form'),
             dslAssignButton:           document.getElementById('btn-dsl-assign'),
+            dslUnassignButton:         document.getElementById('btn-dsl-unassign'),
             dslAssignHint:             document.getElementById('dsl-assign-hint'),
             dslCadastralLinks:         document.getElementById('dsl-cadastral-links'),
         };
@@ -581,6 +607,8 @@ export default class Planimeter {
         const ix = this.getActiveInteractions();
         ix.select.setActive(!active && (this.state.mode === 'edit' || this.state.mode === 'delete' || this.state.mode === 'navigate'));
         ix.modify.setActive(!active && this.state.mode === 'edit');
+        this.updatePointerCoordinatesVisibility();
+        this.applyMapCursorState();
     }
 
     hasExistingInnerRing(feature) {
@@ -780,6 +808,13 @@ export default class Planimeter {
         });
 
         document.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Escape') {
+                if (this.handleEscapeCancel()) {
+                    ev.preventDefault();
+                }
+                return;
+            }
+
             if (ev.key === 'Enter' && this.holeDrawInteraction?.getActive?.()) {
                 this.holeDrawInteraction.finishDrawing();
                 ev.preventDefault();
@@ -933,6 +968,7 @@ export default class Planimeter {
         this.elements.duplicateSelectedButton.addEventListener('click', () => this.duplicateSelectedArea());
         this.elements.deleteSelectedButton.addEventListener('click',    () => this.deleteSelectedFeature());
         this.elements.dslAssignButton?.addEventListener('click',        () => this.applySelectedFeatureCategory());
+        this.elements.dslUnassignButton?.addEventListener('click',      () => this.unassignSelectedFeatureCategory());
         this.elements.dslCategorySelect?.addEventListener('change',      () => this.updateDslAssignmentControls(false));
         this.elements.importInput.addEventListener('change', (ev) => this.importFeatures(ev));
         this.elements.parcelInfoCloseButton?.addEventListener('click', (ev) => {
@@ -1043,12 +1079,6 @@ export default class Planimeter {
             this.layers.pertenenza.changed();
         });
 
-        document.addEventListener('keydown', (ev) => {
-            if (ev.key === 'Escape' && this.selectionExport?.active) {
-                this.cancelSelectionExportMode();
-            }
-        });
-
         this.elements.settingsWmsLayerParts?.forEach((el) => {
             el.addEventListener('change', () => this.updateCatastoWmsLayersFromSettings());
         });
@@ -1146,6 +1176,7 @@ export default class Planimeter {
         this.layers.pertenenza.changed();
         this.refreshEditVertexOverlay();
         this.updatePointerCoordinatesVisibility();
+        this.applyMapCursorState();
         this.renderParcelInfo();
     }
 
@@ -1163,6 +1194,52 @@ export default class Planimeter {
 
     abortActiveDraw() {
         this.getActiveDrawInteraction()?.abortDrawing();
+    }
+
+    handleEscapeCancel() {
+        // Keep ESC local to map interactions when typing in editable fields.
+        const target = document.activeElement;
+        if (target instanceof HTMLElement) {
+            const tag = target.tagName;
+            if (target.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+                return false;
+            }
+        }
+
+        if (this.selectionExport?.active) {
+            this.cancelSelectionExportMode();
+            return true;
+        }
+
+        if (!this.elements.vertexDeleteAllWarning?.hidden) {
+            this.cancelDeleteAllSelectedVertices();
+            return true;
+        }
+
+        if (this.pendingM3Refine) {
+            this.rejectPendingM3Refine();
+            return true;
+        }
+
+        if (this.holeDrawInteraction?.getActive?.()) {
+            this.holeDrawInteraction.abortDrawing();
+            this.setHoleDrawActive(false);
+            this.pendingHoleOperation = null;
+            this.holeDraftSource.clear();
+            return true;
+        }
+
+        if (this.state.isDrawing) {
+            this.abortActiveDraw();
+            return true;
+        }
+
+        if (this.state.mode !== 'navigate') {
+            this.setMode('navigate');
+            return true;
+        }
+
+        return false;
     }
 
     pauseDrawAfterClose() {
@@ -1199,9 +1276,52 @@ export default class Planimeter {
 
     handleFeatureSelection(event) {
         const feature = event.selected[0] ?? null;
+        const originalEvent = event?.mapBrowserEvent?.originalEvent;
+        const isMultiToggle = this.state.mode === 'navigate'
+            && this.state.activeEditingLayer === 'user'
+            && Boolean(originalEvent?.ctrlKey || originalEvent?.metaKey);
+
+        if (isMultiToggle) {
+            const previous = Array.isArray(this.state.selectedFeatures)
+                ? this.state.selectedFeatures.filter(Boolean)
+                : [];
+            const nextMap = new globalThis.Map(previous.map((f) => [f.ol_uid, f]));
+
+            const toggled = event.selected?.[0] ?? event.deselected?.[0] ?? null;
+            if (toggled?.ol_uid) {
+                if (nextMap.has(toggled.ol_uid)) {
+                    nextMap.delete(toggled.ol_uid);
+                } else {
+                    nextMap.set(toggled.ol_uid, toggled);
+                }
+            }
+
+            const next = [...nextMap.values()];
+            const selectedCollection = this.getActiveInteractions().select.getFeatures();
+            selectedCollection.clear();
+            next.forEach((f) => selectedCollection.push(f));
+
+            this.state.selectedFeatures = next;
+            this.state.selectedFeature = next[next.length - 1] ?? null;
+            this.clearSelectedEditVertices();
+            this.layers.vector.changed();
+            this.layers.pertenenza.changed();
+            this.refreshEditVertexOverlay();
+            this.updateSummary();
+
+            if (!next.length) {
+                this.setToolbarMessage(t('stat.selection.none'));
+            } else if (next.length === 1) {
+                this.setToolbarMessage(this.formatSelectedFeatureMessage(next[0]));
+            } else {
+                this.setToolbarMessage(t('msg.featuresSelectedMany', { count: next.length }));
+            }
+            return;
+        }
 
         if (!feature) {
             this.state.selectedFeature = null;
+            this.state.selectedFeatures = [];
             this.clearSelectedEditVertices();
             this.layers.vector.changed();
             this.layers.pertenenza.changed();
@@ -1218,6 +1338,7 @@ export default class Planimeter {
         }
 
         this.state.selectedFeature = feature;
+        this.state.selectedFeatures = [feature];
         this.clearSelectedEditVertices();
         this.layers.vector.changed();
         this.layers.pertenenza.changed();
@@ -1228,6 +1349,7 @@ export default class Planimeter {
 
     clearSelection() {
         this.state.selectedFeature = null;
+        this.state.selectedFeatures = [];
         this.clearSelectedEditVertices();
         this.hideVertexDeleteAllWarning();
         this.allInteractions.user.select.getFeatures().clear();
@@ -1810,10 +1932,7 @@ export default class Planimeter {
         const selectedMeasure = !this.state.selectedFeature
             ? t('stat.selection.none')
             : (selType === 'Polygon' || selType === 'MultiPolygon')
-                ? t('feature.selectionArea', {
-                    area:      this.unitSystem.formatArea(calculateArea(this.state.selectedFeature, proj)),
-                    perimeter: this.unitSystem.formatPerimeter(calculatePerimeter(this.state.selectedFeature, proj)),
-                })
+                ? this.unitSystem.formatArea(calculateArea(this.state.selectedFeature, proj))
                 : this.unitSystem.formatLength(calculateLength(this.state.selectedFeature, proj));
 
         this.elements.statCount.textContent          = String(areaFeatures.length);
@@ -1982,6 +2101,7 @@ export default class Planimeter {
         const section = this.elements.dslAssignSection;
         const select = this.elements.dslCategorySelect;
         const button = this.elements.dslAssignButton;
+        const unassignButton = this.elements.dslUnassignButton;
         if (!section || !select || !button) return;
 
         const domain = this.state.dslReady ? getDomain(this.state.dslActiveDomainId) : null;
@@ -1995,9 +2115,15 @@ export default class Planimeter {
             this.elements.dslAssignDomainValue.textContent = domain.label ?? domain.id;
         }
 
-        const feature = this.state.selectedFeature;
-        const featureIsPolygon = this.isPolygonFeature(feature);
+        const selectedPolygons = this.getSelectedUserPolygonFeatures();
+        const feature = selectedPolygons.length === 1 ? selectedPolygons[0] : null;
+        const featureIsPolygon = Boolean(feature);
+        const multiSelection = selectedPolygons.length > 1;
         const currentDsl = featureIsPolygon ? feature.get('dsl') : null;
+        const hasAnyAssignment = selectedPolygons.some((entry) => {
+            const dsl = entry?.get?.('dsl');
+            return Boolean(String(dsl?.categoryId || '').trim());
+        });
 
         if (rebuildOptions) {
             select.innerHTML = '';
@@ -2022,9 +2148,11 @@ export default class Planimeter {
             select.value = selectedCategoryId;
         }
 
-        const selectedLabel = featureIsPolygon
-            ? String(feature.get('featureName') || feature.get('featureId') || '-')
-            : t('dsl.assign.noFeature');
+        const selectedLabel = multiSelection
+            ? t('dsl.assign.multiFeature', { count: selectedPolygons.length })
+            : featureIsPolygon
+                ? String(feature.get('featureName') || feature.get('featureId') || '-')
+                : t('dsl.assign.noFeature');
 
         if (this.elements.dslAssignFeatureValue) {
             this.elements.dslAssignFeatureValue.textContent = selectedLabel;
@@ -2033,22 +2161,41 @@ export default class Planimeter {
         this.renderSelectedFeatureCadastralLinks(featureIsPolygon ? feature : null);
 
         const categoryChosen = Boolean(select.value);
-        select.disabled = !featureIsPolygon;
-        button.disabled = !featureIsPolygon || !categoryChosen;
+        select.disabled = selectedPolygons.length === 0;
+        button.disabled = selectedPolygons.length === 0 || !categoryChosen;
+        if (unassignButton) {
+            unassignButton.hidden = !hasAnyAssignment;
+            unassignButton.disabled = selectedPolygons.length === 0 || !hasAnyAssignment;
+        }
         button.textContent = selectedCategoryId ? t('dsl.category.change') : t('dsl.category.assign');
 
         if (this.elements.dslAssignHint) {
-            this.elements.dslAssignHint.textContent = featureIsPolygon
-                ? (categoryChosen ? t('dsl.assign.hintReady') : t('dsl.assign.hintSelect'))
-                : t('dsl.assign.hintNoFeature');
+            this.elements.dslAssignHint.textContent = selectedPolygons.length === 0
+                ? t('dsl.assign.hintNoFeature')
+                : multiSelection
+                    ? (categoryChosen
+                        ? t('dsl.assign.hintReadyMulti', { count: selectedPolygons.length })
+                        : t('dsl.assign.hintSelectMulti', { count: selectedPolygons.length }))
+                    : (categoryChosen ? t('dsl.assign.hintReady') : t('dsl.assign.hintSelect'));
         }
 
         // Render dynamic field form if category is chosen and feature is valid
-        if (featureIsPolygon && categoryChosen) {
+        if (featureIsPolygon && categoryChosen && !multiSelection) {
             this.renderDslFieldForm(feature, domain, select.value);
         } else {
             this.renderDslFieldForm(null, null, null);
         }
+    }
+
+    getSelectedUserPolygonFeatures() {
+        const selected = Array.isArray(this.state.selectedFeatures) && this.state.selectedFeatures.length
+            ? this.state.selectedFeatures
+            : (this.state.selectedFeature ? [this.state.selectedFeature] : []);
+
+        return selected.filter((feature) => (
+            this.getFeatureOverlayLayer(feature) === 'user'
+            && this.isPolygonFeature(feature)
+        ));
     }
 
     getOrCreateFeatureLinks(feature) {
@@ -2167,8 +2314,8 @@ export default class Planimeter {
     }
 
     applySelectedFeatureCategory() {
-        const feature = this.state.selectedFeature;
-        if (!this.isPolygonFeature(feature)) {
+        const targets = this.getSelectedUserPolygonFeatures();
+        if (!targets.length) {
             alert(t('alert.noSelection'));
             return;
         }
@@ -2184,10 +2331,11 @@ export default class Planimeter {
             this.setToolbarMessage(t('dsl.assign.hintSelect'));
             return;
         }
+        const categoryLabel = domain.categories?.find((cat) => cat.id === categoryId)?.label ?? categoryId;
 
         // Validate required fields
         const formContainer = this.elements.dslFieldsForm;
-        if (formContainer) {
+        if (targets.length === 1 && formContainer) {
             const requiredInputs = formContainer.querySelectorAll('[required]');
             for (const input of requiredInputs) {
                 if (!input.value || (input.type === 'checkbox' && !input.checked)) {
@@ -2199,28 +2347,104 @@ export default class Planimeter {
             }
         }
 
-        const basePayload = buildDslPayload(domain.id, categoryId, domain.fields ?? []);
-        const existing = feature.get('dsl');
-        if (existing && existing.domainId === domain.id && existing.values && typeof existing.values === 'object') {
-            for (const field of domain.fields ?? []) {
-                if (Object.prototype.hasOwnProperty.call(existing.values, field.id)) {
-                    basePayload.values[field.id] = existing.values[field.id];
+        for (const feature of targets) {
+            const basePayload = buildDslPayload(domain.id, categoryId, domain.fields ?? []);
+            const existing = feature.get('dsl');
+            if (existing && existing.domainId === domain.id && existing.values && typeof existing.values === 'object') {
+                for (const field of domain.fields ?? []) {
+                    if (Object.prototype.hasOwnProperty.call(existing.values, field.id)) {
+                        basePayload.values[field.id] = existing.values[field.id];
+                    }
                 }
             }
+
+            feature.set('dsl', basePayload);
+            feature.set('version', (feature.get('version') ?? 1) + 1);
+            feature.set('modifiedAt', new Date().toISOString());
         }
 
-        feature.set('dsl', basePayload);
-        feature.set('version', (feature.get('version') ?? 1) + 1);
-        feature.set('modifiedAt', new Date().toISOString());
-
-        const categoryLabel = domain.categories?.find((cat) => cat.id === categoryId)?.label ?? categoryId;
         this.layers.vector.changed();
         this.updateSummary();
         this.updateDslAssignmentControls(false);
-        this.setToolbarMessage(t('msg.categoryAssigned', {
+
+        if (targets.length === 1) {
+            const feature = targets[0];
+            this.setToolbarMessage(t('msg.categoryAssigned', {
+                category: categoryLabel,
+                name: feature.get('featureName') || feature.get('featureId') || '-',
+            }));
+            return;
+        }
+
+        this.setToolbarMessage(t('msg.categoryAssignedMany', {
             category: categoryLabel,
-            name: feature.get('featureName') || feature.get('featureId') || '-',
+            count: targets.length,
         }));
+    }
+
+    unassignSelectedFeatureCategory() {
+        const targets = this.getSelectedUserPolygonFeatures();
+        if (!targets.length) {
+            this.setToolbarMessage(t('dsl.assign.hintNoFeature'));
+            return;
+        }
+
+        const changed = [];
+        for (const feature of targets) {
+            const dsl = feature.get('dsl');
+            if (!dsl || !String(dsl.categoryId || '').trim()) continue;
+            feature.set('dsl', null);
+            feature.set('version', (feature.get('version') ?? 1) + 1);
+            feature.set('modifiedAt', new Date().toISOString());
+            changed.push(feature);
+        }
+
+        if (!changed.length) {
+            this.setToolbarMessage(t('msg.categoryAlreadyUnassigned'));
+            return;
+        }
+
+        this.normalizeUserAreaNames();
+        this.layers.vector.changed();
+        this.updateSummary();
+        this.updateDslAssignmentControls(false);
+
+        if (changed.length === 1) {
+            const feature = changed[0];
+            this.setToolbarMessage(t('msg.categoryUnassigned', {
+                name: feature.get('featureName') || feature.get('featureId') || '-',
+            }));
+            return;
+        }
+
+        this.setToolbarMessage(t('msg.categoryUnassignedMany', {
+            count: changed.length,
+        }));
+    }
+
+    normalizeUserAreaNames() {
+        const features = this.vectorSource?.getFeatures?.() ?? [];
+        let changed = false;
+
+        for (const feature of features) {
+            if (!this.isPolygonFeature(feature)) continue;
+            if (this.getFeatureOverlayLayer(feature) !== 'user') continue;
+
+            const currentName = String(feature.get('featureName') || '').trim();
+            const needsRepair = !currentName || /^\[.+\]$/.test(currentName);
+            if (!needsRepair) continue;
+
+            const featureId = String(feature.get('featureId') || '').trim();
+            const areaMatch = /^area-(\d+)$/i.exec(featureId);
+            const fallbackName = areaMatch ? `${t('feature.area')} ${areaMatch[1]}` : t('feature.area');
+            feature.set('featureName', fallbackName);
+            changed = true;
+        }
+
+        if (!changed) return;
+        this.layers.vector.changed();
+        this.updateSummary();
+        schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource);
     }
 
     buildFieldControl(field, currentValue = null, featureDsl = null) {
@@ -2649,6 +2873,8 @@ export default class Planimeter {
 
         viewport.classList.add('export-selection-active');
         this.setMapNavigationEnabled(false);
+        this.updatePointerCoordinatesVisibility();
+        this.applyMapCursorState();
         viewport.addEventListener('mousedown', onMouseDown);
         viewport.addEventListener('mousemove', onMouseMove);
         window.addEventListener('mouseup', onMouseUp);
@@ -2663,6 +2889,8 @@ export default class Planimeter {
                 viewport.removeEventListener('contextmenu', onContextMenu);
                 container.remove();
                 this.setMapNavigationEnabled(true);
+                this.updatePointerCoordinatesVisibility();
+                this.applyMapCursorState();
         };
 
         this.selectionExport = state;
@@ -2707,6 +2935,8 @@ export default class Planimeter {
         this.selectionExport.active = false;
         this.selectionExport.cleanup?.();
         this.selectionExport = null;
+        this.updatePointerCoordinatesVisibility();
+        this.applyMapCursorState();
         if (showMessage) {
             this.setToolbarMessage(t('msg.exportSelectionCancelled'));
         }
@@ -3350,11 +3580,13 @@ export default class Planimeter {
         this.elements.statCatastoSource.textContent = t(isOfficial ? 'stat.catasto.official' : 'stat.catasto.fallback');
 
         this.proxyHealth.render();
+        this.updateLocalMirrorSyncStatus(this.localMirrorSyncStatus);
         this.layers.vector.changed();
         this.layers.pertenenza.changed();
         this.updateSummary();
         this.syncPreferenceControls();
         this.updatePointerCoordinatesVisibility();
+        this.applyMapCursorState();
         this.renderParcelInfo();
     }
 
@@ -3362,6 +3594,45 @@ export default class Planimeter {
 
     setToolbarMessage(message) {
         this.elements.status.textContent = message;
+    }
+
+    updateLocalMirrorSyncStatus(status, savedAt = null) {
+        const allowed = new Set(['checking', 'ok', 'degraded', 'offline']);
+        const nextStatus = allowed.has(status) ? status : 'checking';
+        this.localMirrorSyncStatus = nextStatus;
+        if (nextStatus === 'ok' && typeof savedAt === 'string' && savedAt.trim()) {
+            this.localMirrorSyncLastSuccessAt = savedAt.trim();
+        }
+
+        const pill = this.elements.localSyncStatus;
+        if (!pill) return;
+
+        pill.classList.remove('sync-pill--checking', 'sync-pill--ok', 'sync-pill--degraded', 'sync-pill--offline');
+        pill.classList.add(`sync-pill--${nextStatus}`);
+        pill.textContent = t(`sync.status.${nextStatus}`);
+        pill.title = t('sync.tooltip', {
+            status: t(`sync.status.${nextStatus}`),
+            lastSync: this.formatLocalMirrorSyncTimestamp(this.localMirrorSyncLastSuccessAt),
+        });
+    }
+
+    formatLocalMirrorSyncTimestamp(value) {
+        if (!value) return t('sync.lastNever');
+        const parsed = new Date(String(value));
+        if (Number.isNaN(parsed.getTime())) return t('sync.lastNever');
+        const locale = this.state.locale === 'it' ? 'it-IT' : 'en-US';
+        try {
+            return new Intl.DateTimeFormat(locale, {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+            }).format(parsed);
+        } catch {
+            return parsed.toISOString();
+        }
     }
 
     setM3BusyVisible(visible, message = null) {
@@ -3419,28 +3690,188 @@ export default class Planimeter {
 
         this.updatePointerCoordinatesVisibility();
         this.map.on('pointermove', (event) => {
-            if (event.dragging || this.state.mode !== 'navigate') return;
-            const lonLat = toLonLat(event.coordinate);
-            this.elements.pointerCoordinatesValue.textContent = `${lonLat[0].toFixed(6)}, ${lonLat[1].toFixed(6)}`;
+            this.lastPointerPixel = Array.isArray(event.pixel) ? [...event.pixel] : null;
+            if (event.dragging || this.isPointerCoordinatesUpdateBlocked()) return;
+            this.updatePointerCoordinatesFromEvent(event);
         });
 
         this.map.getViewport().addEventListener('mouseleave', () => {
-            if (this.state.mode === 'navigate') {
-                this.elements.pointerCoordinatesValue.textContent = t('coords.placeholder');
-            }
+            this.lastPointerPixel = null;
+            this.resetPointerCoordinatesValues();
         });
+
+        this.view.on('change:resolution', () => {
+            if (this.isPointerCoordinatesUpdateBlocked()) return;
+            if (!Array.isArray(this.lastPointerPixel)) {
+                this.updatePointerCoordinatesZoomGauge();
+                return;
+            }
+            const coordinate = this.map.getCoordinateFromPixel(this.lastPointerPixel);
+            this.updatePointerCoordinatesFromPixel(this.lastPointerPixel, coordinate);
+        });
+
+        this.resetPointerCoordinatesValues();
     }
 
     updatePointerCoordinatesVisibility() {
         const panel = this.elements.pointerCoordinatesPanel;
-        const value = this.elements.pointerCoordinatesValue;
-        if (!panel || !value) return;
+        if (!panel) return;
 
-        const visible = this.state.mode === 'navigate';
+        const visible = !this.isPointerCoordinatesUpdateBlocked();
         panel.hidden = !visible;
-        if (!visible) {
-            value.textContent = t('coords.placeholder');
+        if (visible) {
+            this.updatePointerCoordinatesZoomGauge();
+            if (Array.isArray(this.lastPointerPixel)) {
+                const coordinate = this.map.getCoordinateFromPixel(this.lastPointerPixel);
+                this.updatePointerCoordinatesFromPixel(this.lastPointerPixel, coordinate);
+            }
+            return;
         }
+        this.resetPointerCoordinatesValues();
+    }
+
+    isPointerCoordinatesUpdateBlocked() {
+        const mode = this.state.mode;
+        const modeAllowed = mode === 'navigate'
+            || mode === 'draw'
+            || mode === 'measure-straight'
+            || mode === 'measure-polyline'
+            || mode === 'edit'
+            || mode === 'delete';
+        return !modeAllowed || Boolean(this.selectionExport?.active);
+    }
+
+    updatePointerCoordinatesFromEvent(event) {
+        const pixel = Array.isArray(event.pixel) ? event.pixel : null;
+        this.updatePointerCoordinatesFromPixel(pixel, event.coordinate);
+    }
+
+    updatePointerCoordinatesFromPixel(pixel, coordinate) {
+        const valueEl = this.elements.pointerCoordinatesValue;
+        const vxEl = this.elements.pointerCoordinatesViewportX;
+        const vyEl = this.elements.pointerCoordinatesViewportY;
+        if (!valueEl || !vxEl || !vyEl || !Array.isArray(pixel) || !Array.isArray(coordinate)) {
+            this.resetPointerCoordinatesValues();
+            return;
+        }
+
+        const size = this.map.getSize() ?? [0, 0];
+        const width = Number(size[0]) || 0;
+        const height = Number(size[1]) || 0;
+        if (width <= 0 || height <= 0) {
+            this.resetPointerCoordinatesValues();
+            return;
+        }
+
+        const xPct = Math.max(0, Math.min(100, (pixel[0] / width) * 100));
+        const yPct = Math.max(0, Math.min(100, (pixel[1] / height) * 100));
+        const lonLat = toLonLat(coordinate);
+
+        valueEl.textContent = `${lonLat[0].toFixed(6)}, ${lonLat[1].toFixed(6)}`;
+        vxEl.textContent = `${xPct.toFixed(1)}%`;
+        vyEl.textContent = `${yPct.toFixed(1)}%`;
+
+        this.setPointerGaugeState(vxEl, this.elements.pointerCoordinatesViewportXBar, xPct);
+        this.setPointerGaugeState(vyEl, this.elements.pointerCoordinatesViewportYBar, yPct);
+        this.updatePointerCoordinatesZoomGauge();
+    }
+
+    updatePointerCoordinatesZoomGauge() {
+        const zoomEl = this.elements.pointerCoordinatesZoom;
+        if (!zoomEl) return;
+
+        const zoom = Number(this.view?.getZoom?.());
+        if (!Number.isFinite(zoom)) {
+            zoomEl.textContent = '--';
+            this.setPointerGaugeState(zoomEl, this.elements.pointerCoordinatesZoomBar, null);
+            return;
+        }
+
+        const minZoom = Number.isFinite(Number(this.view?.getMinZoom?.())) ? Number(this.view.getMinZoom()) : 1;
+        const maxZoom = Number.isFinite(Number(this.view?.getMaxZoom?.())) ? Number(this.view.getMaxZoom()) : 24;
+        const span = Math.max(1e-6, maxZoom - minZoom);
+        const zoomPct = Math.max(0, Math.min(100, ((zoom - minZoom) / span) * 100));
+        zoomEl.textContent = zoom.toFixed(1);
+        this.setPointerGaugeState(zoomEl, this.elements.pointerCoordinatesZoomBar, zoomPct);
+    }
+
+    setPointerGaugeState(valueEl, barEl, pct) {
+        const gauge = valueEl?.closest?.('.pointer-gauge');
+        if (!gauge || !barEl) return;
+
+        gauge.classList.remove('pointer-gauge--mid', 'pointer-gauge--high');
+        if (!Number.isFinite(pct)) {
+            barEl.style.width = '0%';
+            return;
+        }
+
+        const clamped = Math.max(0, Math.min(100, pct));
+        barEl.style.width = `${clamped.toFixed(1)}%`;
+        if (clamped >= 66) {
+            gauge.classList.add('pointer-gauge--high');
+        } else if (clamped >= 33) {
+            gauge.classList.add('pointer-gauge--mid');
+        }
+    }
+
+    resetPointerCoordinatesValues() {
+        if (this.elements.pointerCoordinatesValue) {
+            this.elements.pointerCoordinatesValue.textContent = t('coords.placeholder');
+        }
+        if (this.elements.pointerCoordinatesViewportX) {
+            this.elements.pointerCoordinatesViewportX.textContent = t('coords.gaugePlaceholder');
+            this.setPointerGaugeState(this.elements.pointerCoordinatesViewportX, this.elements.pointerCoordinatesViewportXBar, null);
+        }
+        if (this.elements.pointerCoordinatesViewportY) {
+            this.elements.pointerCoordinatesViewportY.textContent = t('coords.gaugePlaceholder');
+            this.setPointerGaugeState(this.elements.pointerCoordinatesViewportY, this.elements.pointerCoordinatesViewportYBar, null);
+        }
+        if (this.elements.pointerCoordinatesZoom) {
+            this.elements.pointerCoordinatesZoom.textContent = '--';
+            this.setPointerGaugeState(this.elements.pointerCoordinatesZoom, this.elements.pointerCoordinatesZoomBar, null);
+        }
+    }
+
+    applyMapCursorState() {
+        const viewport = this.map?.getViewport?.();
+        if (!viewport) return;
+
+        const cursorClasses = [
+            'map-cursor-navigate',
+            'map-cursor-draw',
+            'map-cursor-measure',
+            'map-cursor-hole',
+            'map-cursor-edit',
+            'map-cursor-delete',
+            'map-cursor-busy',
+        ];
+        viewport.classList.remove(...cursorClasses);
+
+        if (this.selectionExport?.active || this.m3BusyActive) {
+            viewport.classList.add('map-cursor-busy');
+            return;
+        }
+        if (this.holeDrawInteraction?.getActive?.()) {
+            viewport.classList.add('map-cursor-hole');
+            return;
+        }
+        if (this.state.mode === 'draw') {
+            viewport.classList.add('map-cursor-draw');
+            return;
+        }
+        if (this.state.mode === 'measure-straight' || this.state.mode === 'measure-polyline') {
+            viewport.classList.add('map-cursor-measure');
+            return;
+        }
+        if (this.state.mode === 'edit') {
+            viewport.classList.add('map-cursor-edit');
+            return;
+        }
+        if (this.state.mode === 'delete') {
+            viewport.classList.add('map-cursor-delete');
+            return;
+        }
+        viewport.classList.add('map-cursor-navigate');
     }
 
     async copyCoordinatesAtPixel(pixel) {

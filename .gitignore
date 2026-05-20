@@ -15,6 +15,7 @@ wiki/
 raw/
 .agents/
 .planimeter_request_quota.json
+.planimeter_state_store.json
 AUDIT_*.md
 SESSION_*.md
 TEST_RESULTS_*.md

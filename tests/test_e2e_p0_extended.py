@@ -597,6 +597,134 @@ class TestHoleWorkflow:
         assert result["afterAcceptDraftCount"] == 0, f"Draft overlay remained after accept: {result}"
 
 
+class TestDslBulkAssign:
+    def test_ctrl_click_multi_select_and_bulk_assign_category(self, page: Page, planimeter_base_url: str):
+        go(page, planimeter_base_url)
+        page.select_option("#lang-switcher", "it")
+        page.wait_for_timeout(250)
+
+        seeded = page.evaluate(
+            """
+            () => {
+                const app = window.planimeterApp;
+                if (!app) return { ok: false, reason: 'app-not-ready' };
+
+                app.vectorSource.clear();
+                app.pertenenzaSource.clear();
+
+                const center = app.view.getCenter();
+                const centerPx = app.map.getPixelFromCoordinate(center);
+                const makeCoord = (dx, dy) => app.map.getCoordinateFromPixel([centerPx[0] + dx, centerPx[1] + dy]);
+
+                const ringA = [
+                    makeCoord(-180, -40),
+                    makeCoord(-110, -40),
+                    makeCoord(-110, 40),
+                    makeCoord(-180, 40),
+                    makeCoord(-180, -40),
+                ];
+                const ringB = [
+                    makeCoord(110, -40),
+                    makeCoord(180, -40),
+                    makeCoord(180, 40),
+                    makeCoord(110, 40),
+                    makeCoord(110, -40),
+                ];
+
+                const fA = app.geoJsonFormat.readFeature({
+                    type: 'Feature',
+                    properties: { featureName: 'A-1', overlayLayer: 'user' },
+                    geometry: { type: 'Polygon', coordinates: [ringA] },
+                });
+                const fB = app.geoJsonFormat.readFeature({
+                    type: 'Feature',
+                    properties: { featureName: 'A-2', overlayLayer: 'user' },
+                    geometry: { type: 'Polygon', coordinates: [ringB] },
+                });
+
+                app.vectorSource.addFeature(fA);
+                app.vectorSource.addFeature(fB);
+                app.setEditingLayer('user');
+                app.setMode('navigate');
+                app.updateSummary();
+
+                const ctrlEvent = {
+                    mapBrowserEvent: {
+                        originalEvent: {
+                            ctrlKey: true,
+                            metaKey: false,
+                        },
+                    },
+                };
+
+                app.handleFeatureSelection({
+                    ...ctrlEvent,
+                    selected: [fA],
+                    deselected: [],
+                });
+                app.handleFeatureSelection({
+                    ...ctrlEvent,
+                    selected: [fB],
+                    deselected: [],
+                });
+
+                return {
+                    ok: true,
+                    selectedCount: Array.isArray(app.state.selectedFeatures) ? app.state.selectedFeatures.length : -1,
+                };
+            }
+            """
+        )
+
+        assert seeded.get("ok"), f"Seed failed: {seeded}"
+        assert seeded.get("selectedCount") == 2, f"Expected 2 selected features after ctrl-toggle, got {seeded}"
+
+        selected_count = page.evaluate(
+            """
+            () => {
+                const app = window.planimeterApp;
+                return Array.isArray(app?.state?.selectedFeatures) ? app.state.selectedFeatures.length : -1;
+            }
+            """
+        )
+        assert selected_count == 2, f"Expected 2 selected features, got {selected_count}"
+
+        category_id = page.evaluate(
+            """
+            () => {
+                const app = window.planimeterApp;
+                const domain = app ? app.state.dslReady ? app.state.dslActiveDomainId : null : null;
+                if (!domain) return null;
+                const select = document.querySelector('#dsl-category-select');
+                if (!select) return null;
+                const opt = [...select.options].find((o) => o.value);
+                return opt ? opt.value : null;
+            }
+            """
+        )
+        assert category_id, "No DSL category option available"
+
+        page.select_option("#dsl-category-select", category_id)
+        page.click("#btn-dsl-assign")
+        page.wait_for_timeout(250)
+
+        assigned = page.evaluate(
+            """
+            () => {
+                const app = window.planimeterApp;
+                if (!app) return { ok: false, reason: 'app-not-ready' };
+                const selected = Array.isArray(app.state.selectedFeatures) ? app.state.selectedFeatures : [];
+                const cats = selected.map((f) => f.get('dsl')?.categoryId || null);
+                return { ok: true, count: selected.length, cats };
+            }
+            """
+        )
+
+        assert assigned.get("ok"), f"Assign state invalid: {assigned}"
+        assert assigned.get("count") == 2, f"Unexpected selected count after assign: {assigned}"
+        assert all(c == category_id for c in assigned.get("cats", [])), f"Bulk assign failed: {assigned}"
+
+
 class TestVertexDeleteWorkflow:
     def _seed_polygon(self, page: Page, with_inner_ring: bool = False) -> dict:
         return page.evaluate(
