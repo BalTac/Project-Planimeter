@@ -65,8 +65,9 @@ export default class Planimeter {
         if (!(this.state.dslHiddenCategoryKeys instanceof Set)) {
             this.state.dslHiddenCategoryKeys = new Set(this.state.dslHiddenCategoryKeys ?? []);
         }
-        this.state.locale = locale;
-        this.state.unitSystem = this.unitSystem.system;
+        import { openSummaryPanel, closeSummaryPanel } from './ui/summary-panel.js';
+        import {
+            historyAtParcel,
         this.state.toolbarPanel = preferences.toolbarPanel;
         this.state.activeBaseLayer = this.sanitizeBaseLayerKey(preferences.activeBaseLayer);
         this.state.activeAdminLayer = this.sanitizeAdminLayerKey(preferences.activeAdminLayer);
@@ -91,7 +92,34 @@ export default class Planimeter {
         this.state.m3TraceToleranceM = this.sanitizeM3TraceToleranceM(preferences.m3TraceToleranceM);
         this.state.parcelInfoStatusKey = preferences.parcelInfoEnabled
             ? 'parcelInfo.clickHint'
-            : 'parcelInfo.disabled';
+                // ── Summary menu items ─────────────────────────────────────────────────────
+                // Show summary for selected features (Drawn Areas or Property Scopes)
+                if ((this.state.selectedFeature || this.state.selectedFeatures?.length > 0) && !this.state.mode.startsWith('draw')) {
+                    const selectedFeatures = this.state.selectedFeatures && this.state.selectedFeatures.length > 0
+                        ? this.state.selectedFeatures
+                        : (this.state.selectedFeature ? [this.state.selectedFeature] : []);
+
+                    if (selectedFeatures.length > 0) {
+                        const isAllDrawnAreas = selectedFeatures.every((f) => f?.get?.('overlayLayer') === 'user');
+                        const isAllPropertyScopes = selectedFeatures.every((f) => f?.get?.('overlayLayer') === 'pertenenze');
+
+                        if (isAllDrawnAreas || isAllPropertyScopes) {
+                            const summaryKey = isAllDrawnAreas ? 'ctx.areaSummary' : 'ctx.parcelSummary';
+                            return {
+                                items: [
+                                    { key: summaryKey, action: 'openSummary' },
+                                ],
+                                actions: {
+                                    openSummary: () => this.openIntersectionSummary(selectedFeatures),
+                                },
+                            };
+                        }
+                    }
+                }
+
+                if (!this.selectionExport?.active) return null;
+
+                const hasRect = Boolean(this.selectionExport.rect);
         this.m3BusyActive = false;
         this.m3BusyMessage = '';
         this.localMirrorSyncStatus = 'checking';
@@ -2445,6 +2473,44 @@ export default class Planimeter {
         this.layers.vector.changed();
         this.updateSummary();
         schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource);
+    }
+
+    openIntersectionSummary(selectedFeatures) {
+        if (!Array.isArray(selectedFeatures) || selectedFeatures.length === 0) {
+            return;
+        }
+
+        const allDrawnAreas = this.vectorSource?.getFeatures?.() ?? [];
+        const allPropertyScopes = this.pertenenzaSource?.getFeatures?.() ?? [];
+
+        const getPropertyScopeLabel = (feature) => {
+            if (!feature) return '';
+            const parcelNum = feature.get('parcelNumber') || feature.get('featureName') || feature.get('featureId') || '';
+            const localId = feature.get('inspireLocalId') || '';
+            if (parcelNum && localId) return `${parcelNum} (${localId})`;
+            return parcelNum || localId || feature.get('featureId') || '';
+        };
+
+        const getCategoryLabel = (categoryId, feature) => {
+            const domain = getDomain(this.state.dslActiveDomainId);
+            if (!domain) return categoryId || t('dsl.category.unassigned');
+            const category = domain.categories?.find((cat) => cat.id === categoryId);
+            return category?.label ?? categoryId ?? t('dsl.category.unassigned');
+        };
+
+        const mapContainer = this.map.getTargetElement?.();
+        if (!mapContainer) return;
+
+        openSummaryPanel({
+            container: mapContainer,
+            selectedFeatures,
+            allDrawnAreas,
+            allPropertyScopes,
+            unitSystem: this.unitSystem,
+            getPropertyScopeLabel,
+            getCategoryLabel,
+            projection: this.map.getView?.().getProjection?.(),
+        });
     }
 
     buildFieldControl(field, currentValue = null, featureDsl = null) {

@@ -1579,3 +1579,143 @@ input[type="checkbox"] {
     font-weight: 700;
     color: var(--accent);
 }
+
+/* ─── Cross-layer Intersection Summary Panel ───────────────────────────── */
+
+.summary-panel {
+    position: absolute;
+    top: 60px;
+    right: 16px;
+    width: 420px;
+    max-height: 600px;
+    border: 1px solid var(--stroke);
+    border-radius: var(--radius-md);
+    background: var(--bg-panel-strong);
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    z-index: 1200;
+    font-size: 0.85rem;
+    user-select: none;
+}
+
+.summary-panel[hidden] {
+    display: none;
+}
+
+.summary-panel__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--stroke);
+    background: rgba(115, 240, 191, 0.08);
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    cursor: move;
+    user-select: none;
+}
+
+.summary-panel__header h3 {
+    margin: 0;
+    font-size: 0.96rem;
+    font-weight: 700;
+    color: var(--text-main);
+    flex-shrink: 1;
+}
+
+.summary-panel__close {
+    padding: 0;
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--stroke);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-main);
+    font-size: 1.4rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    flex-shrink: 0;
+}
+
+.summary-panel__close:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: var(--accent);
+}
+
+.summary-panel__body {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 12px 0;
+}
+
+.summary-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.83rem;
+}
+
+.summary-table thead {
+    position: sticky;
+    top: 0;
+    background: rgba(115, 240, 191, 0.05);
+    z-index: 10;
+}
+
+.summary-table th {
+    text-align: left;
+    padding: 8px 12px;
+    color: var(--text-muted);
+    font-weight: 600;
+    border-bottom: 1px solid var(--stroke);
+    white-space: nowrap;
+}
+
+.summary-table th:not(:first-child) {
+    text-align: right;
+}
+
+.summary-table td {
+    padding: 7px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    vertical-align: middle;
+}
+
+.summary-table td:not(:first-child) {
+    text-align: right;
+}
+
+.summary-table tbody tr:hover {
+    background: rgba(115, 240, 191, 0.04);
+}
+
+.summary-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.summary-table em {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+@media (max-width: 900px) {
+    .summary-panel {
+        width: 90vw;
+        max-width: 500px;
+        right: auto;
+        left: 5vw;
+        top: 50%;
+        transform: translateY(-50%);
+    }
+}
+
+@media (max-width: 640px) {
+    .summary-panel {
+        width: 95vw;
+        max-width: none;
+        left: 2.5vw;
+        right: 2.5vw;
+        max-height: 60vh;
+    }
+}

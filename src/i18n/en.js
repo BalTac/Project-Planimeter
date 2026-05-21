@@ -426,5 +426,15 @@ export default {
     'msg.parcelLinked':       'Parcel {parcelId} linked to {name}.',
     'msg.parcelUnlinked':     'Parcel {parcelId} unlinked from {name}.',
 
+    'summary.title':           'Intersections: summary',
+    'summary.close':           'Close summary panel',
+    'summary.col.feature':     'Feature',
+    'summary.col.area':        'Area',
+    'summary.col.percentage':  '%',
+    'summary.col.crop':        'Crop',
+    'summary.uncoveredArea':   'Uncovered',
+    'ctx.areaSummary':         'Areas summary',
+    'ctx.parcelSummary':       'Parcel summary',
+
     'noscript': 'This application requires JavaScript to initialise OpenLayers and the measurement tools.',
 };

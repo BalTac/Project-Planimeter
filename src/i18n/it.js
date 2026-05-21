@@ -426,5 +426,15 @@ export default {
     'msg.parcelLinked':       'Particella {parcelId} collegata a {name}.',
     'msg.parcelUnlinked':     'Particella {parcelId} scollegata da {name}.',
 
+    'summary.title':           'Intersezioni: sommario',
+    'summary.close':           'Chiudi pannello sommario',
+    'summary.col.feature':     'Feature',
+    'summary.col.area':        'Area',
+    'summary.col.percentage':  '%',
+    'summary.col.crop':        'Coltura',
+    'summary.uncoveredArea':   'Non coperto',
+    'ctx.areaSummary':         'Sommario aree',
+    'ctx.parcelSummary':       'Sommario particella',
+
     'noscript': 'Questa applicazione richiede JavaScript per inizializzare OpenLayers e gli strumenti di misurazione.',
 };
