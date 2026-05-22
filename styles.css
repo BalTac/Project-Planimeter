@@ -679,14 +679,25 @@ input[type="checkbox"] {
 .parcel-info-popover {
     position: absolute;
     z-index: 1120;
-    min-width: 320px;
+    min-width: 340px;
     max-width: min(560px, calc(100vw - 24px));
-    padding: 14px;
-    border: 1px solid var(--stroke);
+    padding: 0;
+    border: 1px solid rgba(115, 240, 191, 0.22);
     border-radius: var(--radius-md);
-    background: var(--bg-panel-strong);
-    box-shadow: var(--shadow);
-    backdrop-filter: blur(16px);
+    background:
+        linear-gradient(180deg, rgba(20, 38, 31, 0.96) 0%, rgba(8, 18, 15, 0.98) 100%);
+    box-shadow:
+        0 32px 64px rgba(0, 0, 0, 0.55),
+        0 0 0 1px rgba(115, 240, 191, 0.08),
+        0 0 36px rgba(30, 207, 137, 0.14);
+    backdrop-filter: blur(20px) saturate(140%);
+    overflow: hidden;
+    animation: parcel-info-pop 180ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+@keyframes parcel-info-pop {
+    from { opacity: 0; transform: translateY(-4px) scale(0.96); }
+    to   { opacity: 1; transform: translateY(0)    scale(1); }
 }
 
 .parcel-info-popover__header {
@@ -694,7 +705,29 @@ input[type="checkbox"] {
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    margin-bottom: 8px;
+    padding: 12px 14px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    background:
+        linear-gradient(180deg, rgba(115, 240, 191, 0.08) 0%, transparent 100%);
+}
+
+.parcel-info-popover__header strong {
+    font-size: 0.94rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text-main);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.parcel-info-popover__header strong::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 12px rgba(115, 240, 191, 0.7);
 }
 
 .parcel-info-popover__actions {
@@ -704,30 +737,57 @@ input[type="checkbox"] {
 }
 
 .parcel-info-popover__close {
-    min-width: 34px;
-    min-height: 34px;
-    padding: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--text-main);
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-muted);
     cursor: pointer;
-    font-weight: 700;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-indent: -9999px;
+    overflow: hidden;
+    transition: background 120ms ease, color 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+
+.parcel-info-popover__close::before {
+    content: "\00d7"; /* multiplication sign */
+    text-indent: 0;
+    font-size: 18px;
+    font-weight: 500;
+    line-height: 1;
+    display: inline-block;
 }
 
 .parcel-info-popover__close:hover,
 .parcel-info-popover__close:focus-visible {
-    border-color: rgba(115, 240, 191, 0.65);
+    background: rgba(255, 114, 98, 0.18);
+    border-color: rgba(255, 114, 98, 0.55);
+    color: #ffd9d3;
     outline: none;
+    transform: scale(1.05);
+}
+
+#parcel-info-popover-status.info-card-status {
+    margin: 0;
+    padding: 8px 14px;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    background: rgba(255, 255, 255, 0.015);
 }
 
 .parcel-info-popover__frame {
+    display: block;
     width: 100%;
     min-height: 190px;
     max-height: none;
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 10px;
-    background: #ffffff;
+    border: 0;
+    background: transparent;
     overflow: hidden;
 }
 

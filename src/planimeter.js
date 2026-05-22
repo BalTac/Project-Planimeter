@@ -5594,6 +5594,169 @@ export default class Planimeter {
         this.renderParcelInfo();
     }
 
+    wrapParcelInfoDocument(innerHtml) {
+        const body = String(innerHtml || '');
+        // Wrap upstream summary+table HTML in a themed shell so the iframe
+        // body inherits planimeter's dark design tokens. CSS is inlined to
+        // avoid cross-document/file load complications inside the iframe.
+        return `<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<base target="_blank">
+<style>
+:root {
+    --pi-bg:        transparent;
+    --pi-surface:   rgba(255, 255, 255, 0.04);
+    --pi-surface-2: rgba(255, 255, 255, 0.02);
+    --pi-stroke:    rgba(255, 255, 255, 0.08);
+    --pi-text:      #eef6f1;
+    --pi-muted:     #9cb7aa;
+    --pi-accent:    #73f0bf;
+    --pi-accent-warm: #ffe38a;
+}
+* { box-sizing: border-box; }
+html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--pi-bg);
+    color: var(--pi-text);
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+body {
+    padding: 4px 14px 14px;
+}
+
+/* ── Summary card ──────────────────────────────────────────────────── */
+.parcel-summary {
+    margin: 8px 0 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--pi-stroke);
+    border-radius: 12px;
+    background:
+        linear-gradient(180deg, rgba(115, 240, 191, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%);
+}
+.parcel-summary h3 {
+    margin: 0 0 10px;
+    font-size: 0.74rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--pi-accent);
+}
+.parcel-summary dl {
+    margin: 0;
+    display: grid;
+    grid-template-columns: minmax(110px, max-content) 1fr;
+    column-gap: 14px;
+    row-gap: 4px;
+    align-items: baseline;
+}
+.parcel-summary dl > div {
+    display: contents;
+}
+.parcel-summary dt {
+    font-size: 0.74rem;
+    font-weight: 500;
+    color: var(--pi-muted);
+    letter-spacing: 0.02em;
+}
+.parcel-summary dd {
+    margin: 0;
+    font-size: 0.86rem;
+    font-weight: 500;
+    color: var(--pi-text);
+    word-break: break-word;
+    font-variant-numeric: tabular-nums;
+}
+.parcel-summary dt:first-of-type + dd,
+.parcel-summary dl > div:first-child dd {
+    color: var(--pi-accent-warm);
+    font-weight: 600;
+    font-size: 1rem;
+}
+
+/* ── GetFeatureInfo upstream tables ────────────────────────────────── */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0 0;
+    font-size: 0.8rem;
+    border: 1px solid var(--pi-stroke);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--pi-surface-2);
+}
+caption {
+    padding: 8px 10px;
+    text-align: left;
+    font-size: 0.74rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--pi-muted);
+    background: var(--pi-surface);
+    border-bottom: 1px solid var(--pi-stroke);
+}
+th, td {
+    padding: 7px 10px;
+    text-align: left;
+    vertical-align: top;
+    border-top: 1px solid var(--pi-stroke);
+    word-break: break-word;
+}
+tr:first-child th,
+tr:first-child td {
+    border-top: 0;
+}
+th {
+    font-weight: 500;
+    font-size: 0.74rem;
+    letter-spacing: 0.04em;
+    color: var(--pi-muted);
+    background: var(--pi-surface);
+    white-space: nowrap;
+    width: 38%;
+}
+td {
+    color: var(--pi-text);
+    font-variant-numeric: tabular-nums;
+}
+tr:hover td,
+tr:hover th { background: rgba(115, 240, 191, 0.04); }
+
+/* Upstream "header" rows that span both columns */
+tr > th[colspan],
+tr > td[colspan] {
+    background: linear-gradient(180deg, rgba(115, 240, 191, 0.10), transparent);
+    color: var(--pi-text);
+    font-weight: 600;
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    text-transform: none;
+    white-space: normal;
+}
+
+a { color: var(--pi-accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* Hide stray bold "section" markers some WMS pages emit */
+body > h1, body > h2, body > h3 { display: none; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.24); }
+</style>
+</head>
+<body>
+${body}
+</body>
+</html>`;
+    }
+
     syncParcelInfoFrameSize() {
         const frame = this.elements.parcelInfoPopoverFrame;
         const popover = this.elements.parcelInfoPopover;
@@ -5668,8 +5831,9 @@ export default class Planimeter {
         setStatus('parcelInfo.ready');
         if (popoverFrameEl) {
             popoverFrameEl.hidden = false;
-            if (popoverFrameEl.srcdoc !== this.state.parcelInfoHtml) {
-                popoverFrameEl.srcdoc = this.state.parcelInfoHtml;
+            const desiredSrcdoc = this.wrapParcelInfoDocument(this.state.parcelInfoHtml);
+            if (popoverFrameEl.srcdoc !== desiredSrcdoc) {
+                popoverFrameEl.srcdoc = desiredSrcdoc;
                 popoverFrameEl.onload = () => {
                     this.syncParcelInfoFrameSize();
                     this.positionParcelInfoPopover();

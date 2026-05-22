@@ -2,6 +2,12 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [Unreleased] — Parcel info popover redesign
+
+### Changed
+- [styles.css](styles.css) `.parcel-info-popover` is now visually coherent with the planimeter shell: gradient surface with translucent dark glass, soft accent border + outer glow, pop-in animation, header with accent dot indicator and `\00d7` circular close button, status bar separated by a subtle divider, transparent iframe slot (no more white inner box).
+- [src/planimeter.js](src/planimeter.js) new `wrapParcelInfoDocument(innerHtml)` wraps the iframe payload in a themed `<!DOCTYPE>` shell with inline CSS that styles `.parcel-summary` (label highlighted in `--accent-warm`, dl as 2-col grid with muted labels) and the upstream GetFeatureInfo `<table>` (rounded panel, muted headers, hover row, accent header-row stripe for `colspan` group rows). `renderParcelInfo` writes the wrapped document into `srcdoc` so all parcel info, regardless of source (semantic endpoint or GetFeatureInfo HTML fallback), renders in dark theme.
+
 ## [Unreleased] — Belfiore lookup: comune code → name resolution
 
 ### Added
