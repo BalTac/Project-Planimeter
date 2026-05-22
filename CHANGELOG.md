@@ -2,6 +2,11 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [Unreleased] — Bugfix: geodesic intersection area
+
+### Fixed
+- [src/geometry/intersection.js](src/geometry/intersection.js) `calculateIntersectionMetrics` now computes `subjectArea`, `targetArea` and `intersectionArea` as geodesic areas (`ol/sphere` `getArea` on the projection passed via `sourceProjection`/`targetProjection`) instead of planar shoelace on EPSG:3857 coordinates. Eliminates the projection-scale distortion (~`1/cos²(lat)`, e.g. +8% at lat 43°) that caused inconsistent values between the feature header area (always geodesic) and the summary panel's intersection rows — previously yielding `percentSubject > 100%` (e.g. 108.4%) for sub-parcel intersections. Falls back to the legacy planar shoelace only when no projection is available (preserving behaviour for callers that pass raw coordinate arrays without projection metadata).
+
 ## [Unreleased] — PAC/SISTER roadmap Step 4 (possession columns + multi-domain DSL panel)
 
 ### Added

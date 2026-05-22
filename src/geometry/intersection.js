@@ -1,6 +1,29 @@
 import * as polygonClippingModule from 'https://esm.sh/polygon-clipping?bundle';
+import { getArea as olGetArea } from 'ol/sphere.js';
+import MultiPolygon from 'ol/geom/MultiPolygon.js';
 
 const polygonClipping = polygonClippingModule.default ?? polygonClippingModule;
+
+/**
+ * Compute geodesic area (square metres) of a MultiPolygon coordinate array
+ * expressed in the given projection. Falls back to planar shoelace when no
+ * projection is provided (legacy behaviour, distorted by projection scale).
+ *
+ * @param {number[][][][]} multiPolygonCoordinates
+ * @param {string} [projection]
+ * @returns {number}
+ */
+function geodesicMultiPolygonArea(multiPolygonCoordinates, projection) {
+    if (!Array.isArray(multiPolygonCoordinates) || !multiPolygonCoordinates.length) return 0;
+    if (!projection) return multiPolygonArea(multiPolygonCoordinates);
+    try {
+        const geom = new MultiPolygon(multiPolygonCoordinates);
+        return olGetArea(geom, { projection });
+    } catch (err) {
+        console.warn('[Planimeter] geodesic area failed, falling back to planar:', err?.message ?? err);
+        return multiPolygonArea(multiPolygonCoordinates);
+    }
+}
 const cadastralGeometryCache = new Map();
 const cacheStats = {
     hits: 0,
@@ -182,8 +205,9 @@ export function calculateIntersectionMetrics(subject, target, options = {}) {
         };
     }
 
-    const subjectArea = multiPolygonArea(subjectCoordinates);
-    const targetArea = multiPolygonArea(targetCoordinates);
+    const measurementProjection = options.targetProjection ?? options.sourceProjection;
+    const subjectArea = geodesicMultiPolygonArea(subjectCoordinates, measurementProjection);
+    const targetArea = geodesicMultiPolygonArea(targetCoordinates, measurementProjection);
     let intersectionGeometry;
     try {
         intersectionGeometry = polygonClipping.intersection(subjectCoordinates, targetCoordinates);
@@ -191,7 +215,7 @@ export function calculateIntersectionMetrics(subject, target, options = {}) {
         console.warn('[Planimeter] polygon-clipping.intersection failed:', err?.message ?? err);
         intersectionGeometry = [];
     }
-    const intersectionArea = multiPolygonArea(intersectionGeometry);
+    const intersectionArea = geodesicMultiPolygonArea(intersectionGeometry, measurementProjection);
 
     let ratioDenominator = targetArea;
     if (options.ratioBase === 'subject') {
