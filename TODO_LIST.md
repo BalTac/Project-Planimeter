@@ -21,6 +21,105 @@
   - [ ] B-7: unificare i parameter `<select>` sotto un singolo pattern `.parameter-picker`.
 - [ ] Step C: QoL — command palette (`Ctrl+K`) sopra il registry `mode|action|view`; shortcuts overlay (`?`); azione `dsl.load-domain` come entry point UI.
 
+### Persistenza & History — roadmap (DOPO il refactor toolbar)
+
+Origine: bug "hard refresh → aree perse + polygon enorme sopra il centro Italia". Diagnosi in
+chat: race tra `restorePersistedFeatures` (sync, localStorage) e `syncPersistenceFromLocalMirror`
+(async, backend mirror), `isIncomingStoreNewer` confronta solo `savedAt` e ignora il contenuto,
+`schedulePersistenceSync` parte anche su `changefeature` durante drag di vertici, nessun safeguard
+"non sovrascrivere localStorage non-vuoto con mirror vuoto", nessuna validazione geometrica al save.
+
+Approccio: tre commit indipendenti, ciascuno verificabile e revertibile. **Commit only, niente push**
+finché tutta la catena non e validata in produzione.
+
+#### Commit P1 — Anti-wipe + race fix (no UI, fix invisibile)
+- [ ] Guard in `isIncomingStoreNewer` ([src/io/persistence.js](src/io/persistence.js)): se l'incoming
+  store ha 0 feature totali mentre il local ne ha >0, ritorna `false`. Mai sovrascrivere dati
+  esistenti con uno store vuoto, indipendentemente da `savedAt`.
+- [ ] Spostare `schedulePersistenceSync` ([src/planimeter.js](src/planimeter.js) ~L560-565) dai
+  listener `changefeature` sui due `VectorSource` ai soli eventi `drawend` / `modifyend` /
+  `translateend` / `addfeature` / `removefeature`. Niente piu salvataggi a meta drag di vertice
+  (causa probabile del "polygon enorme" residuo nello store).
+- [ ] Validazione geometrica al save in `persistFeatures` ([src/io/persistence.js](src/io/persistence.js)):
+  scartare feature con extent > N km (es. > 100 km diagonale per poligoni user-drawn) o vertici
+  fuori bounds 4326. `console.warn` + skip, niente eccezioni.
+- [ ] Snapshot last-known-good in `localStorage` chiave `planimeter.features.v1.prev` PRIMA di
+  ogni `vectorSource.clear()` di restore. Recovery manuale possibile via console anche senza UI.
+- [ ] Unificare il restore in una singola pipeline: rimuovere il doppio `clear()` (uno da
+  `restorePersistedFeatures`, uno da `syncPersistenceFromLocalMirror` se l'incoming vince).
+  `restorePersistedFeatures` legge localStorage senza montare; `syncPersistenceFromLocalMirror`
+  decide vincitore con il guard del primo punto; un solo `restoreFromCampaignStore` finale.
+- [ ] Test: smoke pytest + scenario manuale "draw 3 aree -> apri seconda tab che svuota ->
+  refresh prima tab -> deve mostrare le 3 aree (non vuoto)".
+
+#### Commit P2 — Smart prompt utente sul restore
+- [ ] Quando `localStorage` e vuoto/assente E il mirror backend ha N>0 feature, mostrare modale
+  i18n: "Non trovo i dati nel browser. Carico il backup locale (N aree, salvato il `<savedAt>`)
+  o creo nuovo?" → [Carica backup] / [Crea nuovo] / [Annulla].
+- [ ] Quando entrambi hanno feature ma differiscono E il mirror e piu recente, barra non
+  intrusiva in alto: "Backup locale piu recente disponibile (N aree, `<savedAt>`). [Carica]
+  [Ignora]". Default azione = Ignora (nessuna sovrascrittura silenziosa).
+- [ ] Chiavi i18n IT/EN: `restore.prompt.title`, `restore.prompt.body`, `restore.prompt.load`,
+  `restore.prompt.new`, `restore.prompt.cancel`, `restore.banner.newer`.
+- [ ] Coerenza con il sync locale concettuale (cambio browser/profilo/macchina, clear
+  accidentale o volontario dei dati persistenti del browser).
+
+#### Commit P3 — History engine + pannello flottante "Cronologia"
+
+Modello dati: `localStorage` chiave `planimeter.history.v1` + mirror backend companion
+`.planimeter_history_store.json`. Una history **per campagna** (campaignId → entries[]).
+
+```js
+{
+  version: 1,
+  byCampaign: {
+    "2026-annual": {
+      cursor: 12,                    // indice voce corrente (undo/redo)
+      entries: [
+        {
+          id: "h_01HXYZ...",
+          ts: "2026-05-22T18:05:25Z",
+          kind: "auto" | "manual",
+          label: "Disegnata Area 3",
+          tags: [],                  // free text per snapshot manuali
+          summary: { features, areaSqm, addedIds, removedIds },
+          features: { type:"FeatureCollection", features:[...] }
+        }
+      ]
+    }
+  }
+}
+```
+
+- [ ] Snapshot **completo** per voce (no delta) compresso con lz-string (~70-80% di riduzione).
+- [ ] `cursor` per undo/redo deterministico (semantica Photoshop: modifica dopo undo tronca il
+  futuro a `cursor+1`).
+- [ ] Coalescing: snapshot auto consecutivi dello stesso `kind` entro 2s vengono fusi.
+- [ ] Retention: auto **ultimi 50** (FIFO eviction sui piu vecchi auto), manuali **illimitati**
+  (mai eviction, solo cancellazione esplicita), tetto 5 MB compressi in localStorage; oltre,
+  manuali offloaded sul mirror backend.
+- [ ] Trigger auto: `drawend` (parcella aggiunta a mano o via M3 trace), `removefeature`,
+  `modifyend`, `translateend`, import bulk (1 voce per batch). **Forzato silenzioso** prima di
+  "Svuota tutte le aree" + toast "Snapshot di sicurezza creato. Annulla con Ctrl+Z."
+- [ ] Trigger manuale: bottone `📸 Snapshot...` apre prompt con label + tag opzionali.
+- [ ] UI: pannello flottante `#history-popover` (fratello di `#parcel-info-popover`, stesso glass
+  theme), ancorato in alto-destra mappa, **draggable dall'header**, larghezza ~340px, altezza
+  max ~60vh con scroll interno. Stato aperto/chiuso e posizione persistiti in preferenze.
+- [ ] Trigger toolbar: bottone 🕒 "Cronologia" (i18n `tool.history`) toggle on/off; non chiude
+  su click fuori (palette style); badge contatore "Cronologia · 12" quando ci sono modifiche
+  non snapshottate manualmente.
+- [ ] Mini-toolbar in header pannello: `⤺ Undo`  `⤻ Redo`  `📸 Snapshot...`  `⋯ Gestisci`.
+- [ ] Lista entries: click su voce → dialog "Ripristinare? Verra creato uno snapshot dello stato
+  attuale." Indicatori: ◉ corrente, ○ altre, 📸 per voci manuali.
+- [ ] Dialog "Gestisci...": elenco completo, rename, delete, export singolo snapshot come
+  `.geojson`.
+- [ ] Shortcut: `Ctrl+Z` undo, `Ctrl+Y` / `Ctrl+Shift+Z` redo. Inseriti nel registry
+  `mode|action|view` dello Step C toolbar (sinergia, zero conflitti).
+- [ ] i18n IT/EN per: `tool.history`, `history.title`, `history.undo`, `history.redo`,
+  `history.snapshot`, `history.manage`, `history.entry.auto.*`, `history.entry.manual.*`,
+  `history.confirm.restore`, `history.snapshot.prompt.label`, `history.snapshot.prompt.tags`,
+  `history.toast.autoSafetySnapshot`.
+
 ### Parcel info — refactor popover (DONE)
 - [x] Sostituire iframe con render DOM nativo (`renderParcelInfoBody`); state `parcelInfoHtml` → `parcelInfoData`; rimozione `wrapParcelInfoDocument`/`syncParcelInfoFrameSize`/`buildParcelSummaryHtml`/`_buildParcelHtmlFromJson`; fix contrasto/dimensione font colonna valori; rimozione Area/Perimetro dall'header (gia coperti dal summary panel).
 
