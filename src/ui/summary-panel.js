@@ -9,7 +9,7 @@ import { calculateArea, calculatePerimeter } from '../geometry/calculations.js';
 /**
  * Each column descriptor:
  *  - id:        stable identifier persisted in preferences.summaryColumns
- *  - group:     'base' | 'cadastral' | 'geometry'
+ *  - group:     'base' | 'cadastral' | 'geometry' | 'possession'
  *  - labelKey:  i18n key for the column header
  *  - helpKey?:  optional i18n key for the header title attribute
  *  - render(row): cell HTML (escaped) for a single intersection row
@@ -17,8 +17,8 @@ import { calculateArea, calculatePerimeter } from '../geometry/calculations.js';
  *
  * Rows passed to render() have shape:
  *  { targetFeature, targetLabel, intersectionAreaStr, percentSubject,
- *    percentTarget, cropLabel, cadastral, sharedCount, perimeterStr,
- *    verticesCount }
+ *    percentTarget, cropLabel, cadastral, possession, sharedCount,
+ *    perimeterStr, verticesCount }
  */
 const COLUMN_DEFS = [
     {
@@ -103,6 +103,34 @@ const COLUMN_DEFS = [
         group: 'geometry',
         labelKey: 'summary.col.vertices',
         render: (row) => row.verticesCount != null ? String(row.verticesCount) : '—',
+    },
+    {
+        id: 'possessionTitle',
+        group: 'possession',
+        labelKey: 'summary.col.possessionTitle',
+        helpKey: 'summary.col.possessionTitle.help',
+        render: (row) => escapeHtml(row.possession?.tenureLabel || '—'),
+    },
+    {
+        id: 'possessionHolder',
+        group: 'possession',
+        labelKey: 'summary.col.possessionHolder',
+        render: (row) => escapeHtml(row.possession?.holderName || '—'),
+    },
+    {
+        id: 'possessionQuota',
+        group: 'possession',
+        labelKey: 'summary.col.possessionQuota',
+        render: (row) => {
+            const q = row.possession?.quotaPercent;
+            return (typeof q === 'number' && Number.isFinite(q)) ? `${q}%` : '—';
+        },
+    },
+    {
+        id: 'possessionExpiry',
+        group: 'possession',
+        labelKey: 'summary.col.possessionExpiry',
+        render: (row) => escapeHtml(row.possession?.expiryDate || '—'),
     },
 ];
 
@@ -227,6 +255,34 @@ function countVertices(feature) {
     }
 }
 
+/**
+ * Pull possession-domain (tenure) data from a feature's DSL payload.
+ * Returns null when the feature is not assigned to the `possession` domain.
+ * @param {import('ol').Feature} feature
+ * @param {(id:string,f:import('ol').Feature)=>string} [getCategoryLabel]
+ */
+function extractPossessionData(feature, getCategoryLabel) {
+    const dsl = feature?.get?.('dsl');
+    if (!dsl || dsl.domainId !== 'possession') return null;
+    const values = (dsl.values && typeof dsl.values === 'object') ? dsl.values : {};
+    const tenureLabel = dsl.categoryId
+        ? (typeof getCategoryLabel === 'function'
+            ? getCategoryLabel(dsl.categoryId, feature)
+            : dsl.categoryId)
+        : '';
+    return {
+        tenureCategoryId: dsl.categoryId || null,
+        tenureLabel,
+        holderName: values.holder_name || '',
+        holderCuaa: values.holder_cuaa || '',
+        quotaPercent: (typeof values.quota_percent === 'number') ? values.quota_percent : null,
+        expiryDate: values.expiry_date || '',
+        documentDate: values.document_date || '',
+        documentRef: values.document_ref || '',
+        notes: values.notes || '',
+    };
+}
+
 function renderSharedBadge(row) {
     if (!row || !row.sharedCount || row.sharedCount <= 1) return '';
     const label = t('summary.shared.badge', { count: row.sharedCount });
@@ -294,6 +350,7 @@ export function openSummaryPanel(options) {
             sharedCountFor: (target) => parcelSharedCounts.get(target) ?? 0,
             projection,
             unitSystem,
+            getCategoryLabel,
         }));
     }
 
@@ -313,6 +370,7 @@ export function openSummaryPanel(options) {
             sharedCountFor: () => 0,
             projection,
             unitSystem,
+            getCategoryLabel,
         }));
     }
 
@@ -416,6 +474,7 @@ function buildSection({
     sharedCountFor,
     projection,
     unitSystem,
+    getCategoryLabel,
 }) {
     const subjectGroups = [];
 
@@ -451,6 +510,7 @@ function buildSection({
                     percentSubject: subjectArea > 0 ? (metrics.intersectionArea / subjectArea) * 100 : 0,
                     percentTarget: metrics.targetArea > 0 ? (metrics.intersectionArea / metrics.targetArea) * 100 : 0,
                     cadastral: extractCadastralData(target, unitSystem),
+                    possession: extractPossessionData(target, getCategoryLabel),
                     sharedCount: sharedCountFor ? sharedCountFor(target) : 0,
                     perimeterStr: unitSystem.formatPerimeter ? unitSystem.formatPerimeter(perimeter) : `${perimeter.toFixed(1)} m`,
                     verticesCount: countVertices(target),

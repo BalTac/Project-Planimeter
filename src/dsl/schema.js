@@ -70,6 +70,8 @@ function validateFieldDef(f, idx) {
     if (!f.id || typeof f.id !== 'string')      errs.push(`fields[${idx}].id missing`);
     if (!FIELD_TYPES.includes(f.type))          errs.push(`fields[${idx}].type invalid: ${f.type}`);
     if (typeof f.label !== 'string')             errs.push(`fields[${idx}].label missing`);
+    if (f.labelKey !== undefined && typeof f.labelKey !== 'string')
+        errs.push(`fields[${idx}].labelKey must be a string when present`);
     if (f.type === 'enum' && !Array.isArray(f.options)) {
         errs.push(`fields[${idx}] type=enum requires options[]`);
     }
@@ -96,6 +98,8 @@ export function validateDomain(domain) {
         errors.push('domain.version required (semver string)');
     if (!domain.label || typeof domain.label !== 'string')
         warnings.push('domain.label missing — will use id as label');
+    if (domain.labelKey !== undefined && typeof domain.labelKey !== 'string')
+        errors.push('domain.labelKey must be a string when present');
     if (!VALIDATION_MODES.includes(domain.validationMode))
         warnings.push(`domain.validationMode "${domain.validationMode}" unknown — defaulting to flexible`);
 
@@ -125,6 +129,8 @@ export function validateDomain(domain) {
                 ids.add(cat.id);
             if (!cat.label || typeof cat.label !== 'string')
                 warnings.push(`categories[${i}] missing label`);
+            if (cat.labelKey !== undefined && typeof cat.labelKey !== 'string')
+                errors.push(`categories[${i}].labelKey must be a string when present`);
             if (!cat.color || typeof cat.color !== 'string')
                 warnings.push(`categories[${i}] missing color — default will be used`);
         });

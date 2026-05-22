@@ -156,10 +156,18 @@
   `expiry_date`, `notes`). Schema extended with `date` field type and optional
   `applicableLayers` whitelist (here `["pertenenze"]`). New loader helper
   `getDomainsForLayer(layerKey)`. No UI wiring yet — that lands in Step 4.
-- [ ] **Step 4 — Possession columns in summary**: add `possession` group to the column
-  registry (titolo possesso, scadenza, intestatario, quota%) using i18n labels. Hook
-  UI assignment of `possession` domain to `pertenenze` features (DSL panel must offer
-  the right domain depending on the selected feature's layer via `getDomainsForLayer`).
+- [x] **Step 4 — Possession columns in summary**: added `possession` column group to
+  the summary registry (`possessionTitle`, `possessionHolder`, `possessionQuota`,
+  `possessionExpiry`) with IT/EN i18n; columns OFF by default (parti stretto).
+  DSL panel now resolves the active domain per-selection via
+  `resolveDomainForSelection` (new helper) + `getSelectedAssignablePolygonFeatures`,
+  so `pertenenze` features can be tagged with the `possession` domain while keeping
+  the agriculture flow for `user`-layer polygons untouched. Mixed-layer selection
+  is blocked with hint `dsl.assign.hintMixedLayers`. Category/field labels honour
+  the optional `labelKey` (i18n). `openIntersectionSummary` now resolves category
+  labels per-feature via `feature.dsl.domainId`. `date` field type rendered as
+  HTML `<input type="date">` in `buildFieldControl`. Canary `TestDslBulkAssign`
+  remains green.
 - [ ] **Step 5 — PAC columns + multi-year filter**: add PAC group (`eligible_area`,
   `tare_percent`, `intervention_code`, `campaign_year`). Add header dropdown with
   3y/5y/all filter (default 3y) to scope the summary to recent campaigns.

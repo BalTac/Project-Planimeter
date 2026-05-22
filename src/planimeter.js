@@ -37,7 +37,7 @@ import { buildExportConfig, triggerDownload, requestBackendExport } from './io/e
 import { detectImportFormat, readImportedFeatures } from './io/import.js';
 import { loadPreferences, savePreferences } from './io/preferences.js';
 import { CATASTO_WMS_LAYER_DEFS, DEFAULT_CATASTO_WMS_LAYER_SETTINGS } from './core/constants.js';
-import { initDsl, getDomain } from './dsl/loader.js';
+import { initDsl, getDomain, getDomainsForLayer } from './dsl/loader.js';
 import { aggregateByCategory, totalAggArea } from './dsl/aggregation.js';
 import { buildDslPayload } from './dsl/schema.js';
 import { openSummaryPanel, closeSummaryPanel } from './ui/summary-panel.js';
@@ -2104,18 +2104,59 @@ export default class Planimeter {
         const unassignButton = this.elements.dslUnassignButton;
         if (!section || !select || !button) return;
 
-        const domain = this.state.dslReady ? getDomain(this.state.dslActiveDomainId) : null;
-        if (!domain) {
+        if (!this.state.dslReady) {
             section.hidden = true;
             return;
         }
 
-        section.hidden = false;
-        if (this.elements.dslAssignDomainValue) {
-            this.elements.dslAssignDomainValue.textContent = domain.label ?? domain.id;
+        const selectedPolygons = this.getSelectedAssignablePolygonFeatures();
+        const resolution = this.resolveDomainForSelection(selectedPolygons);
+        const domain = resolution.domain;
+
+        if (!domain && selectedPolygons.length === 0) {
+            // No selection — still surface the panel with the global active domain as a hint.
+            const fallbackDomain = getDomain(this.state.dslActiveDomainId);
+            if (!fallbackDomain) {
+                section.hidden = true;
+                return;
+            }
+            section.hidden = false;
+            this._renderDslPanelHeader(fallbackDomain);
+            this._renderDslCategoryOptions(fallbackDomain, rebuildOptions);
+            if (this.elements.dslAssignFeatureValue)
+                this.elements.dslAssignFeatureValue.textContent = t('dsl.assign.noFeature');
+            this.renderSelectedFeatureCadastralLinks(null);
+            select.disabled = true;
+            button.disabled = true;
+            if (unassignButton) { unassignButton.hidden = true; unassignButton.disabled = true; }
+            button.textContent = t('dsl.category.assign');
+            if (this.elements.dslAssignHint)
+                this.elements.dslAssignHint.textContent = t('dsl.assign.hintNoFeature');
+            this.renderDslFieldForm(null, null, null);
+            return;
         }
 
-        const selectedPolygons = this.getSelectedUserPolygonFeatures();
+        section.hidden = false;
+
+        if (!domain) {
+            // Mixed-layer selection with no common applicable domain.
+            this._renderDslPanelHeader(null);
+            select.innerHTML = '';
+            select.disabled = true;
+            button.disabled = true;
+            if (unassignButton) { unassignButton.hidden = true; unassignButton.disabled = true; }
+            if (this.elements.dslAssignFeatureValue) {
+                this.elements.dslAssignFeatureValue.textContent = t('dsl.assign.multiFeature', { count: selectedPolygons.length });
+            }
+            this.renderSelectedFeatureCadastralLinks(null);
+            if (this.elements.dslAssignHint)
+                this.elements.dslAssignHint.textContent = t('dsl.assign.hintMixedLayers');
+            this.renderDslFieldForm(null, null, null);
+            return;
+        }
+
+        this._renderDslPanelHeader(domain);
+
         const feature = selectedPolygons.length === 1 ? selectedPolygons[0] : null;
         const featureIsPolygon = Boolean(feature);
         const multiSelection = selectedPolygons.length > 1;
@@ -2125,20 +2166,7 @@ export default class Planimeter {
             return Boolean(String(dsl?.categoryId || '').trim());
         });
 
-        if (rebuildOptions) {
-            select.innerHTML = '';
-            const placeholder = document.createElement('option');
-            placeholder.value = '';
-            placeholder.textContent = t('dsl.assign.selectCategory');
-            select.appendChild(placeholder);
-
-            for (const cat of domain.categories ?? []) {
-                const opt = document.createElement('option');
-                opt.value = cat.id;
-                opt.textContent = cat.label ?? cat.id;
-                select.appendChild(opt);
-            }
-        }
+        this._renderDslCategoryOptions(domain, rebuildOptions);
 
         const selectedCategoryId = (featureIsPolygon && currentDsl?.domainId === domain.id)
             ? String(currentDsl?.categoryId ?? '')
@@ -2185,6 +2213,87 @@ export default class Planimeter {
         } else {
             this.renderDslFieldForm(null, null, null);
         }
+    }
+
+    _renderDslPanelHeader(domain) {
+        if (!this.elements.dslAssignDomainValue) return;
+        if (!domain) {
+            this.elements.dslAssignDomainValue.textContent = '—';
+            return;
+        }
+        const label = domain.labelKey ? t(domain.labelKey) : (domain.label ?? domain.id);
+        this.elements.dslAssignDomainValue.textContent = label;
+    }
+
+    _renderDslCategoryOptions(domain, rebuildOptions) {
+        const select = this.elements.dslCategorySelect;
+        if (!select || !rebuildOptions) return;
+        select.innerHTML = '';
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = t('dsl.assign.selectCategory');
+        select.appendChild(placeholder);
+
+        for (const cat of domain.categories ?? []) {
+            const opt = document.createElement('option');
+            opt.value = cat.id;
+            opt.textContent = cat.labelKey ? t(cat.labelKey) : (cat.label ?? cat.id);
+            select.appendChild(opt);
+        }
+    }
+
+    /**
+     * Resolve which DSL domain should drive the assignment panel for the
+     * current selection. Returns { domain, layerKey } or { domain: null } when
+     * no common applicable domain exists across the selected features.
+     *
+     * Rules:
+     *  - empty selection → { domain: null, layerKey: null }
+     *  - all features on the same layer L:
+     *      • if first feature already has dsl.domainId pointing to a domain
+     *        applicable to L → reuse it
+     *      • else if state.dslActiveDomainId is applicable to L → use it
+     *      • else first domain returned by getDomainsForLayer(L)
+     *  - mixed layers → { domain: null, layerKey: null } (caller shows hint)
+     */
+    resolveDomainForSelection(features) {
+        if (!Array.isArray(features) || features.length === 0) {
+            return { domain: null, layerKey: null };
+        }
+        const layerKeys = new Set(features.map((f) => this.getFeatureOverlayLayer(f)));
+        if (layerKeys.size > 1) {
+            return { domain: null, layerKey: null };
+        }
+        const layerKey = features[0] ? this.getFeatureOverlayLayer(features[0]) : null;
+        if (!layerKey) return { domain: null, layerKey: null };
+
+        // Prefer the feature's already-assigned domain when applicable.
+        const firstDsl = features[0]?.get?.('dsl');
+        if (firstDsl?.domainId) {
+            const existing = getDomain(firstDsl.domainId);
+            if (existing) return { domain: existing, layerKey };
+        }
+
+        const active = getDomain(this.state.dslActiveDomainId);
+        const applicable = getDomainsForLayer(layerKey);
+        if (active && applicable.includes(active)) {
+            return { domain: active, layerKey };
+        }
+        return { domain: applicable[0] ?? null, layerKey };
+    }
+
+    /**
+     * Polygon features eligible for DSL assignment, across all overlay layers
+     * (currently `user` + `pertenenze`). Use this when an action should work
+     * on any annotatable polygon. Use `getSelectedUserPolygonFeatures()` only
+     * when the action is intentionally restricted to the drawn-areas layer.
+     */
+    getSelectedAssignablePolygonFeatures() {
+        const selected = Array.isArray(this.state.selectedFeatures) && this.state.selectedFeatures.length
+            ? this.state.selectedFeatures
+            : (this.state.selectedFeature ? [this.state.selectedFeature] : []);
+
+        return selected.filter((feature) => this.isPolygonFeature(feature));
     }
 
     getSelectedUserPolygonFeatures() {
@@ -2314,15 +2423,20 @@ export default class Planimeter {
     }
 
     applySelectedFeatureCategory() {
-        const targets = this.getSelectedUserPolygonFeatures();
+        const targets = this.getSelectedAssignablePolygonFeatures();
         if (!targets.length) {
             alert(t('alert.noSelection'));
             return;
         }
 
-        const domain = getDomain(this.state.dslActiveDomainId);
+        const resolution = this.resolveDomainForSelection(targets);
+        const domain = resolution.domain;
         if (!domain) {
-            this.setToolbarMessage(t('dsl.domain.none'));
+            this.setToolbarMessage(
+                resolution.layerKey === null && targets.length > 1
+                    ? t('dsl.assign.hintMixedLayers')
+                    : t('dsl.domain.none')
+            );
             return;
         }
 
@@ -2331,7 +2445,10 @@ export default class Planimeter {
             this.setToolbarMessage(t('dsl.assign.hintSelect'));
             return;
         }
-        const categoryLabel = domain.categories?.find((cat) => cat.id === categoryId)?.label ?? categoryId;
+        const categoryDef = domain.categories?.find((cat) => cat.id === categoryId);
+        const categoryLabel = categoryDef
+            ? (categoryDef.labelKey ? t(categoryDef.labelKey) : (categoryDef.label ?? categoryId))
+            : categoryId;
 
         // Validate required fields
         const formContainer = this.elements.dslFieldsForm;
@@ -2363,7 +2480,7 @@ export default class Planimeter {
             feature.set('modifiedAt', new Date().toISOString());
         }
 
-        this.layers.vector.changed();
+        this._refreshLayersForFeatures(targets);
         this.updateSummary();
         this.updateDslAssignmentControls(false);
 
@@ -2383,7 +2500,7 @@ export default class Planimeter {
     }
 
     unassignSelectedFeatureCategory() {
-        const targets = this.getSelectedUserPolygonFeatures();
+        const targets = this.getSelectedAssignablePolygonFeatures();
         if (!targets.length) {
             this.setToolbarMessage(t('dsl.assign.hintNoFeature'));
             return;
@@ -2405,7 +2522,7 @@ export default class Planimeter {
         }
 
         this.normalizeUserAreaNames();
-        this.layers.vector.changed();
+        this._refreshLayersForFeatures(changed);
         this.updateSummary();
         this.updateDslAssignmentControls(false);
 
@@ -2420,6 +2537,16 @@ export default class Planimeter {
         this.setToolbarMessage(t('msg.categoryUnassignedMany', {
             count: changed.length,
         }));
+    }
+
+    /** Trigger a redraw on the unique set of layers owning the given features. */
+    _refreshLayersForFeatures(features) {
+        const layers = new Set();
+        for (const f of features ?? []) {
+            const layer = this.getLayerForFeature(f);
+            if (layer) layers.add(layer);
+        }
+        layers.forEach((layer) => layer.changed?.());
     }
 
     normalizeUserAreaNames() {
@@ -2467,11 +2594,16 @@ export default class Planimeter {
             return parcelNum || localId || feature.get('featureId') || '';
         };
 
-        const getCategoryLabel = (categoryId) => {
-            const domain = getDomain(this.state.dslActiveDomainId);
+        const getCategoryLabel = (categoryId, feature) => {
+            // Prefer the feature's own dsl.domainId so pertenenze features
+            // display labels from the possession domain even when agriculture
+            // is the globally active domain.
+            const domainId = feature?.get?.('dsl')?.domainId ?? this.state.dslActiveDomainId;
+            const domain = getDomain(domainId);
             if (!domain) return categoryId || t('dsl.category.unassigned');
             const category = domain.categories?.find((cat) => cat.id === categoryId);
-            return category?.label ?? categoryId ?? t('dsl.category.unassigned');
+            if (!category) return categoryId ?? t('dsl.category.unassigned');
+            return category.labelKey ? t(category.labelKey) : (category.label ?? categoryId);
         };
 
         const projection = this.map.getView?.().getProjection?.();
@@ -2492,7 +2624,7 @@ export default class Planimeter {
             } else {
                 const dsl = primaryFeature.get('dsl');
                 const cropLabel = dsl?.categoryId
-                    ? getCategoryLabel(dsl.categoryId)
+                    ? getCategoryLabel(dsl.categoryId, primaryFeature)
                     : t('dsl.category.unassigned');
                 featureLabel = `${primaryFeature.get('featureName') || primaryFeature.get('featureId') || t('feature.area')}, ${t('parcelInfo.area')} ${areaLabel}, ${t('parcelInfo.perimeter')} ${perimeterLabel}, ${t('summary.col.crop')} ${cropLabel}`;
             }
@@ -2523,7 +2655,7 @@ export default class Planimeter {
 
     buildFieldControl(field, currentValue = null, featureDsl = null) {
         const fieldId = field.id;
-        const label = field.label ?? fieldId;
+        const label = field.labelKey ? t(field.labelKey) : (field.label ?? fieldId);
         const isRequired = field.required ?? false;
         const requiredMark = isRequired ? ' *' : '';
 
@@ -2591,6 +2723,29 @@ export default class Planimeter {
             }
             input.addEventListener('change', (e) => {
                 const val = e.target.value ? parseFloat(e.target.value) : null;
+                this.updateFeatureDslFieldValue(fieldId, val);
+            });
+            container.appendChild(input);
+            return container;
+        } else if (field.type === 'date') {
+            const container = document.createElement('div');
+            container.className = 'dsl-field-wrapper dsl-field-date' + (isRequired ? ' dsl-field-required' : '');
+            const labelEl = document.createElement('label');
+            labelEl.htmlFor = `dsl-field-${fieldId}`;
+            labelEl.className = 'dsl-field-label';
+            labelEl.textContent = label + requiredMark;
+            container.appendChild(labelEl);
+            input = document.createElement('input');
+            input.type = 'date';
+            input.id = `dsl-field-${fieldId}`;
+            input.className = 'dsl-field-input';
+            input.dataset.fieldId = fieldId;
+            if (isRequired) input.required = true;
+            if (typeof currentValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(currentValue)) {
+                input.value = currentValue;
+            }
+            input.addEventListener('change', (e) => {
+                const val = e.target.value || null;
                 this.updateFeatureDslFieldValue(fieldId, val);
             });
             container.appendChild(input);

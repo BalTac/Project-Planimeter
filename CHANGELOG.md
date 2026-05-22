@@ -2,6 +2,24 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [Unreleased] — PAC/SISTER roadmap Step 4 (possession columns + multi-domain DSL panel)
+
+### Added
+- [src/ui/summary-panel.js](src/ui/summary-panel.js) new column group `possession` (`possessionTitle`, `possessionHolder`, `possessionQuota`, `possessionExpiry`) sourced from the `possession` DSL domain on `pertenenze` features; OFF by default.
+- [src/ui/summary-panel.js](src/ui/summary-panel.js) `extractPossessionData(feature, getCategoryLabel)` helper that reads the feature's `dsl` payload (only when `domainId === 'possession'`).
+- [src/planimeter.js](src/planimeter.js) `getSelectedAssignablePolygonFeatures()` (polygons on any annotatable overlay layer) and `resolveDomainForSelection(features)` for layer-aware DSL panel.
+- [src/planimeter.js](src/planimeter.js) `_refreshLayersForFeatures(features)` to trigger a redraw on the precise layers owning the edited features.
+- [src/planimeter.js](src/planimeter.js) `buildFieldControl` now renders `date` DSL fields as `<input type="date">`.
+- [src/i18n/it.js](src/i18n/it.js), [src/i18n/en.js](src/i18n/en.js) i18n keys for possession columns, possession category labels, possession field labels, mixed-layer hint (`dsl.assign.hintMixedLayers`) and `dsl.possession.domain.label`.
+- [domains/possession.json](domains/possession.json) added `labelKey` references on the domain, every category and every field.
+- [src/dsl/schema.js](src/dsl/schema.js) optional `labelKey` (string) validated on domain/category/field descriptors.
+
+### Changed
+- [src/planimeter.js](src/planimeter.js) `updateDslAssignmentControls`, `applySelectedFeatureCategory`, `unassignSelectedFeatureCategory` now operate on any-layer polygon selections, resolve the domain via `resolveDomainForSelection`, and refresh only the affected layers (no more `layers.vector.changed()` for pertenenze edits).
+- [src/planimeter.js](src/planimeter.js) `openIntersectionSummary` resolves category labels per-feature via `feature.dsl.domainId`, so pertenenze rows display possession-domain labels even when agriculture is the globally active domain.
+- [src/geometry/style.js](src/geometry/style.js) map label resolution honours optional `labelKey` (i18n) on category descriptors.
+- [TODO_LIST.md](TODO_LIST.md) marked P7 Step 4 as done.
+
 ## [2026-05-20] — Persistenza locale cross-browser con mirror file backend
 
 ### Added

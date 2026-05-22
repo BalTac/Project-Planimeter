@@ -102,7 +102,8 @@ function getUserAreaMapLabel(feature) {
     if (dsl?.categoryId && dsl?.domainId) {
         const domain = getDomain(dsl.domainId);
         const category = domain ? getCategoryById(domain, dsl.categoryId) : null;
-        const label = String(category?.label || '').trim();
+        const rawLabel = category?.labelKey ? t(category.labelKey) : (category?.label ?? '');
+        const label = String(rawLabel || '').trim();
         if (label) return label;
     }
 
