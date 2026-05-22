@@ -18,7 +18,7 @@
   - [ ] B-3: spostare stats live (`Riepilogo`) in HUD bar fuori dalla toolbar.
   - [x] B-4: snap promosso a toggle esplicito (`#snap-toggle`) con preferenza persistita (`snapEnabled` in `DEFAULT_PREFERENCES`); Ctrl ora agisce come override temporaneo XOR rispetto allo stato persistente.
   - [x] B-5: azione `dsl.load-domain` esposta come bottone Generale (`#btn-load-domain` + input file nascosto) che chiama `registerDomain()` su JSON utente e rinfresca summary + DSL controls.
-  - [ ] B-6: cleanup Settings (collassare in 3 audience: Display, Detection, Cache).
+  - [x] B-6: Settings collassate in 3 audience (Display / Detection / Cache); rimossa la sezione `Overlay`, `parcel-info` checkbox migrata in `Detection`, color picker pertinenze migrato in `Display`.
   - [ ] B-7: unificare i parameter `<select>` sotto un singolo pattern `.parameter-picker`.
 - [ ] Step C: QoL — command palette (`Ctrl+K`) sopra il registry `mode|action|view`; shortcuts overlay (`?`); azione `dsl.load-domain` come entry point UI.
 

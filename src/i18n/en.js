@@ -34,10 +34,8 @@ export default {
     'section.parcelInfo.kicker':    'Query',
     'section.settings.display':         'Display',
     'section.settings.display.kicker':  'Locale',
-    'section.settings.m3':              'M3 Detect & Trace',
-    'section.settings.m3.kicker':       'Autodelineation',
-    'section.settings.overlay':         'Overlay',
-    'section.settings.overlay.kicker':  'Visual',
+    'section.settings.detection':       'Detection',
+    'section.settings.detection.kicker':'Cadastre & M3',
 
     'layer.sat':                  'Satellite',
     'layer.sat.sub':              'ESRI World Imagery',
