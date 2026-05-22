@@ -320,7 +320,6 @@
                     <div class="action-subgroup action-subgroup--global">
                         <span class="action-subgroup-label" data-i18n="action.group.global">Generale</span>
                         <div class="action-grid">
-                            <button type="button" id="btn-locate" class="action-button icon-button" data-i18n="action.locate" data-i18n-title="hint.action.locate" data-icon="📍">Localizza</button>
                             <button type="button" class="action-button icon-button" data-mode="measure-straight" aria-pressed="false" data-i18n="tool.measureStraight" data-i18n-title="hint.tool.measureStraight" data-icon="📏">Retta</button>
                             <button type="button" class="action-button icon-button" data-mode="measure-polyline" aria-pressed="false" data-i18n="tool.measurePolyline" data-i18n-title="hint.tool.measurePolyline" data-icon="📐">Polyline</button>
                             <button type="button" id="btn-export" class="action-button icon-button" data-i18n="action.export" data-i18n-title="hint.action.export" data-icon="⬆">Esporta</button>
@@ -600,6 +599,11 @@
                 <button type="button" id="btn-vertex-delete-all-reject" class="action-button action-button-danger icon-button" data-i18n="vertex.deleteAll.reject" data-icon="✖">Rifiuta</button>
             </div>
         </section>
+
+        <button type="button" id="btn-locate" class="floating-locate" data-i18n-title="hint.action.locate" data-i18n-aria="action.locate" aria-label="Localizza" title="Localizza">
+            <span class="floating-locate__icon" aria-hidden="true">📍</span>
+            <span class="floating-locate__busy" aria-hidden="true"></span>
+        </button>
 
         <div id="pointer-coordinates" class="pointer-coordinates" hidden aria-live="polite">
             <span class="pointer-coordinates__label" data-i18n="coords.label">Coordinate</span>

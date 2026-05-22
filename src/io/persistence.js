@@ -195,6 +195,19 @@ export async function syncPersistenceFromLocalMirror(state, vectorSource, perten
             emitOk();
         };
 
+        // Manual restore command always reaches the prompt, even when local is
+        // already up-to-date — gives the user explicit agency.
+        if (options.forcePrompt && incomingCount > 0 && typeof options.onPromptEmptyLocal === 'function') {
+            emitOk();
+            options.onPromptEmptyLocal({
+                apply,
+                dismiss: () => {},
+                incomingStore,
+                incomingCount,
+            });
+            return false;
+        }
+
         if (!isIncomingStoreNewer(incomingStore, localStore)) {
             emitOk();
             return false;
@@ -477,10 +490,13 @@ function loadCampaignStore() {
 }
 
 function makeEmptyStore() {
+    // savedAt left empty on purpose: when localStorage has no real data we must
+    // not synthesise a "now" timestamp, otherwise `isIncomingStoreNewer` would
+    // see local newer than mirror and suppress the empty-local restore prompt.
     return {
         version: LOCAL_STORAGE_SCHEMA_VERSION,
         activeCampaignId: null,
-        savedAt: new Date().toISOString(),
+        savedAt: '',
         campaigns: [],
     };
 }

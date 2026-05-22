@@ -105,6 +105,7 @@ export default {
     'snap.hint':      'Line measures straight-line distance. Polyline measures a multi-vertex path (double-click to finish).',
 
     'action.locate':         'Locate',
+    'action.loadFromMirror': 'Load from local mirror',
     'action.export':         'Export',
     'action.import':         'Import',
     'action.loadDomain':     'Load domain',

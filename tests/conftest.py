@@ -21,6 +21,17 @@ def _free_port() -> int:
 @pytest.fixture(scope="session")
 def planimeter_base_url():
     port = _free_port()
+    # Reset the backend mirror so the restore-prompt modal does not appear and
+    # intercept clicks during E2E. The modal only fires when local is empty AND
+    # mirror is non-empty; tests always start with empty localStorage, so a
+    # stale mirror from prior runs would block every interaction.
+    mirror_path = ROOT / ".planimeter_state_store.json"
+    if mirror_path.exists():
+        try:
+            mirror_path.unlink()
+        except OSError:
+            pass
+
     proc = subprocess.Popen(
         [sys.executable, str(SERVER_SCRIPT), "--port", str(port), "--instance-policy", "replace"],
         cwd=str(ROOT),

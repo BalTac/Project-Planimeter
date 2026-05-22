@@ -3876,9 +3876,7 @@ export default class Planimeter {
             alert(t('alert.noGeolocation'));
             return;
         }
-        const origLabel = this.elements.locateButton.textContent;
-        this.elements.locateButton.disabled    = true;
-        this.elements.locateButton.textContent = t('btn.locating');
+        this.setLocateButtonBusy(true);
 
         navigator.geolocation.getCurrentPosition(
             (pos) => {
@@ -3888,20 +3886,23 @@ export default class Planimeter {
                     duration: 1800,
                 });
                 this.setToolbarMessage(t('msg.locationFound'));
-                this.resetLocateButton(origLabel);
+                this.setLocateButtonBusy(false);
             },
             (err) => {
                 console.error('Geolocation error:', err);
                 alert(t('alert.locationFail'));
-                this.resetLocateButton(origLabel);
+                this.setLocateButtonBusy(false);
             },
             { enableHighAccuracy: true, timeout: 10_000, maximumAge: 0 },
         );
     }
 
-    resetLocateButton(label) {
-        this.elements.locateButton.disabled    = false;
-        this.elements.locateButton.textContent = label;
+    setLocateButtonBusy(busy) {
+        const btn = this.elements.locateButton;
+        if (!btn) return;
+        btn.disabled = !!busy;
+        btn.classList.toggle('is-busy', !!busy);
+        btn.setAttribute('aria-busy', busy ? 'true' : 'false');
     }
 
     // ── Layer helpers ────────────────────────────────────────────────────────────
@@ -4121,6 +4122,29 @@ export default class Planimeter {
         root.querySelectorAll('[data-restore-banner-ignore]').forEach((b) => b.addEventListener('click', onIgnore));
 
         root.hidden = false;
+    }
+
+    /**
+     * Manual command: fetch the backend mirror and always surface the restore
+     * modal, regardless of local-store freshness. Wired via command palette.
+     */
+    async loadFromMirror() {
+        await syncPersistenceFromLocalMirror(
+            this.state,
+            this.vectorSource,
+            this.pertenenzaSource,
+            (count) => {
+                this.setToolbarMessage(t('msg.featuresRestored', { count }));
+                this.fitToFeatures();
+                this.updateSummary();
+            },
+            {
+                forcePrompt: true,
+                onPromptEmptyLocal: ({ apply, incomingStore, incomingCount }) => {
+                    this.showRestorePrompt({ apply, incomingStore, incomingCount });
+                },
+            },
+        );
     }
 
     updateLocalMirrorSyncStatus(status, savedAt = null) {

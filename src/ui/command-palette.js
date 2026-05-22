@@ -54,6 +54,12 @@ export function initCommandPalette(app) {
             run: () => app.setSnapEnabled(!app.state.snapEnabled),
         });
 
+        cmds.push({
+            id: 'action.persistence.loadFromMirror',
+            label: `${t('palette.group.action')}: ${t('action.loadFromMirror')}`,
+            run: () => app.loadFromMirror(),
+        });
+
         return cmds;
     }
 

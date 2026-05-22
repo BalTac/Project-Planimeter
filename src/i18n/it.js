@@ -106,6 +106,7 @@ export default {
     'snap.hint':      'Retta misura distanza tra due punti. Polyline misura percorso a vertici multipli (doppio clic per chiudere).',
 
     'action.locate':         'Localizza',
+    'action.loadFromMirror': 'Carica dal mirror locale',
     'action.export':         'Esporta',
     'action.import':         'Importa',
     'action.loadDomain':     'Carica dominio',
