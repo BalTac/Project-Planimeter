@@ -17,7 +17,7 @@
   - [x] B-3: stats live (`Riepilogo`) spostate dalla toolbar a HUD bar `#stats-hud` overlay sulla mappa (top-right, pillole compatte); stessi ID, nessuna riconfigurazione JS.
   - [ ] B-3: spostare stats live (`Riepilogo`) in HUD bar fuori dalla toolbar.
   - [x] B-4: snap promosso a toggle esplicito (`#snap-toggle`) con preferenza persistita (`snapEnabled` in `DEFAULT_PREFERENCES`); Ctrl ora agisce come override temporaneo XOR rispetto allo stato persistente.
-  - [ ] B-5: aggiungere azione `dsl.load-domain` come entry point UI.
+  - [x] B-5: azione `dsl.load-domain` esposta come bottone Generale (`#btn-load-domain` + input file nascosto) che chiama `registerDomain()` su JSON utente e rinfresca summary + DSL controls.
   - [ ] B-6: cleanup Settings (collassare in 3 audience: Display, Detection, Cache).
   - [ ] B-7: unificare i parameter `<select>` sotto un singolo pattern `.parameter-picker`.
 - [ ] Step C: QoL — command palette (`Ctrl+K`) sopra il registry `mode|action|view`; shortcuts overlay (`?`); azione `dsl.load-domain` come entry point UI.

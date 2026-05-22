@@ -313,6 +313,7 @@
                             <button type="button" class="action-button icon-button" data-mode="measure-polyline" aria-pressed="false" data-i18n="tool.measurePolyline" data-i18n-title="hint.tool.measurePolyline" data-icon="📐">Polyline</button>
                             <button type="button" id="btn-export" class="action-button icon-button" data-i18n="action.export" data-i18n-title="hint.action.export" data-icon="⬆">Esporta</button>
                             <button type="button" id="btn-import" class="action-button icon-button" data-i18n="action.import" data-i18n-title="hint.action.import" data-icon="⬇">Importa</button>
+                            <button type="button" id="btn-load-domain" class="action-button icon-button" data-i18n="action.loadDomain" data-i18n-title="hint.action.loadDomain" data-icon="📖">Carica dominio</button>
                         </div>
                     </div>
                     <div class="action-subgroup action-subgroup--selection">
@@ -340,6 +341,7 @@
                         <p class="section-help" data-i18n="action.importHint">Import automatico da GeoJSON e KML. GeoJSON resta il formato consigliato.</p>
                     </div>
                     <input type="file" id="file-import" accept=".geojson,.json,.kml,application/json,application/geo+json,application/vnd.google-earth.kml+xml,application/xml,text/xml" hidden>
+                    <input type="file" id="file-load-domain" accept=".json,application/json" hidden>
                 </section>
 
                 <section id="section-dsl-assignment" class="toolbar-section" aria-labelledby="dsl-assignment-title" hidden>

@@ -38,7 +38,7 @@ import { detectImportFormat, readImportedFeatures } from './io/import.js';
 import { loadPreferences, savePreferences } from './io/preferences.js';
 import { loadBelfioreCodes } from './io/belfiore.js';
 import { CATASTO_WMS_LAYER_DEFS, DEFAULT_CATASTO_WMS_LAYER_SETTINGS } from './core/constants.js';
-import { initDsl, getDomain, getDomainsForLayer } from './dsl/loader.js';
+import { initDsl, getDomain, getDomainsForLayer, registerDomain } from './dsl/loader.js';
 import { aggregateByCategory, totalAggArea } from './dsl/aggregation.js';
 import { buildDslPayload } from './dsl/schema.js';
 import { openSummaryPanel, closeSummaryPanel } from './ui/summary-panel.js';
@@ -416,6 +416,8 @@ export default class Planimeter {
             duplicateSelectedButton:   document.getElementById('btn-duplicate-selected'),
             deleteSelectedButton:      document.getElementById('btn-delete-selected'),
             importInput:               document.getElementById('file-import'),
+            loadDomainButton:          document.getElementById('btn-load-domain'),
+            loadDomainInput:           document.getElementById('file-load-domain'),
             modeButtons:               [...document.querySelectorAll('[data-mode]')],
             status:                    document.getElementById('toolbar-status'),
             localSyncStatus:           document.getElementById('local-sync-status'),
@@ -983,6 +985,8 @@ export default class Planimeter {
         this.elements.dslUnassignButton?.addEventListener('click',      () => this.unassignSelectedFeatureCategory());
         this.elements.dslCategorySelect?.addEventListener('change',      () => this.updateDslAssignmentControls(false));
         this.elements.importInput.addEventListener('change', (ev) => this.importFeatures(ev));
+        this.elements.loadDomainButton?.addEventListener('click', () => this.elements.loadDomainInput?.click());
+        this.elements.loadDomainInput?.addEventListener('change', (ev) => this.loadDomainFromFile(ev));
         this.elements.parcelInfoCloseButton?.addEventListener('click', (ev) => {
             ev.stopPropagation();
             this.closeParcelInfoPopover();
@@ -3773,6 +3777,36 @@ export default class Planimeter {
             } finally {
                 event.target.value = '';
                 this.updateSummary();
+            }
+        };
+        reader.readAsText(file);
+    }
+
+    loadDomainFromFile(event) {
+        const [file] = event.target.files;
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                const content = String(reader.result);
+                const parsed  = JSON.parse(content);
+                const { success, errors } = registerDomain(parsed);
+                if (!success) {
+                    alert(t('alert.loadDomain.invalid', { errors: errors.join('; ') }));
+                    return;
+                }
+                this.normalizeUserAreaNames();
+                this.layers.vector.changed();
+                this.layers.pertenenza.changed();
+                this.updateSummary();
+                this.updateDslAssignmentControls();
+                this.setToolbarMessage(t('alert.loadDomain.success', { id: parsed.id }));
+            } catch (err) {
+                console.error('[DSL] load-domain failed:', err);
+                alert(t('alert.loadDomain.parseError', { message: err.message }));
+            } finally {
+                event.target.value = '';
             }
         };
         reader.readAsText(file);
