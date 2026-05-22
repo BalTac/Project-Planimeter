@@ -19,6 +19,7 @@ function buildInteractionSet(source, layer) {
     const select = new Select({
         layers: [layer],
         hitTolerance: 8,
+        style: null,
     });
 
     const modify = new Modify({

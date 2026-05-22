@@ -40,6 +40,9 @@ import { t } from '../i18n/i18n.js';
  *   }) => {
  *     items: Array<{key: string, action: string, danger?: boolean}>,
  *     actions?: Record<string, () => void>,
+ *     mergeWithDefault?: boolean,
+ *     position?: 'before' | 'after',
+ *     insertAfterAction?: string,
  *   } | null,
  * }} options
  */
@@ -88,30 +91,7 @@ export function initContextMenu({
             isDrawing,
         });
 
-        if (specialMenu?.items?.length) {
-            renderMenu(contextMenu, specialMenu.items, {
-                ...specialMenu.actions,
-                abortActiveDraw,
-                editFeature:        () => editFeature(feature, pixel, candidates),
-                assignCategory:     () => assignCategory?.(feature, pixel, candidates),
-                deleteFeature:      () => deleteFeature(feature, pixel, candidates),
-                resyncParcelMetadata: () => resyncParcelMetadata?.(feature, pixel, candidates),
-                queryParcelAtPixel: () => queryParcelAtPixel(pixel),
-                detectParcelM3AtPixel: () => detectParcelM3AtPixel?.(pixel),
-                refineParcelM3ForFeature: () => refineParcelM3ForFeature?.(feature, pixel, candidates),
-                startHoleDrawForFeature: () => startHoleDrawForFeature?.(feature, pixel, candidates),
-                refreshTileAtPixel: () => refreshTileAtPixel?.(pixel),
-                copyCoordinatesAtPixel: () => copyCoordinatesAtPixel?.(pixel),
-                exportView,
-                exportSelection,
-                exportAreas,
-            });
-            const rect = viewport.getBoundingClientRect();
-            showContextMenu(contextMenu, event.clientX - rect.left, event.clientY - rect.top, viewport);
-            return;
-        }
-
-        const items = buildMenuItems({
+        const defaultItems = buildMenuItems({
             mode,
             isDrawing,
             feature,
@@ -122,9 +102,8 @@ export function initContextMenu({
             refineParcelM3ForFeature: typeof refineParcelM3ForFeature === 'function',
             startHoleDrawForFeature: typeof startHoleDrawForFeature === 'function',
         });
-        if (!items.length) return;
 
-        renderMenu(contextMenu, items, {
+        const baseActions = {
             abortActiveDraw,
             editFeature:        () => editFeature(feature, pixel, candidates),
             assignCategory:     () => assignCategory?.(feature, pixel, candidates),
@@ -139,7 +118,28 @@ export function initContextMenu({
             exportView,
             exportSelection,
             exportAreas,
-        });
+        };
+
+        if (specialMenu?.items?.length) {
+            const mergedItems = specialMenu.mergeWithDefault
+                ? mergeSpecialItems(defaultItems, specialMenu.items, {
+                    position: specialMenu.position,
+                    insertAfterAction: specialMenu.insertAfterAction,
+                })
+                : specialMenu.items;
+
+            renderMenu(contextMenu, mergedItems, {
+                ...baseActions,
+                ...specialMenu.actions,
+            });
+            const rect = viewport.getBoundingClientRect();
+            showContextMenu(contextMenu, event.clientX - rect.left, event.clientY - rect.top, viewport);
+            return;
+        }
+
+        if (!defaultItems.length) return;
+
+        renderMenu(contextMenu, defaultItems, baseActions);
 
         const rect = viewport.getBoundingClientRect();
         showContextMenu(contextMenu, event.clientX - rect.left, event.clientY - rect.top, viewport);
@@ -160,9 +160,40 @@ export function initContextMenu({
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
+function appendSeparator(items) {
+    if (!items.length) return;
+    const last = items[items.length - 1];
+    if (last?.separator) return;
+    items.push({ separator: true });
+}
+
+function mergeSpecialItems(defaultItems, specialItems, options = {}) {
+    const { position = 'before', insertAfterAction } = options;
+    const cleanDefault = defaultItems.filter(Boolean);
+    const cleanSpecial = specialItems.filter(Boolean);
+
+    if (!cleanDefault.length) return cleanSpecial;
+    if (!cleanSpecial.length) return cleanDefault;
+
+    if (insertAfterAction) {
+        const idx = cleanDefault.findIndex((item) => item?.action === insertAfterAction);
+        if (idx >= 0) {
+            return [
+                ...cleanDefault.slice(0, idx + 1),
+                ...cleanSpecial,
+                ...cleanDefault.slice(idx + 1),
+            ];
+        }
+    }
+
+    return position === 'after'
+        ? [...cleanDefault, ...cleanSpecial]
+        : [...cleanSpecial, ...cleanDefault];
+}
+
 /**
  * Determine which menu items to show based on current application state.
- * @returns {Array<{key: string, action: string, danger?: boolean}>}
+ * @returns {Array<{key?: string, action?: string, danger?: boolean, separator?: boolean}>}
  */
 function buildMenuItems({ mode, isDrawing, feature, canQueryParcel, canRefreshWmsTile, canCopyCoordinates, detectParcelM3AtPixel, refineParcelM3ForFeature, startHoleDrawForFeature }) {
     // During active drawing: single "cancel" item
@@ -190,7 +221,9 @@ function buildMenuItems({ mode, isDrawing, feature, canQueryParcel, canRefreshWm
                 }
             }
             items.push({ key: 'ctx.deleteFeature', action: 'deleteFeature', danger: true });
+            appendSeparator(items);
         }
+        const infoStartIndex = items.length;
         if (canQueryParcel()) {
             items.push({ key: 'ctx.queryParcel', action: 'queryParcelAtPixel' });
             if (!feature && detectParcelM3AtPixel) {
@@ -203,9 +236,15 @@ function buildMenuItems({ mode, isDrawing, feature, canQueryParcel, canRefreshWm
         if (canCopyCoordinates) {
             items.push({ key: 'ctx.copyCoordinates', action: 'copyCoordinatesAtPixel' });
         }
+        if (items.length > infoStartIndex) {
+            appendSeparator(items);
+        }
         items.push({ key: 'ctx.exportView', action: 'exportView' });
         items.push({ key: 'ctx.exportSelection', action: 'exportSelection' });
         items.push({ key: 'ctx.exportAreas', action: 'exportAreas' });
+        if (items[items.length - 1]?.separator) {
+            items.pop();
+        }
         return items;
     }
 
@@ -224,6 +263,11 @@ function buildMenuItems({ mode, isDrawing, feature, canQueryParcel, canRefreshWm
 
 /**
  * Clear and re-render the context menu's item list.
+ *
+ * Supported item shapes:
+ *  - { separator: true }
+ *  - { key, action, danger?, disabled?, tooltipKey?, tooltip?, label? }
+ *  - { key, children: Item[], disabled?, tooltipKey?, tooltip?, label? }   // submenu
  */
 function renderMenu(menu, items, actions) {
     let list = menu.querySelector('ul');
@@ -235,21 +279,81 @@ function renderMenu(menu, items, actions) {
     list.innerHTML = '';
 
     for (const item of items) {
-        const li  = document.createElement('li');
+        list.appendChild(buildMenuListItem(item, actions, menu));
+    }
+}
+
+function buildMenuListItem(item, actions, rootMenu) {
+    const li = document.createElement('li');
+
+    if (item.separator) {
+        li.className = 'context-menu-separator';
+        li.setAttribute('role', 'separator');
+        return li;
+    }
+
+    const label = item.label ?? (item.key ? t(item.key, item.labelVars ?? {}) : '');
+    const tooltip = item.tooltip ?? (item.tooltipKey ? t(item.tooltipKey) : null);
+    const hasChildren = Array.isArray(item.children) && item.children.length > 0;
+
+    if (hasChildren) {
+        li.className = 'context-menu-item-wrapper context-menu-has-children';
         const btn = document.createElement('button');
-        btn.type        = 'button';
-        btn.className   = 'context-menu-item' + (item.danger ? ' context-menu-item--danger' : '');
-        btn.textContent = t(item.key);
+        btn.type = 'button';
+        btn.className = 'context-menu-item'
+            + (item.disabled ? ' context-menu-item--disabled' : '')
+            + (item.danger ? ' context-menu-item--danger' : '');
+        btn.innerHTML = `<span class="context-menu-item__label">${escapeText(label)}</span><span class="context-menu-item__chevron" aria-hidden="true">\u25B8</span>`;
+        if (tooltip) btn.title = tooltip;
+        if (item.disabled) {
+            btn.setAttribute('aria-disabled', 'true');
+            btn.disabled = true;
+        }
+        li.appendChild(btn);
+
+        if (!item.disabled) {
+            const submenu = document.createElement('ul');
+            submenu.className = 'context-menu-list context-menu-submenu';
+            for (const child of item.children) {
+                submenu.appendChild(buildMenuListItem(child, actions, rootMenu));
+            }
+            li.appendChild(submenu);
+        }
+        return li;
+    }
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'context-menu-item'
+        + (item.danger ? ' context-menu-item--danger' : '')
+        + (item.disabled ? ' context-menu-item--disabled' : '');
+    btn.textContent = label;
+    if (tooltip) btn.title = tooltip;
+
+    if (item.disabled) {
+        btn.setAttribute('aria-disabled', 'true');
+        btn.disabled = true;
+    } else {
         btn.addEventListener('click', () => {
-            menu.hidden = true;
-            Promise.resolve(actions[item.action]?.())
+            rootMenu.hidden = true;
+            Promise.resolve(actions[item.action]?.(item))
                 .catch((error) => {
                     console.error('Context menu action failed:', item.action, error);
                 });
         });
-        li.appendChild(btn);
-        list.appendChild(li);
     }
+    li.appendChild(btn);
+    return li;
+}
+
+function escapeText(value) {
+    if (value == null) return '';
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 /**

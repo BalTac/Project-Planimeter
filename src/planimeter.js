@@ -40,6 +40,7 @@ import { CATASTO_WMS_LAYER_DEFS, DEFAULT_CATASTO_WMS_LAYER_SETTINGS } from './co
 import { initDsl, getDomain } from './dsl/loader.js';
 import { aggregateByCategory, totalAggArea } from './dsl/aggregation.js';
 import { buildDslPayload } from './dsl/schema.js';
+import { openSummaryPanel, closeSummaryPanel } from './ui/summary-panel.js';
 
 const BASE_LAYER_KEYS = ['sat', 'openTopoMap', 'esriTopo', 'esriRelief'];
 const ADMIN_LAYER_KEYS = ['osm', 'catasto'];
@@ -65,9 +66,6 @@ export default class Planimeter {
         if (!(this.state.dslHiddenCategoryKeys instanceof Set)) {
             this.state.dslHiddenCategoryKeys = new Set(this.state.dslHiddenCategoryKeys ?? []);
         }
-        import { openSummaryPanel, closeSummaryPanel } from './ui/summary-panel.js';
-        import {
-            historyAtParcel,
         this.state.toolbarPanel = preferences.toolbarPanel;
         this.state.activeBaseLayer = this.sanitizeBaseLayerKey(preferences.activeBaseLayer);
         this.state.activeAdminLayer = this.sanitizeAdminLayerKey(preferences.activeAdminLayer);
@@ -92,34 +90,7 @@ export default class Planimeter {
         this.state.m3TraceToleranceM = this.sanitizeM3TraceToleranceM(preferences.m3TraceToleranceM);
         this.state.parcelInfoStatusKey = preferences.parcelInfoEnabled
             ? 'parcelInfo.clickHint'
-                // ── Summary menu items ─────────────────────────────────────────────────────
-                // Show summary for selected features (Drawn Areas or Property Scopes)
-                if ((this.state.selectedFeature || this.state.selectedFeatures?.length > 0) && !this.state.mode.startsWith('draw')) {
-                    const selectedFeatures = this.state.selectedFeatures && this.state.selectedFeatures.length > 0
-                        ? this.state.selectedFeatures
-                        : (this.state.selectedFeature ? [this.state.selectedFeature] : []);
-
-                    if (selectedFeatures.length > 0) {
-                        const isAllDrawnAreas = selectedFeatures.every((f) => f?.get?.('overlayLayer') === 'user');
-                        const isAllPropertyScopes = selectedFeatures.every((f) => f?.get?.('overlayLayer') === 'pertenenze');
-
-                        if (isAllDrawnAreas || isAllPropertyScopes) {
-                            const summaryKey = isAllDrawnAreas ? 'ctx.areaSummary' : 'ctx.parcelSummary';
-                            return {
-                                items: [
-                                    { key: summaryKey, action: 'openSummary' },
-                                ],
-                                actions: {
-                                    openSummary: () => this.openIntersectionSummary(selectedFeatures),
-                                },
-                            };
-                        }
-                    }
-                }
-
-                if (!this.selectionExport?.active) return null;
-
-                const hasRect = Boolean(this.selectionExport.rect);
+            : 'parcelInfo.disabled';
         this.m3BusyActive = false;
         this.m3BusyMessage = '';
         this.localMirrorSyncStatus = 'checking';
@@ -2482,6 +2453,10 @@ export default class Planimeter {
 
         const allDrawnAreas = this.vectorSource?.getFeatures?.() ?? [];
         const allPropertyScopes = this.pertenenzaSource?.getFeatures?.() ?? [];
+        const selectedAreas = selectedFeatures.filter((feature) => this.getFeatureOverlayLayer(feature) === 'user');
+        const selectedParcels = selectedFeatures.filter((feature) => this.getFeatureOverlayLayer(feature) === 'pertenenze');
+        const mapContainer = this.map.getTargetElement?.();
+        if (!mapContainer) return;
 
         const getPropertyScopeLabel = (feature) => {
             if (!feature) return '';
@@ -2491,15 +2466,36 @@ export default class Planimeter {
             return parcelNum || localId || feature.get('featureId') || '';
         };
 
-        const getCategoryLabel = (categoryId, feature) => {
+        const getCategoryLabel = (categoryId) => {
             const domain = getDomain(this.state.dslActiveDomainId);
             if (!domain) return categoryId || t('dsl.category.unassigned');
             const category = domain.categories?.find((cat) => cat.id === categoryId);
             return category?.label ?? categoryId ?? t('dsl.category.unassigned');
         };
 
-        const mapContainer = this.map.getTargetElement?.();
-        if (!mapContainer) return;
+        const projection = this.map.getView?.().getProjection?.();
+        const primaryFeature = selectedParcels[0] ?? selectedAreas[0] ?? selectedFeatures[0];
+        const primaryOverlayLayer = primaryFeature ? this.getFeatureOverlayLayer(primaryFeature) : null;
+        const measurementLayerLabel = selectedParcels.length && !selectedAreas.length
+            ? t('summary.layer.drawnAreas')
+            : (selectedAreas.length && !selectedParcels.length
+                ? t('summary.layer.propertyScopes')
+                : t('summary.layer.mixed'));
+
+        let featureLabel = '';
+        if (primaryFeature && primaryOverlayLayer) {
+            const areaLabel = this.unitSystem.formatArea(calculateArea(primaryFeature, projection));
+            const perimeterLabel = this.unitSystem.formatPerimeter(calculatePerimeter(primaryFeature, projection));
+            if (primaryOverlayLayer === 'pertenenze') {
+                featureLabel = `${t('summary.parcelPrefix')} ${getPropertyScopeLabel(primaryFeature)}, ${t('parcelInfo.area')} ${areaLabel}, ${t('parcelInfo.perimeter')} ${perimeterLabel}`;
+            } else {
+                const dsl = primaryFeature.get('dsl');
+                const cropLabel = dsl?.categoryId
+                    ? getCategoryLabel(dsl.categoryId)
+                    : t('dsl.category.unassigned');
+                featureLabel = `${primaryFeature.get('featureName') || primaryFeature.get('featureId') || t('feature.area')}, ${t('parcelInfo.area')} ${areaLabel}, ${t('parcelInfo.perimeter')} ${perimeterLabel}, ${t('summary.col.crop')} ${cropLabel}`;
+            }
+        }
 
         openSummaryPanel({
             container: mapContainer,
@@ -2509,7 +2505,11 @@ export default class Planimeter {
             unitSystem: this.unitSystem,
             getPropertyScopeLabel,
             getCategoryLabel,
-            projection: this.map.getView?.().getProjection?.(),
+            projection,
+            summaryMeta: {
+                layerLabel: measurementLayerLabel,
+                featureLabel,
+            },
         });
     }
 
@@ -3091,6 +3091,161 @@ export default class Planimeter {
         return 1;
     }
 
+    // ── Summary context-menu (stack-aware, intersection-gated) ─────────────
+    getFeatureContextLabel(feature) {
+        if (!feature) return '';
+        const layer = this.getFeatureOverlayLayer(feature);
+        if (layer === 'pertenenze') {
+            const parcelNum = feature.get('parcelNumber') || feature.get('featureName') || feature.get('featureId') || '';
+            const localId = feature.get('inspireLocalId') || '';
+            if (parcelNum && localId) return `${parcelNum} (${localId})`;
+            return parcelNum || localId || feature.get('featureId') || t('summary.parcelPrefix');
+        }
+        return feature.get('featureName') || feature.get('featureId') || t('feature.area');
+    }
+
+    bboxesOverlap(a, b) {
+        if (!Array.isArray(a) || !Array.isArray(b) || a.length < 4 || b.length < 4) return true;
+        return !(a[2] < b[0] || a[0] > b[2] || a[3] < b[1] || a[1] > b[3]);
+    }
+
+    featureHasIntersectionCandidateInLayer(feature, oppositeSource) {
+        const extent = feature?.getGeometry?.()?.getExtent?.();
+        const candidates = oppositeSource?.getFeatures?.() ?? [];
+        if (!candidates.length) return false;
+        for (const candidate of candidates) {
+            if (candidate === feature) continue;
+            const candExtent = candidate.getGeometry?.()?.getExtent?.();
+            if (this.bboxesOverlap(extent, candExtent)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Build the navigate-mode summary submenu(s) based on features under the cursor.
+     * Always shows entries for both layers when both have features under the pixel,
+     * regardless of the active editing layer (Alternative C: stack-aware).
+     *
+     * @param {{event: MouseEvent, pixel: number[], feature: any}} ctx
+     * @returns {object|null}
+     */
+    buildSummaryContextMenu(ctx) {
+        if (!Array.isArray(ctx?.pixel)) return null;
+
+        const candidates = this.getVisibleFeatureCandidatesAtPixel(ctx.pixel)
+            .filter((f) => this.isPolygonFeature(f));
+        if (!candidates.length) return null;
+
+        const userCandidates = candidates.filter((f) => this.getFeatureOverlayLayer(f) === 'user');
+        const parcelCandidates = candidates.filter((f) => this.getFeatureOverlayLayer(f) === 'pertenenze');
+        if (!userCandidates.length && !parcelCandidates.length) return null;
+
+        // Multi-selection awareness: when user has a multi-selection that includes
+        // the clicked feature and is single-layer, summary uses the full selection.
+        const pool = (this.state.selectedFeatures && this.state.selectedFeatures.length > 0)
+            ? this.state.selectedFeatures
+            : (this.state.selectedFeature ? [this.state.selectedFeature] : []);
+
+        const buildItemsForCandidates = (candidatesArr, layerKey) => {
+            if (!candidatesArr.length) return null;
+            const oppositeSource = layerKey === 'user' ? this.pertenenzaSource : this.vectorSource;
+
+            const makeLeaf = (feature) => {
+                const label = this.getFeatureContextLabel(feature);
+                const hasIntersection = this.featureHasIntersectionCandidateInLayer(feature, oppositeSource);
+                return {
+                    key: layerKey === 'user' ? 'ctx.summary.areaWithLabel' : 'ctx.summary.parcelWithLabel',
+                    labelVars: { label },
+                    action: 'openSummary',
+                    payload: { feature, layerKey },
+                    disabled: !hasIntersection,
+                    tooltipKey: !hasIntersection ? 'ctx.summary.noIntersection' : undefined,
+                };
+            };
+
+            // Single feature in this layer: flat item (with multi-selection promotion if applicable)
+            if (candidatesArr.length === 1) {
+                const feature = candidatesArr[0];
+                const poolForLayer = pool.filter((f) => this.getFeatureOverlayLayer(f) === layerKey);
+                const useMulti = poolForLayer.length > 1 && poolForLayer.includes(feature);
+                const features = useMulti ? poolForLayer : [feature];
+                const label = useMulti
+                    ? t(layerKey === 'user' ? 'ctx.summary.group.areas' : 'ctx.summary.group.parcels') + ` (${features.length})`
+                    : this.getFeatureContextLabel(feature);
+                // For multi we check intersection on the union of candidates
+                let hasIntersection = false;
+                for (const f of features) {
+                    if (this.featureHasIntersectionCandidateInLayer(f, oppositeSource)) {
+                        hasIntersection = true;
+                        break;
+                    }
+                }
+                return [{
+                    key: layerKey === 'user' ? 'ctx.summary.areaWithLabel' : 'ctx.summary.parcelWithLabel',
+                    labelVars: { label },
+                    action: 'openSummary',
+                    payload: { features, layerKey },
+                    disabled: !hasIntersection,
+                    tooltipKey: !hasIntersection ? 'ctx.summary.noIntersection' : undefined,
+                }];
+            }
+
+            // Multiple stacked features in same layer → submenu
+            const children = candidatesArr.map(makeLeaf);
+            const anyEnabled = children.some((c) => !c.disabled);
+            return [{
+                key: layerKey === 'user' ? 'ctx.summary.group.areas' : 'ctx.summary.group.parcels',
+                children,
+                disabled: !anyEnabled,
+                tooltipKey: !anyEnabled ? 'ctx.summary.noIntersection' : undefined,
+            }];
+        };
+
+        // Order based on active editing layer (its entries come first)
+        const items = [];
+        const ordered = this.state.activeEditingLayer === 'pertenenze'
+            ? [{ key: 'pertenenze', list: parcelCandidates }, { key: 'user', list: userCandidates }]
+            : [{ key: 'user', list: userCandidates }, { key: 'pertenenze', list: parcelCandidates }];
+
+        for (const entry of ordered) {
+            const built = buildItemsForCandidates(entry.list, entry.key);
+            if (built) items.push(...built);
+        }
+
+        if (!items.length) return null;
+
+        return {
+            mergeWithDefault: true,
+            position: 'before',
+            insertAfterAction: 'assignCategory',
+            items,
+            actions: {
+                openSummary: (clickedItem) => {
+                    const payload = clickedItem?.payload;
+                    if (!payload) return;
+                    const features = Array.isArray(payload.features)
+                        ? payload.features
+                        : (payload.feature ? [payload.feature] : []);
+                    if (!features.length) return;
+
+                    const layerKey = payload.layerKey;
+                    this.state.selectedFeature = features[0];
+                    this.state.selectedFeatures = [...features];
+                    this.allInteractions.user.select.getFeatures().clear();
+                    this.allInteractions.pertenenze.select.getFeatures().clear();
+                    const targetSelect = layerKey === 'pertenenze'
+                        ? this.allInteractions.pertenenze.select
+                        : this.allInteractions.user.select;
+                    for (const f of features) targetSelect.getFeatures().push(f);
+                    this.layers.vector.changed();
+                    this.layers.pertenenza.changed();
+                    this.updateSummary();
+                    this.openIntersectionSummary(features);
+                },
+            },
+        };
+    }
+
     getSpecialContextMenu(ctx) {
         if (this.state.mode === 'edit' && this.isPolygonFeature(this.state.selectedFeature) && Array.isArray(ctx?.pixel)) {
             const coordinate = this.map.getCoordinateFromPixel(ctx.pixel);
@@ -3128,6 +3283,12 @@ export default class Planimeter {
                     },
                 };
             }
+        }
+
+        // ── Summary menu items ─────────────────────────────────────────────
+        if (this.state.mode === 'navigate') {
+            const summaryMenu = this.buildSummaryContextMenu(ctx);
+            if (summaryMenu) return summaryMenu;
         }
 
         if (!this.selectionExport?.active) return null;

@@ -29,6 +29,7 @@
 - [x] Aggiungere test automatici minimi backend (smoke server, parsing GeoJSON, utility area/format).
 - [x] Verificare compatibilita importmap cross-browser (Chrome/Firefox/Safari target).
 - [x] Aggiungere smoke E2E Playwright: draw polygon, export GeoJSON, locale switch.
+- [x] Aggiungere E2E Playwright su caso reale M3 (12.562959, 43.011822 / IT.AGE.PLA.B609_000200.35) con detect pertinenza, disegno quadrato intersecante e doppio summary (parcel + drawn area) con report diagnostico.
 - [x] Evitare overwrite negli smoke test pertinenze: output PNG/JSON nominati per coordinate e modalita (full/m3).
 - [x] Rendere configurabile il radius del metodo 3 nello smoke test di segmentazione raster.
 - [x] Rendere dinamico il titolo del pannello smoke e preservare l'aspect ratio nella visualizzazione della particella.
@@ -60,6 +61,7 @@
 - [x] Evolvere data model feature con UUID stabile, bbox, timestamp, properties dinamiche e tags.
 - [x] Introdurre `links.cadastral[]` nel modello persistente con `parcel_id`, `intersection_area`, `coverage_ratio`.
 - [x] Implementare versioning append-only per mutazioni di geometria e proprieta.
+- [ ] Introdurre versioning locale delle modifiche utente con snapshot incrementali e undo/redo delle ultime operazioni anche senza salvataggio manuale esplicito (standard editor), includendo rollback sicuro dopo test E2E/automazioni.
 
 ### P4 — Geometria e analytics
 - [x] Introdurre engine intersection area/ratio riusabile e UI-agnostic.
@@ -111,12 +113,16 @@
 - [x] Aggiungere attribution/licenze cartografiche persistenti in basso a destra, con scala metrica visibile.
 - [x] Aggiungere widget coordinate live in modalità Navigate e voce menu contestuale per copia coordinate.
 - [x] Ripristinare live view coordinate in modalità non conflittuali con gauge Viewport X/Y e Zoom, più cursori mappa coerenti con la modalità operativa corrente.
+- [x] Summary intersections: mantenere overlay numero parcella su selezione e mostrare layer + dettaglio particella nel pannello.
+- [x] Integrare Area/Parcel summary nel menu contestuale principale (solo su feature sotto mouse) e correggere selezione Drawn Areas + header con coltura.
 - [ ] Migliorare UX mobile: toggle snapping dedicato (senza Ctrl).
 - [x] Migliorare UX edit vertici: marker su tutti i vertici (vuoto/non selezionato, pieno/selezionato), rimozione vertice opzionale via tasto destro o Canc con raddrizzamento automatico contorno.
 - [x] Evolvere UX cancellazione vertici: multi-selezione Ctrl+click, menu contestuale vertice con `Delete selected` senza confirm e `Delete all` con warning flottante Accept/Reject; regole topologiche inner ring (riempimento) / outer ring (eliminazione feature).
 - [x] Fix overlap edit-click: con feature selezionata, click su vertice in hover priorita alla selezione vertice (anche Ctrl multi-select) senza switch automatico alla feature sottostante.
 - [ ] Aggiungere tema chiaro opzionale.
 - [ ] Aggiungere mini guida interattiva primo avvio.
+- [ ] **Bug**: timeout intermittente su `POST /export-bundle` (≥30s, isolato in `tests/test_e2e_p0_extended.py::TestExportFormats::test_export_bundle_endpoint_responds`). Indagare profilatura backend (riproiezione raster + zip), aggiungere cap memoria/tempo, restituire 503/progress se la generazione supera soglia. Non blocca le altre flow di export.
+- [ ] **Bug visuale**: feature gigante (~3.3 milioni ha) emersa al restore di `.planimeter_state_store.json` (vedi screenshot 2026-05-22). Probabile vertice corrotto in localStorage/persistenza. Aggiungere sanity-check su `bbox`/area al restore (warning + opt-out skip) e diagnostica per identificare origine (import legacy / errore disegno).
 
 ### P0.5 — Smart Hole Tool (inner ring persistente)
 - [x] Definire policy unica overlap per target feature: considerare solo layer visibili; layer non visibili trattati come inesistenti.

@@ -184,7 +184,13 @@ export function calculateIntersectionMetrics(subject, target, options = {}) {
 
     const subjectArea = multiPolygonArea(subjectCoordinates);
     const targetArea = multiPolygonArea(targetCoordinates);
-    const intersectionGeometry = polygonClipping.intersection(subjectCoordinates, targetCoordinates);
+    let intersectionGeometry;
+    try {
+        intersectionGeometry = polygonClipping.intersection(subjectCoordinates, targetCoordinates);
+    } catch (err) {
+        console.warn('[Planimeter] polygon-clipping.intersection failed:', err?.message ?? err);
+        intersectionGeometry = [];
+    }
     const intersectionArea = multiPolygonArea(intersectionGeometry);
 
     let ratioDenominator = targetArea;

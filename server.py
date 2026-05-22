@@ -17,6 +17,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import time
 import urllib.error
 import hashlib
@@ -3121,6 +3122,15 @@ class PlanimeterServer(ThreadingHTTPServer):
     upstream_timeout: float
     upstream_retries: int
     tile_cache: TileCache
+
+    def handle_error(self, request, client_address):
+        """Suppress noisy client-disconnect errors (browser abort/refresh)."""
+        exc_type, exc_val, _ = sys.exc_info()
+        if exc_type in (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            return
+        if exc_type is OSError and getattr(exc_val, 'winerror', None) in (10053, 10054):
+            return
+        super().handle_error(request, client_address)
 
 
 def parse_args() -> argparse.Namespace:
