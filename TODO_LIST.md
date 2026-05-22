@@ -35,22 +35,25 @@ Approccio: tre commit indipendenti, ciascuno verificabile e revertibile. **Commi
 finché tutta la catena non e validata in produzione.
 
 #### Commit P1 — Anti-wipe + race fix (no UI, fix invisibile)
-- [ ] Guard in `isIncomingStoreNewer` ([src/io/persistence.js](src/io/persistence.js)): se l'incoming
+- [x] Guard in `isIncomingStoreNewer` ([src/io/persistence.js](src/io/persistence.js)): se l'incoming
   store ha 0 feature totali mentre il local ne ha >0, ritorna `false`. Mai sovrascrivere dati
   esistenti con uno store vuoto, indipendentemente da `savedAt`.
-- [ ] Spostare `schedulePersistenceSync` ([src/planimeter.js](src/planimeter.js) ~L560-565) dai
+- [x] Spostare `schedulePersistenceSync` ([src/planimeter.js](src/planimeter.js) ~L560-565) dai
   listener `changefeature` sui due `VectorSource` ai soli eventi `drawend` / `modifyend` /
   `translateend` / `addfeature` / `removefeature`. Niente piu salvataggi a meta drag di vertice
-  (causa probabile del "polygon enorme" residuo nello store).
-- [ ] Validazione geometrica al save in `persistFeatures` ([src/io/persistence.js](src/io/persistence.js)):
+  (causa probabile del "polygon enorme" residuo nello store). `changefeature` ora aggiorna solo
+  il summary; persist esplicito aggiunto in `modify.on('modifyend')`. Niente `Translate`
+  interaction nel progetto.
+- [x] Validazione geometrica al save in `persistFeatures` ([src/io/persistence.js](src/io/persistence.js)):
   scartare feature con extent > N km (es. > 100 km diagonale per poligoni user-drawn) o vertici
   fuori bounds 4326. `console.warn` + skip, niente eccezioni.
-- [ ] Snapshot last-known-good in `localStorage` chiave `planimeter.features.v1.prev` PRIMA di
+- [x] Snapshot last-known-good in `localStorage` chiave `planimeter.features.v1.prev` PRIMA di
   ogni `vectorSource.clear()` di restore. Recovery manuale possibile via console anche senza UI.
 - [ ] Unificare il restore in una singola pipeline: rimuovere il doppio `clear()` (uno da
   `restorePersistedFeatures`, uno da `syncPersistenceFromLocalMirror` se l'incoming vince).
   `restorePersistedFeatures` legge localStorage senza montare; `syncPersistenceFromLocalMirror`
   decide vincitore con il guard del primo punto; un solo `restoreFromCampaignStore` finale.
+  _(Rimandato: con anti-wipe + prev snapshot il bug e' chiuso; refactor cosmetico, da fare con calma.)_
 - [ ] Test: smoke pytest + scenario manuale "draw 3 aree -> apri seconda tab che svuota ->
   refresh prima tab -> deve mostrare le 3 aree (non vuoto)".
 

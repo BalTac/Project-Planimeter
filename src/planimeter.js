@@ -564,12 +564,16 @@ export default class Planimeter {
         this.bindTileLoadingIndicator();
 
         this.view.on('change:resolution', () => this.updateSummary());
+        // Persist only on terminal mutations (add/remove). 'changefeature' was
+        // historically wired here too, but it fired during mid-drag vertex
+        // edits and produced corrupt geometries in localStorage. Vertex edits
+        // are now persisted via the 'modifyend' handler below.
         this.vectorSource.on('addfeature',    () => { this.updateSummary(); schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource); });
         this.vectorSource.on('removefeature', () => { this.updateSummary(); schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource); });
-        this.vectorSource.on('changefeature', () => { this.updateSummary(); schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource); });
+        this.vectorSource.on('changefeature', () => { this.updateSummary(); });
         this.pertenenzaSource.on('addfeature',    () => { this.updateSummary(); schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource); });
         this.pertenenzaSource.on('removefeature', () => { this.updateSummary(); schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource); });
-        this.pertenenzaSource.on('changefeature', () => { this.updateSummary(); schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource); });
+        this.pertenenzaSource.on('changefeature', () => { this.updateSummary(); });
     }
 
     addInteractionsToMap() {
@@ -936,6 +940,7 @@ export default class Planimeter {
                 f.set('version',    (f.get('version') ?? 1) + 1);
                 f.set('modifiedAt', now);
             }
+            schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource);
 
             if (this.state.mode === 'edit' && this.isPolygonFeature(this.state.selectedFeature)) {
                 const anchor = ev?.mapBrowserEvent?.coordinate ?? this.state.lastPointerCoordinate;

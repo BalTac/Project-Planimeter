@@ -11,6 +11,8 @@ const geoJsonFormat = new GeoJSON();
 const DEFAULT_CAMPAIGN_SEASON = 'annual';
 const LOCAL_STATE_LOAD_ENDPOINT = '/local-state-load';
 const LOCAL_STATE_SAVE_ENDPOINT = '/local-state-save';
+const LOCAL_STORAGE_KEY_PREV = `${LOCAL_STORAGE_KEY}.prev`;
+const MAX_FEATURE_BBOX_DIAGONAL_METERS = 100_000;
 
 let localMirrorSaveTimeoutId = null;
 let lastLocalMirrorSavedAt = null;
@@ -71,6 +73,20 @@ export function persistFeatures(state, ...vectorSources) {
             featureProjection: 'EPSG:3857',
             decimals: 6,
         });
+
+        // Geometry validation: skip features whose bbox is out of EPSG:4326
+        // bounds or whose diagonal exceeds MAX_FEATURE_BBOX_DIAGONAL_METERS.
+        // Defends against corrupted geometries from mid-drag persistence races.
+        const originalCount = featuresObject.features.length;
+        featuresObject.features = featuresObject.features.filter((f) => {
+            if (isFeatureGeometryValid(f)) return true;
+            console.warn('Persistence: skipping invalid feature geometry',
+                f?.properties?.uuid ?? '<no-uuid>');
+            return false;
+        });
+        if (featuresObject.features.length !== originalCount) {
+            console.warn(`Persistence: dropped ${originalCount - featuresObject.features.length} invalid feature(s) at save time.`);
+        }
 
         const store = loadCampaignStore();
         const campaign = buildActiveCampaign(state, featuresObject);
@@ -288,6 +304,7 @@ function restoreFromCampaignStore(store, state, vectorSource, pertenenzaSource, 
 
     state.persistenceMuted = true;
     try {
+        snapshotLastKnownGood();
         vectorSource.clear();
         pertenenzaSource.clear();
 
@@ -319,9 +336,71 @@ function toEpochMs(value) {
 }
 
 function isIncomingStoreNewer(incomingStore, localStore) {
+    // Anti-wipe guard: never overwrite a non-empty local store with an empty
+    // incoming one, regardless of savedAt. Handles the race where a second
+    // tab cleared the mirror while the first tab still has data in memory.
+    const incomingCount = countCampaignStoreFeatures(incomingStore);
+    const localCount = countCampaignStoreFeatures(localStore);
+    if (incomingCount === 0 && localCount > 0) return false;
+
     const incomingTs = toEpochMs(incomingStore?.savedAt);
     const localTs = toEpochMs(localStore?.savedAt);
     return incomingTs > localTs;
+}
+
+function countCampaignStoreFeatures(store) {
+    let n = 0;
+    for (const campaign of store?.campaigns ?? []) {
+        n += campaign?.features?.features?.length ?? 0;
+    }
+    return n;
+}
+
+function snapshotLastKnownGood() {
+    try {
+        const raw = window.localStorage.getItem(LOCAL_STORAGE_KEY);
+        if (raw) window.localStorage.setItem(LOCAL_STORAGE_KEY_PREV, raw);
+    } catch {
+        // Quota or storage unavailable: do not block restore on snapshot failure.
+    }
+}
+
+function collectGeoJsonCoordinates(geometry) {
+    const out = [];
+    const visit = (node) => {
+        if (!Array.isArray(node)) return;
+        if (typeof node[0] === 'number') { out.push(node); return; }
+        for (const child of node) visit(child);
+    };
+    visit(geometry?.coordinates);
+    return out;
+}
+
+function haversineMeters(lon1, lat1, lon2, lat2) {
+    const R = 6_371_000;
+    const toRad = (deg) => (deg * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2
+        + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function isFeatureGeometryValid(feature) {
+    const coords = collectGeoJsonCoordinates(feature?.geometry);
+    if (!coords.length) return false;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const [x, y] of coords) {
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+        if (x < -180 || x > 180 || y < -90 || y > 90) return false;
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+    }
+    const diag = haversineMeters(minX, minY, maxX, maxY);
+    if (!Number.isFinite(diag) || diag > MAX_FEATURE_BBOX_DIAGONAL_METERS) return false;
+    return true;
 }
 
 /**
