@@ -77,8 +77,11 @@ export default {
 
     'snap.off.navigate':'Snap: n/d — nessun disegno attivo in modalità navigazione.',
     'snap.on':        'Magnete: ON. Tieni premuto Ctrl per disattivarlo temporaneamente.',
+    'snap.on.ctrl':   'Magnete: ON (Ctrl premuto, override temporaneo).',
     'snap.off.delete':'Magnete: OFF in modalità elimina.',
     'snap.off.ctrl':  'Magnete: OFF (Ctrl premuto).',
+    'snap.off.user':  'Magnete: OFF. Tieni premuto Ctrl per attivarlo temporaneamente.',
+    'snap.toggle.label':'Magnete',
     'snap.hint':      'Retta misura distanza tra due punti. Polyline misura percorso a vertici multipli (doppio clic per chiudere).',
 
     'action.locate':         'Localizza',

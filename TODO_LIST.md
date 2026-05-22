@@ -16,7 +16,7 @@
   - [x] B-2: modi `measure-straight` / `measure-polyline` spostati dal segmented-control nella sub-grid Generale (action-button + `data-mode` invariato).
   - [x] B-3: stats live (`Riepilogo`) spostate dalla toolbar a HUD bar `#stats-hud` overlay sulla mappa (top-right, pillole compatte); stessi ID, nessuna riconfigurazione JS.
   - [ ] B-3: spostare stats live (`Riepilogo`) in HUD bar fuori dalla toolbar.
-  - [ ] B-4: promuovere snap a toggle esplicito (richiede preferenza + persistenza).
+  - [x] B-4: snap promosso a toggle esplicito (`#snap-toggle`) con preferenza persistita (`snapEnabled` in `DEFAULT_PREFERENCES`); Ctrl ora agisce come override temporaneo XOR rispetto allo stato persistente.
   - [ ] B-5: aggiungere azione `dsl.load-domain` come entry point UI.
   - [ ] B-6: cleanup Settings (collassare in 3 audience: Display, Detection, Cache).
   - [ ] B-7: unificare i parameter `<select>` sotto un singolo pattern `.parameter-picker`.

@@ -80,6 +80,7 @@ export default class Planimeter {
             preferences.catastoOpacity,
         );
         this.state.parcelInfoEnabled = preferences.parcelInfoEnabled;
+        this.state.snapEnabled = preferences.snapEnabled !== false;
         this.state.exportImageQuality = this.sanitizeExportImageQuality(preferences.exportImageQuality);
         this.state.cacheTtlDays = this.sanitizeCacheTtlDays(preferences.cacheTtlDays);
         this.state.cacheSizeMb = this.sanitizeCacheSizeMb(preferences.cacheSizeMb);
@@ -429,6 +430,7 @@ export default class Planimeter {
             statProxyHealth:           document.getElementById('stat-proxy-health'),
             proxyHealthDetail:         document.getElementById('proxy-health-detail'),
             snapStatus:                document.getElementById('snap-status'),
+            snapToggle:                document.getElementById('snap-toggle'),
             contextMenu:               document.getElementById('map-context-menu'),
             langSwitcher:              document.getElementById('lang-switcher'),
             settingsLanguage:          document.getElementById('settings-language'),
@@ -967,6 +969,10 @@ export default class Planimeter {
             this.setEditingLayer(ev.target.value);
         });
 
+        this.elements.snapToggle?.addEventListener('change', (ev) => {
+            this.setSnapEnabled(ev.target.checked);
+        });
+
         this.elements.locateButton.addEventListener('click',  () => this.geolocate());
         this.elements.clearButton.addEventListener('click',   () => this.clearAllFeatures());
         this.elements.exportButton.addEventListener('click',  () => this.exportFeatures());
@@ -1263,19 +1269,37 @@ export default class Planimeter {
 
     refreshSnapState() {
         const allowed = this.isMeasureOrDrawMode(this.state.mode) || this.state.mode === 'edit';
+        // Ctrl inverts the persistent snapEnabled preference (temporary override).
+        const effectiveOn = this.state.snapEnabled !== this.state.isCtrlPressed;
         this.allInteractions.user.snap.setActive(false);
         this.allInteractions.pertenenze.snap.setActive(false);
-        this.getActiveInteractions().snap.setActive(allowed && !this.state.isCtrlPressed);
+        this.getActiveInteractions().snap.setActive(allowed && effectiveOn);
+
+        if (this.elements.snapToggle) {
+            this.elements.snapToggle.checked = this.state.snapEnabled;
+        }
 
         if (this.state.mode === 'navigate') {
             this.elements.snapStatus.textContent = t('snap.off.navigate');
         } else if (this.state.mode === 'delete') {
             this.elements.snapStatus.textContent = t('snap.off.delete');
-        } else if (this.state.isCtrlPressed) {
+        } else if (!this.state.snapEnabled && !this.state.isCtrlPressed) {
+            this.elements.snapStatus.textContent = t('snap.off.user');
+        } else if (this.state.snapEnabled && this.state.isCtrlPressed) {
             this.elements.snapStatus.textContent = t('snap.off.ctrl');
+        } else if (!this.state.snapEnabled && this.state.isCtrlPressed) {
+            this.elements.snapStatus.textContent = t('snap.on.ctrl');
         } else {
             this.elements.snapStatus.textContent = t('snap.on');
         }
+    }
+
+    setSnapEnabled(enabled) {
+        const next = Boolean(enabled);
+        if (this.state.snapEnabled === next) return;
+        this.state.snapEnabled = next;
+        this.persistPreferences();
+        this.refreshSnapState();
     }
 
     // ── Feature selection ────────────────────────────────────────────────────────
@@ -4362,6 +4386,7 @@ export default class Planimeter {
             pertenenzeColor: this.state.pertenenzeColor,
             catastoWmsLayerSettings: this.state.catastoWmsLayerSettings,
             parcelInfoEnabled: this.state.parcelInfoEnabled,
+            snapEnabled: this.state.snapEnabled,
             exportImageQuality: this.state.exportImageQuality,
             cacheTtlDays: this.state.cacheTtlDays,
             cacheSizeMb: this.state.cacheSizeMb,

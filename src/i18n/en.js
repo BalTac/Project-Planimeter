@@ -77,8 +77,11 @@ export default {
 
     'snap.off.navigate':'Snap: n/a — no active drawing in navigate mode.',
     'snap.on':        'Snap: ON. Hold Ctrl to disable temporarily.',
+    'snap.on.ctrl':   'Snap: ON (Ctrl held, temporary override).',
     'snap.off.delete':'Snap: OFF in delete mode.',
     'snap.off.ctrl':  'Snap: OFF (Ctrl held).',
+    'snap.off.user':  'Snap: OFF. Hold Ctrl to enable temporarily.',
+    'snap.toggle.label':'Snap',
     'snap.hint':      'Line measures straight-line distance. Polyline measures a multi-vertex path (double-click to finish).',
 
     'action.locate':         'Locate',

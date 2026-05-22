@@ -39,6 +39,7 @@ export function createInitialState() {
         pertenenzeColor: '#8a9199',
         catastoWmsLayerSettings: structuredClone(DEFAULT_CATASTO_WMS_LAYER_SETTINGS),
         parcelInfoEnabled: false,
+        snapEnabled: true,
         exportImageQuality: 'standard',
         cacheTtlDays: 30,
         cacheSizeMb: 500,
