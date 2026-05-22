@@ -129,9 +129,31 @@ export function restorePersistedFeatures(state, vectorSource, pertenenzaSource, 
 }
 
 /**
- * Pull campaign store from backend local mirror and apply it when newer than localStorage.
+ * Pull campaign store from backend local mirror.
+ *
+ * Behavior matrix (P2):
+ * - local empty + mirror empty → no-op.
+ * - local empty + mirror non-empty:
+ *     - if `options.onPromptEmptyLocal` is provided, defer to UI prompt
+ *       (modal: load backup / start fresh / cancel). The callback receives
+ *       `{ apply, dismiss, incomingStore, incomingCount }`.
+ *     - otherwise auto-apply (legacy behavior).
+ * - local non-empty + mirror newer non-empty:
+ *     - if `options.onBannerMirrorNewer` is provided, defer to UI banner
+ *       (non-intrusive, default = ignore). Callback receives same shape.
+ *     - otherwise auto-apply (legacy behavior).
+ * - local non-empty + mirror older/same → no-op.
+ *
+ * Anti-wipe guard inside `isIncomingStoreNewer` still blocks empty-mirror
+ * overwriting non-empty local in any path.
+ *
+ * @param {object} state
+ * @param {import('ol/source/Vector').default} vectorSource
+ * @param {import('ol/source/Vector').default} pertenenzaSource
+ * @param {(count: number) => void} [onRestored]
+ * @param {{ onPromptEmptyLocal?: Function, onBannerMirrorNewer?: Function }} [options]
  */
-export async function syncPersistenceFromLocalMirror(state, vectorSource, pertenenzaSource, onRestored = () => {}) {
+export async function syncPersistenceFromLocalMirror(state, vectorSource, pertenenzaSource, onRestored = () => {}, options = {}) {
     if (typeof window.fetch !== 'function') {
         emitLocalMirrorStatus('offline', { source: 'fetch-unavailable' });
         return false;
@@ -158,21 +180,51 @@ export async function syncPersistenceFromLocalMirror(state, vectorSource, perten
 
         const incomingStore = normalizeCampaignStore(payload.store);
         const localStore = loadCampaignStore();
+        const incomingCount = countCampaignStoreFeatures(incomingStore);
+        const localCount = countCampaignStoreFeatures(localStore);
+
+        const emitOk = () => emitLocalMirrorStatus('ok', {
+            source: 'load',
+            savedAt: incomingStore?.savedAt ?? payload?.store?.savedAt ?? null,
+        });
+
+        const apply = () => {
+            state.activeCampaignId = incomingStore.activeCampaignId ?? null;
+            window.localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(incomingStore));
+            restoreFromCampaignStore(incomingStore, state, vectorSource, pertenenzaSource, onRestored);
+            emitOk();
+        };
+
         if (!isIncomingStoreNewer(incomingStore, localStore)) {
-            emitLocalMirrorStatus('ok', {
-                source: 'load',
-                savedAt: incomingStore?.savedAt ?? payload?.store?.savedAt ?? null,
+            emitOk();
+            return false;
+        }
+
+        // Empty local + non-empty mirror → prompt user when handler is wired.
+        if (localCount === 0 && incomingCount > 0 && typeof options.onPromptEmptyLocal === 'function') {
+            emitOk();
+            options.onPromptEmptyLocal({
+                apply,
+                dismiss: () => {},
+                incomingStore,
+                incomingCount,
             });
             return false;
         }
 
-        state.activeCampaignId = incomingStore.activeCampaignId ?? null;
-        window.localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(incomingStore));
-        restoreFromCampaignStore(incomingStore, state, vectorSource, pertenenzaSource, onRestored);
-        emitLocalMirrorStatus('ok', {
-            source: 'load',
-            savedAt: incomingStore?.savedAt ?? payload?.store?.savedAt ?? null,
-        });
+        // Non-empty local + newer non-empty mirror → non-intrusive banner.
+        if (localCount > 0 && incomingCount > 0 && typeof options.onBannerMirrorNewer === 'function') {
+            emitOk();
+            options.onBannerMirrorNewer({
+                apply,
+                dismiss: () => {},
+                incomingStore,
+                incomingCount,
+            });
+            return false;
+        }
+
+        apply();
         return true;
     } catch (err) {
         console.warn('Local mirror sync failed:', err);

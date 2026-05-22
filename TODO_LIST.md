@@ -58,16 +58,19 @@ finché tutta la catena non e validata in produzione.
   refresh prima tab -> deve mostrare le 3 aree (non vuoto)".
 
 #### Commit P2 — Smart prompt utente sul restore
-- [ ] Quando `localStorage` e vuoto/assente E il mirror backend ha N>0 feature, mostrare modale
+- [x] Quando `localStorage` e vuoto/assente E il mirror backend ha N>0 feature, mostrare modale
   i18n: "Non trovo i dati nel browser. Carico il backup locale (N aree, salvato il `<savedAt>`)
   o creo nuovo?" → [Carica backup] / [Crea nuovo] / [Annulla].
-- [ ] Quando entrambi hanno feature ma differiscono E il mirror e piu recente, barra non
+- [x] Quando entrambi hanno feature ma differiscono E il mirror e piu recente, barra non
   intrusiva in alto: "Backup locale piu recente disponibile (N aree, `<savedAt>`). [Carica]
   [Ignora]". Default azione = Ignora (nessuna sovrascrittura silenziosa).
-- [ ] Chiavi i18n IT/EN: `restore.prompt.title`, `restore.prompt.body`, `restore.prompt.load`,
-  `restore.prompt.new`, `restore.prompt.cancel`, `restore.banner.newer`.
-- [ ] Coerenza con il sync locale concettuale (cambio browser/profilo/macchina, clear
-  accidentale o volontario dei dati persistenti del browser).
+- [x] Chiavi i18n IT/EN: `restore.prompt.title`, `restore.prompt.body`, `restore.prompt.load`,
+  `restore.prompt.new`, `restore.prompt.cancel`, `restore.banner.newer`, `restore.banner.load`,
+  `restore.banner.ignore`.
+- [x] Coerenza con il sync locale concettuale (cambio browser/profilo/macchina, clear
+  accidentale o volontario dei dati persistenti del browser). `syncPersistenceFromLocalMirror`
+  accetta ora `{ onPromptEmptyLocal, onBannerMirrorNewer }` come opzioni; in mancanza di
+  handler resta backward-compatible (auto-apply legacy).
 
 #### Commit P3 — History engine + pannello flottante "Cronologia"
 

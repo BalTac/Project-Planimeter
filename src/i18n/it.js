@@ -17,6 +17,16 @@ export default {
     'shortcuts.help':        'Mostra/nascondi questa lista',
     'shortcuts.snapCtrl':    'Inverti temporaneamente lo snap (XOR con il toggle persistente).',
     'shortcuts.escape':      'Chiudi overlay / popover attivi.',
+
+    'restore.prompt.title': 'Backup locale disponibile',
+    'restore.prompt.body':  'Questo browser non ha aree salvate, ma sul server locale è disponibile un backup con {count} aree (salvato il {savedAt}). Vuoi caricarlo?',
+    'restore.prompt.load':  'Carica backup',
+    'restore.prompt.new':   'Inizia vuoto',
+    'restore.prompt.cancel':'Decidi dopo',
+    'restore.banner.newer': 'Sul server locale è disponibile una versione più recente del tuo lavoro ({count} aree, salvata il {savedAt}). Vuoi caricarla?',
+    'restore.banner.load':  'Carica',
+    'restore.banner.ignore':'Ignora',
+
     'sync.label': 'Sync locale',
     'sync.status.checking': 'Verifica...',
     'sync.status.ok': 'OK',

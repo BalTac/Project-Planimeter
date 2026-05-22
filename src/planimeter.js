@@ -28,6 +28,7 @@ import { initContextMenu }               from './ui/context-menu.js';
 import {
     historyAtParcel,
     historyAtPoint,
+    persistFeatures,
     schedulePersistenceSync,
     restorePersistedFeatures,
     setLocalMirrorStatusListener,
@@ -51,6 +52,22 @@ const HOLE_DRAW_STYLE = new OLStyle({
     fill: new Fill({ color: 'rgba(255,255,255,0.26)' }),
     stroke: new Stroke({ color: '#f6d365', lineDash: [8, 6], width: 2.2 }),
 });
+
+/**
+ * Format an ISO savedAt timestamp for the restore prompt/banner.
+ * Falls back to the raw value when Intl/Date parsing fails.
+ */
+function formatRestoreSavedAt(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    const ts = Date.parse(raw);
+    if (!Number.isFinite(ts)) return raw;
+    try {
+        return new Date(ts).toLocaleString();
+    } catch {
+        return raw;
+    }
+}
 
 export default class Planimeter {
     constructor() {
@@ -208,6 +225,14 @@ export default class Planimeter {
                 this.setToolbarMessage(t('msg.featuresRestored', { count }));
                 this.fitToFeatures();
                 this.updateSummary();
+            },
+            {
+                onPromptEmptyLocal: ({ apply, incomingStore, incomingCount }) => {
+                    this.showRestorePrompt({ apply, incomingStore, incomingCount });
+                },
+                onBannerMirrorNewer: ({ apply, incomingStore, incomingCount }) => {
+                    this.showRestoreBanner({ apply, incomingStore, incomingCount });
+                },
             },
         );
 
@@ -4028,6 +4053,74 @@ export default class Planimeter {
 
     setToolbarMessage(message) {
         this.elements.status.textContent = message;
+    }
+
+    /**
+     * P2: prompt modal for "local empty + non-empty mirror".
+     * User chooses Load backup / Start empty / Decide later.
+     * @param {{ apply: () => void, incomingStore: object, incomingCount: number }} opts
+     */
+    showRestorePrompt({ apply, incomingStore, incomingCount }) {
+        const root = document.getElementById('restore-prompt');
+        const bodyEl = document.getElementById('restore-prompt-body');
+        if (!root || !bodyEl) return;
+
+        const savedAt = formatRestoreSavedAt(incomingStore?.savedAt);
+        bodyEl.textContent = t('restore.prompt.body', { count: incomingCount, savedAt });
+
+        const cleanup = () => {
+            root.hidden = true;
+            root.querySelectorAll('[data-restore-prompt-load]').forEach((b) => b.removeEventListener('click', onLoad));
+            root.querySelectorAll('[data-restore-prompt-new]').forEach((b) => b.removeEventListener('click', onNew));
+            root.querySelectorAll('[data-restore-prompt-cancel]').forEach((b) => b.removeEventListener('click', onCancel));
+            document.removeEventListener('keydown', onKey);
+        };
+        const onLoad = () => { cleanup(); apply(); };
+        const onNew = () => {
+            cleanup();
+            // Mark local as authoritative-empty so future syncs do not re-prompt.
+            try {
+                persistFeatures(this.state, this.vectorSource, this.pertenenzaSource);
+            } catch (err) {
+                console.warn('Persist on Start empty failed:', err);
+            }
+        };
+        const onCancel = () => { cleanup(); };
+        const onKey = (ev) => { if (ev.key === 'Escape') onCancel(); };
+
+        root.querySelectorAll('[data-restore-prompt-load]').forEach((b) => b.addEventListener('click', onLoad));
+        root.querySelectorAll('[data-restore-prompt-new]').forEach((b) => b.addEventListener('click', onNew));
+        root.querySelectorAll('[data-restore-prompt-cancel]').forEach((b) => b.addEventListener('click', onCancel));
+        document.addEventListener('keydown', onKey);
+
+        root.hidden = false;
+    }
+
+    /**
+     * P2: non-intrusive banner for "non-empty local + newer non-empty mirror".
+     * Default action is dismiss (no auto-apply).
+     * @param {{ apply: () => void, incomingStore: object, incomingCount: number }} opts
+     */
+    showRestoreBanner({ apply, incomingStore, incomingCount }) {
+        const root = document.getElementById('restore-banner');
+        const bodyEl = document.getElementById('restore-banner-body');
+        if (!root || !bodyEl) return;
+
+        const savedAt = formatRestoreSavedAt(incomingStore?.savedAt);
+        bodyEl.textContent = t('restore.banner.newer', { count: incomingCount, savedAt });
+
+        const cleanup = () => {
+            root.hidden = true;
+            root.querySelectorAll('[data-restore-banner-load]').forEach((b) => b.removeEventListener('click', onLoad));
+            root.querySelectorAll('[data-restore-banner-ignore]').forEach((b) => b.removeEventListener('click', onIgnore));
+        };
+        const onLoad = () => { cleanup(); apply(); };
+        const onIgnore = () => { cleanup(); };
+
+        root.querySelectorAll('[data-restore-banner-load]').forEach((b) => b.addEventListener('click', onLoad));
+        root.querySelectorAll('[data-restore-banner-ignore]').forEach((b) => b.addEventListener('click', onIgnore));
+
+        root.hidden = false;
     }
 
     updateLocalMirrorSyncStatus(status, savedAt = null) {

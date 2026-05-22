@@ -657,6 +657,29 @@
                 </dl>
             </div>
         </div>
+
+        <div id="restore-prompt" class="restore-prompt" hidden role="dialog" aria-modal="true" aria-labelledby="restore-prompt-title">
+            <div class="restore-prompt__backdrop" data-restore-prompt-cancel></div>
+            <div class="restore-prompt__panel">
+                <header class="restore-prompt__header">
+                    <h2 id="restore-prompt-title" data-i18n="restore.prompt.title">Backup locale disponibile</h2>
+                </header>
+                <p id="restore-prompt-body" class="restore-prompt__body"></p>
+                <div class="restore-prompt__actions">
+                    <button type="button" class="restore-prompt__btn restore-prompt__btn--ghost" data-restore-prompt-cancel data-i18n="restore.prompt.cancel">Decidi dopo</button>
+                    <button type="button" class="restore-prompt__btn restore-prompt__btn--secondary" data-restore-prompt-new data-i18n="restore.prompt.new">Inizia vuoto</button>
+                    <button type="button" class="restore-prompt__btn restore-prompt__btn--primary" data-restore-prompt-load data-i18n="restore.prompt.load">Carica backup</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="restore-banner" class="restore-banner" hidden role="status" aria-live="polite">
+            <span id="restore-banner-body" class="restore-banner__body"></span>
+            <span class="restore-banner__actions">
+                <button type="button" class="restore-banner__btn restore-banner__btn--primary" data-restore-banner-load data-i18n="restore.banner.load">Carica</button>
+                <button type="button" class="restore-banner__btn restore-banner__btn--ghost" data-restore-banner-ignore data-i18n="restore.banner.ignore">Ignora</button>
+            </span>
+        </div>
     </main>
 
     <noscript>
