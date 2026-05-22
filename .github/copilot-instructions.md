@@ -15,3 +15,22 @@ source files when (a) modifying/debugging specific code, (b) the graph lacks the
 (c) the graph is missing or stale.
 
 Type `/graphify` in Copilot Chat to build or update the graph.
+
+## Language conventions
+
+**Internal code is English-only.** Use English for everything that is not directly user-facing:
+- variable, function, class, file, module, and directory names
+- code comments and docstrings
+- commit messages, PR descriptions, branch names
+- internal documentation: `README.md`, `CHANGELOG.md`, `TODO_LIST.md`, files under `wiki/`, `raw/`,
+  `.github/`, `domains/*.json` keys/ids, repo memory notes, design specs, ADRs
+- log messages, error strings emitted by the backend, test names and assertions
+
+**Italian (and other locales) is reserved for the UX layer only**, i.e. strings rendered to the
+end user through the i18n system in `src/i18n/` (`it.js`, `en.js`, future locales). Add new
+user-visible text as i18n keys (`t('namespace.key')`) — never hard-code localized strings in
+component logic. Translations live in the locale files; default key fallback must be English.
+
+This applies to new code and to any text you author. When editing legacy Italian comments or
+identifiers in passing, you may opportunistically convert them to English if the change is in
+scope; do not perform large-scale renames as a side effect of unrelated work.
