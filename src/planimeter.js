@@ -34,6 +34,7 @@ import {
     setLocalMirrorStatusListener,
     syncPersistenceFromLocalMirror,
 } from './io/persistence.js';
+import { HistoryEngine } from './io/history.js';
 import { buildExportConfig, triggerDownload, requestBackendExport } from './io/export.js';
 import { detectImportFormat, readImportedFeatures } from './io/import.js';
 import { loadPreferences, savePreferences } from './io/preferences.js';
@@ -235,6 +236,12 @@ export default class Planimeter {
                 },
             },
         );
+
+        // ── History engine baseline (P3) ──────────────────────────────────────
+        // Take an idempotent baseline snapshot now that the sources reflect
+        // either the restored campaign or an empty world. Subsequent edits
+        // record their own auto-snapshots; undo cannot regress past this.
+        HistoryEngine.bootstrap(this.state, this.vectorSource, this.pertenenzaSource);
 
         // ── DSL init (async, non-blocking) ────────────────────────────────────
         initDsl().then(() => {
@@ -857,6 +864,29 @@ export default class Planimeter {
                 return;
             }
 
+            // ── Undo / Redo (P3) ─────────────────────────────────────────
+            // Avoid hijacking native undo inside text inputs / contentEditable.
+            const target = ev.target;
+            const inEditable = target && (
+                target.tagName === 'INPUT' ||
+                target.tagName === 'TEXTAREA' ||
+                target.tagName === 'SELECT' ||
+                target.isContentEditable
+            );
+            if (!inEditable && (ev.ctrlKey || ev.metaKey)) {
+                const key = ev.key.toLowerCase();
+                if (key === 'z' && !ev.shiftKey) {
+                    ev.preventDefault();
+                    this.undoHistory();
+                    return;
+                }
+                if (key === 'y' || (key === 'z' && ev.shiftKey)) {
+                    ev.preventDefault();
+                    this.redoHistory();
+                    return;
+                }
+            }
+
             if (ev.key === 'Enter' && this.holeDrawInteraction?.getActive?.()) {
                 this.holeDrawInteraction.finishDrawing();
                 ev.preventDefault();
@@ -906,6 +936,7 @@ export default class Planimeter {
             this.updateSummary();
             this.setToolbarMessage(t('msg.drawDone'));
             this.pauseDrawAfterClose();
+            this.recordHistoryAuto('history.entry.auto.draw');
         });
         ix.draw.on('drawabort', () => {
             this.state.isDrawing = false;
@@ -966,6 +997,7 @@ export default class Planimeter {
                 f.set('modifiedAt', now);
             }
             schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource);
+            this.recordHistoryAuto('history.entry.auto.modify');
 
             if (this.state.mode === 'edit' && this.isPolygonFeature(this.state.selectedFeature)) {
                 const anchor = ev?.mapBrowserEvent?.coordinate ?? this.state.lastPointerCoordinate;
@@ -2888,6 +2920,7 @@ export default class Planimeter {
         this.getSourceForFeature(this.state.selectedFeature).removeFeature(this.state.selectedFeature);
         this.clearSelection();
         this.setToolbarMessage(t('msg.featureDeletedSelected'));
+        this.recordHistoryAuto('history.entry.auto.remove');
     }
 
     clearAllFeatures() {
@@ -2897,9 +2930,85 @@ export default class Planimeter {
             return;
         }
         if (!window.confirm(t('confirm.clearAll'))) return;
+        // Forced safety snapshot before the destructive clear, so the user
+        // can always recover via Ctrl+Z. Recorded *before* the clear so the
+        // snapshot contains the about-to-be-wiped features.
+        this.recordHistoryAuto('history.entry.auto.safetyClearAll', { forceFlush: true });
         source.clear();
         this.clearSelection();
-        this.setToolbarMessage(t('msg.clearDone'));
+        this.setToolbarMessage(t('history.toast.autoSafetySnapshot'));
+        this.recordHistoryAuto('history.entry.auto.clearAll');
+    }
+
+    // ── History (P3) ─────────────────────────────────────────────────────────────
+
+    /** Record an auto-snapshot; safe to call from any edit handler. */
+    recordHistoryAuto(labelKey, opts = {}) {
+        if (this.state.persistenceMuted) return;
+        try {
+            HistoryEngine.record({
+                state: this.state,
+                vectorSource: this.vectorSource,
+                pertenenzaSource: this.pertenenzaSource,
+                kind: 'auto',
+                label: labelKey,
+                tags: opts.tags,
+            });
+        } catch (err) {
+            console.warn('History: record failed.', err);
+        }
+    }
+
+    /** Record a user-driven manual snapshot. Returns the entry id on success. */
+    takeHistorySnapshot(label, tags = []) {
+        const finalLabel = (label && String(label).trim())
+            || t('history.entry.manual.default');
+        const res = HistoryEngine.record({
+            state: this.state,
+            vectorSource: this.vectorSource,
+            pertenenzaSource: this.pertenenzaSource,
+            kind: 'manual',
+            label: finalLabel,
+            tags,
+        });
+        if (res.recorded) {
+            this.setToolbarMessage(t('history.toast.snapshotTaken', { label: finalLabel }));
+        }
+        return res;
+    }
+
+    undoHistory() {
+        const res = HistoryEngine.undo(this.state, this.vectorSource, this.pertenenzaSource);
+        if (!res.ok) {
+            this.setToolbarMessage(t('history.toast.nothingToUndo'));
+            return;
+        }
+        this.clearSelection();
+        this.updateSummary();
+        this.layers.vector.changed();
+        this.layers.pertenenza.changed();
+        schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource);
+        this.setToolbarMessage(t('history.toast.undone'));
+    }
+
+    redoHistory() {
+        const res = HistoryEngine.redo(this.state, this.vectorSource, this.pertenenzaSource);
+        if (!res.ok) {
+            this.setToolbarMessage(t('history.toast.nothingToRedo'));
+            return;
+        }
+        this.clearSelection();
+        this.updateSummary();
+        this.layers.vector.changed();
+        this.layers.pertenenza.changed();
+        schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource);
+        this.setToolbarMessage(t('history.toast.redone'));
+    }
+
+    promptManualHistorySnapshot() {
+        const label = window.prompt(t('history.snapshot.prompt.label'), '');
+        if (label === null) return;
+        this.takeHistorySnapshot(label);
     }
 
     // ── Export / Import ──────────────────────────────────────────────────────────
@@ -3808,6 +3917,7 @@ export default class Planimeter {
                     file:   file.name,
                     format: fmt.toUpperCase(),
                 }));
+                this.recordHistoryAuto('history.entry.auto.import');
             } catch (err) {
                 console.error('Import failed:', err);
                 alert(t('alert.importFail'));

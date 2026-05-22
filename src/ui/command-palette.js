@@ -60,6 +60,22 @@ export function initCommandPalette(app) {
             run: () => app.loadFromMirror(),
         });
 
+        cmds.push({
+            id: 'action.history.undo',
+            label: `${t('palette.group.action')}: ${t('action.history.undo')}`,
+            run: () => app.undoHistory(),
+        });
+        cmds.push({
+            id: 'action.history.redo',
+            label: `${t('palette.group.action')}: ${t('action.history.redo')}`,
+            run: () => app.redoHistory(),
+        });
+        cmds.push({
+            id: 'action.history.snapshot',
+            label: `${t('palette.group.action')}: ${t('action.history.snapshot')}`,
+            run: () => app.promptManualHistorySnapshot(),
+        });
+
         return cmds;
     }
 

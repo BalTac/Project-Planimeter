@@ -100,16 +100,16 @@ Modello dati: `localStorage` chiave `planimeter.history.v1` + mirror backend com
 ```
 
 - [ ] Snapshot **completo** per voce (no delta) compresso con lz-string (~70-80% di riduzione).
-- [ ] `cursor` per undo/redo deterministico (semantica Photoshop: modifica dopo undo tronca il
+- [x] `cursor` per undo/redo deterministico (semantica Photoshop: modifica dopo undo tronca il
   futuro a `cursor+1`).
-- [ ] Coalescing: snapshot auto consecutivi dello stesso `kind` entro 2s vengono fusi.
-- [ ] Retention: auto **ultimi 50** (FIFO eviction sui piu vecchi auto), manuali **illimitati**
+- [x] Coalescing: snapshot auto consecutivi dello stesso `kind` entro 2s vengono fusi.
+- [x] Retention: auto **ultimi 50** (FIFO eviction sui piu vecchi auto), manuali **illimitati**
   (mai eviction, solo cancellazione esplicita), tetto 5 MB compressi in localStorage; oltre,
-  manuali offloaded sul mirror backend.
-- [ ] Trigger auto: `drawend` (parcella aggiunta a mano o via M3 trace), `removefeature`,
+  manuali offloaded sul mirror backend. _(Slice A: cap 5 MB in chiaro; offload backend deferred a Slice B.)_
+- [x] Trigger auto: `drawend` (parcella aggiunta a mano o via M3 trace), `removefeature`,
   `modifyend`, `translateend`, import bulk (1 voce per batch). **Forzato silenzioso** prima di
   "Svuota tutte le aree" + toast "Snapshot di sicurezza creato. Annulla con Ctrl+Z."
-- [ ] Trigger manuale: bottone `📸 Snapshot...` apre prompt con label + tag opzionali.
+- [x] Trigger manuale: bottone `📸 Snapshot...` apre prompt con label + tag opzionali. _(Slice A: voce palette `action.history.snapshot`; bottone toolbar in Slice B.)_
 - [ ] UI: pannello flottante `#history-popover` (fratello di `#parcel-info-popover`, stesso glass
   theme), ancorato in alto-destra mappa, **draggable dall'header**, larghezza ~340px, altezza
   max ~60vh con scroll interno. Stato aperto/chiuso e posizione persistiti in preferenze.
@@ -121,12 +121,15 @@ Modello dati: `localStorage` chiave `planimeter.history.v1` + mirror backend com
   attuale." Indicatori: ◉ corrente, ○ altre, 📸 per voci manuali.
 - [ ] Dialog "Gestisci...": elenco completo, rename, delete, export singolo snapshot come
   `.geojson`.
-- [ ] Shortcut: `Ctrl+Z` undo, `Ctrl+Y` / `Ctrl+Shift+Z` redo. Inseriti nel registry
+- [x] Shortcut: `Ctrl+Z` undo, `Ctrl+Y` / `Ctrl+Shift+Z` redo. Inseriti nel registry
   `mode|action|view` dello Step C toolbar (sinergia, zero conflitti).
-- [ ] i18n IT/EN per: `tool.history`, `history.title`, `history.undo`, `history.redo`,
-  `history.snapshot`, `history.manage`, `history.entry.auto.*`, `history.entry.manual.*`,
-  `history.confirm.restore`, `history.snapshot.prompt.label`, `history.snapshot.prompt.tags`,
-  `history.toast.autoSafetySnapshot`.
+- [x] i18n IT/EN per: `action.history.undo|redo|snapshot`, `history.entry.auto.*`, `history.entry.manual.*`,
+  `history.toast.autoSafetySnapshot|undone|redone|nothingToUndo|nothingToRedo|snapshotTaken`,
+  `history.snapshot.prompt.label`. _(`tool.history`, `history.title`, `history.confirm.restore`,
+  `history.snapshot.prompt.tags`, `history.manage` deferred a Slice B.)_
+
+**Slice A (engine + shortcut + palette) — commit corrente.** Slice B (UI popover + manage +
+backend mirror + lz-string) pianificata.
 
 ### Parcel info — refactor popover (DONE)
 - [x] Sostituire iframe con render DOM nativo (`renderParcelInfoBody`); state `parcelInfoHtml` → `parcelInfoData`; rimozione `wrapParcelInfoDocument`/`syncParcelInfoFrameSize`/`buildParcelSummaryHtml`/`_buildParcelHtmlFromJson`; fix contrasto/dimensione font colonna valori; rimozione Area/Perimetro dall'header (gia coperti dal summary panel).
