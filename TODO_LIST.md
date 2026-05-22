@@ -123,6 +123,51 @@
 - [ ] Aggiungere mini guida interattiva primo avvio.
 - [ ] **Bug**: timeout intermittente su `POST /export-bundle` (≥30s, isolato in `tests/test_e2e_p0_extended.py::TestExportFormats::test_export_bundle_endpoint_responds`). Indagare profilatura backend (riproiezione raster + zip), aggiungere cap memoria/tempo, restituire 503/progress se la generazione supera soglia. Non blocca le altre flow di export.
 - [ ] **Bug visuale**: feature gigante (~3.3 milioni ha) emersa al restore di `.planimeter_state_store.json` (vedi screenshot 2026-05-22). Probabile vertice corrotto in localStorage/persistenza. Aggiungere sanity-check su `bbox`/area al restore (warning + opt-out skip) e diagnostica per identificare origine (import legacy / errore disegno).
+- [ ] **Roadmap futura — PAC tariffe per anno campagna** (`domains/pac-tariffe-<anno>.json`):
+  introdurre file di dominio user-editable con importi unitari (€/ha) per intervento, regione e
+  coltura, aggiornati manualmente dalle pubblicazioni AGEA/CREA (PDF/Excel annuali — non esistono
+  API REST pubbliche stabili al momento dell'analisi). Schema indicativo:
+  `{ year, region, interventions: [{ code, label, crops: [{ id, unit_amount_eur_ha, notes }] }] }`.
+  Caricamento via `src/dsl/loader.js` come dominio aggiuntivo selezionabile per anno; le colonne
+  summary "Importo stimato (€)" restano OFF di default e si attivano solo se il file dell'anno
+  corrente è presente. Da pianificare dopo Step 5 (colonne PAC eligibili + multi-anno).
+  Eventuale futura automazione: scraper opzionale lato `server.py` con cache e validazione
+  manuale obbligatoria prima di esporre i valori al frontend.
+
+### P7 — PAC / SISTER roadmap (cadastral + possession + interventions)
+
+> All new entries in this section follow the english-only internal-code convention
+> (see `.github/copilot-instructions.md` → Language conventions).
+> User-visible labels remain localized via `src/i18n/`.
+
+- [x] **Step 1 — Pluggable summary columns**: column registry in `src/ui/summary-panel.js`
+  (groups: base, cadastral, geometry), header popover with grouped checkboxes + reset,
+  persistence via `preferences.summaryColumns`. Minimal default set (`feature`, `area`,
+  `percentSubject`, `crop`). Commit `f8d46c5`.
+- [x] **Step 2 — Cadastral identity columns**: INSPIRE `local_id` parser
+  (`IT.AGE.PLA.<comune[_sez]>.<foglio>.<particella>[.<sub>]`), new columns
+  `comune`, `foglio`, `particella`, `subalterno`, `inspireId`, `officialArea`,
+  `perimeter`, `vertices` (all OFF by default). Shared-pertinenza badge `↔N` on rows
+  whose pertinenza intersects more than one drawn area. Commit `f8d46c5`.
+- [x] **Step 3 — DSL `possession` domain**: new builtin domain `domains/possession.json`
+  with 8 tenure categories (`ownership`, `bare_ownership`, `usufruct`, `lease`,
+  `loan_for_use`, `emphyteusis`, `concession`, `other`) and per-feature fields
+  (`quota_percent`, `holder_name`, `holder_cuaa`, `document_ref`, `document_date`,
+  `expiry_date`, `notes`). Schema extended with `date` field type and optional
+  `applicableLayers` whitelist (here `["pertenenze"]`). New loader helper
+  `getDomainsForLayer(layerKey)`. No UI wiring yet — that lands in Step 4.
+- [ ] **Step 4 — Possession columns in summary**: add `possession` group to the column
+  registry (titolo possesso, scadenza, intestatario, quota%) using i18n labels. Hook
+  UI assignment of `possession` domain to `pertenenze` features (DSL panel must offer
+  the right domain depending on the selected feature's layer via `getDomainsForLayer`).
+- [ ] **Step 5 — PAC columns + multi-year filter**: add PAC group (`eligible_area`,
+  `tare_percent`, `intervention_code`, `campaign_year`). Add header dropdown with
+  3y/5y/all filter (default 3y) to scope the summary to recent campaigns.
+- [ ] **Step 6 — CSV / XLSX export**: export the currently visible summary columns
+  to CSV and XLSX from the panel header.
+- [ ] **Step 7 — Map badges for expiry status**: render colored badges on `pertenenze`
+  features (green ownership / yellow lease expiring <6 months / red expired) when zoom
+  > 17 or pertenenze is the active editing layer.
 
 ### P0.5 — Smart Hole Tool (inner ring persistente)
 - [x] Definire policy unica overlap per target feature: considerare solo layer visibili; layer non visibili trattati come inesistenti.

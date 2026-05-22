@@ -11,6 +11,9 @@
  *   label: string,        // human-readable name
  *   defaultCategoryId: string | null,
  *   validationMode: "strict" | "flexible",   // domain default (can be overridden)
+ *   applicableLayers?: string[],             // optional whitelist of layer keys
+ *                                            // (e.g. ["user"], ["pertenenze"]).
+ *                                            // Missing/empty means "applies to any layer".
  *   categories: Category[],
  *   fields: FieldDef[]
  * }
@@ -26,11 +29,13 @@
  * FieldDef shape:
  * {
  *   id: string,           // e.g. "irrigated"
- *   type: "boolean" | "enum" | "string" | "number",
+ *   type: "boolean" | "enum" | "string" | "number" | "date",
  *   label: string,
  *   options?: string[],   // only for type "enum"
  *   required: boolean
  * }
+ *
+ * The "date" type expects ISO-8601 date strings (YYYY-MM-DD).
  *
  * Feature DSL payload (stored in feature.properties.dsl):
  * {
@@ -41,7 +46,16 @@
  */
 
 // ─── Field types ──────────────────────────────────────────────────────────────
-export const FIELD_TYPES = Object.freeze(['boolean', 'enum', 'string', 'number']);
+export const FIELD_TYPES = Object.freeze(['boolean', 'enum', 'string', 'number', 'date']);
+
+// ─── Known layer keys for applicableLayers whitelist ─────────────────────────
+// Domains can restrict themselves to specific overlay layers. Unknown values
+// produce a warning during validation but are not rejected, to allow forward
+// compatibility with future layers added by user-imported domains.
+export const KNOWN_LAYER_KEYS = Object.freeze(['user', 'pertenenze']);
+
+// ─── ISO-8601 date (YYYY-MM-DD) check for the "date" field type ──────────────
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // ─── Validation modes ─────────────────────────────────────────────────────────
 /** strict: invalid values block save/export. */
@@ -84,6 +98,19 @@ export function validateDomain(domain) {
         warnings.push('domain.label missing — will use id as label');
     if (!VALIDATION_MODES.includes(domain.validationMode))
         warnings.push(`domain.validationMode "${domain.validationMode}" unknown — defaulting to flexible`);
+
+    if (domain.applicableLayers !== undefined) {
+        if (!Array.isArray(domain.applicableLayers)) {
+            errors.push('domain.applicableLayers must be an array of layer keys');
+        } else {
+            domain.applicableLayers.forEach((key, i) => {
+                if (typeof key !== 'string')
+                    errors.push(`applicableLayers[${i}] must be a string`);
+                else if (!KNOWN_LAYER_KEYS.includes(key))
+                    warnings.push(`applicableLayers[${i}] "${key}" is not a known layer key`);
+            });
+        }
+    }
 
     if (!Array.isArray(domain.categories) || domain.categories.length === 0) {
         errors.push('domain.categories must be a non-empty array');
@@ -162,6 +189,10 @@ export function validateFeatureDsl(dsl, domain, mode) {
                     errors.push(`field "${f.id}" must be string`);
                 } else if (f.type === 'enum' && !f.options.includes(val)) {
                     errors.push(`field "${f.id}" value "${val}" not in options [${f.options.join(', ')}]`);
+                } else if (f.type === 'date') {
+                    if (typeof val !== 'string' || !ISO_DATE_RE.test(val)) {
+                        errors.push(`field "${f.id}" must be an ISO date string (YYYY-MM-DD)`);
+                    }
                 }
             }
         });
@@ -199,7 +230,21 @@ export function buildDslPayload(domainId, categoryId, fields = []) {
         if (f.type === 'boolean')      values[f.id] = false;
         else if (f.type === 'number')  values[f.id] = null;
         else if (f.type === 'enum')    values[f.id] = f.options?.[0] ?? null;
+        else if (f.type === 'date')    values[f.id] = null;
         else                           values[f.id] = '';
     });
     return { domainId, categoryId, values };
+}
+
+/**
+ * Return true if the domain is applicable to the given overlay layer key.
+ * A domain with no `applicableLayers` (or an empty array) is applicable to any layer.
+ * @param {object} domain
+ * @param {string} layerKey  — e.g. "user", "pertenenze"
+ * @returns {boolean}
+ */
+export function isDomainApplicableToLayer(domain, layerKey) {
+    const whitelist = domain?.applicableLayers;
+    if (!Array.isArray(whitelist) || whitelist.length === 0) return true;
+    return whitelist.includes(layerKey);
 }

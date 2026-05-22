@@ -1,0 +1,27 @@
+{
+  "id": "possession",
+  "version": "1.0.0",
+  "label": "Possession / Tenure",
+  "defaultCategoryId": "ownership",
+  "validationMode": "flexible",
+  "applicableLayers": ["pertenenze"],
+  "categories": [
+    { "id": "ownership",       "label": "Ownership",        "color": "#2e7d32", "stroke": "#1b5e20" },
+    { "id": "bare_ownership",  "label": "Bare ownership",   "color": "#66bb6a", "stroke": "#2e7d32" },
+    { "id": "usufruct",        "label": "Usufruct",         "color": "#9ccc65", "stroke": "#558b2f" },
+    { "id": "lease",           "label": "Lease",            "color": "#fbc02d", "stroke": "#9a7d0a" },
+    { "id": "loan_for_use",    "label": "Loan for use",     "color": "#ffd54f", "stroke": "#c8a200" },
+    { "id": "emphyteusis",     "label": "Emphyteusis",      "color": "#8d6e63", "stroke": "#4e342e" },
+    { "id": "concession",      "label": "Concession",       "color": "#7e57c2", "stroke": "#4527a0" },
+    { "id": "other",           "label": "Other",            "color": "#b0bec5", "stroke": "#546e7a" }
+  ],
+  "fields": [
+    { "id": "quota_percent",   "type": "number", "label": "Share (%)",         "required": false },
+    { "id": "holder_name",     "type": "string", "label": "Holder name",       "required": false },
+    { "id": "holder_cuaa",     "type": "string", "label": "Holder CUAA",       "required": false },
+    { "id": "document_ref",    "type": "string", "label": "Document reference","required": false },
+    { "id": "document_date",   "type": "date",   "label": "Document date",     "required": false },
+    { "id": "expiry_date",     "type": "date",   "label": "Expiry date",       "required": false },
+    { "id": "notes",           "type": "string", "label": "Notes",             "required": false }
+  ]
+}

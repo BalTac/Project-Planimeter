@@ -11,12 +11,12 @@
  * Call `registerDomain()` to add a domain at runtime (e.g. from file import).
  */
 
-import { validateDomain, VALIDATION_FLEXIBLE } from './schema.js';
+import { validateDomain, isDomainApplicableToLayer, VALIDATION_FLEXIBLE } from './schema.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const LS_OVERRIDE_PREFIX  = 'dsl:override:';
 const LS_REGISTRY_KEY     = 'dsl:customDomains';
-const BUILTIN_DOMAIN_IDS  = ['agriculture'];
+const BUILTIN_DOMAIN_IDS  = ['agriculture', 'possession'];
 
 // ─── In-memory registry ───────────────────────────────────────────────────────
 /** @type {Map<string, object>} domainId → merged domain object */
@@ -205,6 +205,17 @@ export function getDomain(id) {
  */
 export function listLoadedDomains() {
     return [..._registry.values()];
+}
+
+/**
+ * Return loaded domains applicable to the given overlay layer key.
+ * Domains without an `applicableLayers` whitelist are considered applicable
+ * to any layer (backward-compatible default).
+ * @param {string} layerKey  — e.g. "user", "pertenenze"
+ * @returns {object[]}
+ */
+export function getDomainsForLayer(layerKey) {
+    return [..._registry.values()].filter(d => isDomainApplicableToLayer(d, layerKey));
 }
 
 // ─── Initialize default domains on startup ───────────────────────────────────
