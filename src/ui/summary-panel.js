@@ -2,22 +2,257 @@ import { t } from '../i18n/i18n.js';
 import { calculateIntersectionMetrics } from '../geometry/intersection.js';
 import { calculateArea, calculatePerimeter } from '../geometry/calculations.js';
 
+// ────────────────────────────────────────────────────────────────────────────
+// Column registry
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Each column descriptor:
+ *  - id:        stable identifier persisted in preferences.summaryColumns
+ *  - group:     'base' | 'cadastral' | 'geometry'
+ *  - labelKey:  i18n key for the column header
+ *  - helpKey?:  optional i18n key for the header title attribute
+ *  - render(row): cell HTML (escaped) for a single intersection row
+ *  - emptyValue: cell value for the "uncovered" pseudo-row (defaults to '—')
+ *
+ * Rows passed to render() have shape:
+ *  { targetFeature, targetLabel, intersectionAreaStr, percentSubject,
+ *    percentTarget, cropLabel, cadastral, sharedCount, perimeterStr,
+ *    verticesCount }
+ */
+const COLUMN_DEFS = [
+    {
+        id: 'feature',
+        group: 'base',
+        labelKey: 'summary.col.feature',
+        render: (row) => `${escapeHtml(row.targetLabel || '—')}${renderSharedBadge(row)}`,
+    },
+    {
+        id: 'area',
+        group: 'base',
+        labelKey: 'summary.col.area',
+        render: (row) => escapeHtml(row.intersectionAreaStr),
+    },
+    {
+        id: 'percentSubject',
+        group: 'base',
+        labelKey: 'summary.col.percentSubject',
+        helpKey: 'summary.col.percentSubject.help',
+        render: (row) => `${row.percentSubject.toFixed(1)}%`,
+    },
+    {
+        id: 'percentTarget',
+        group: 'base',
+        labelKey: 'summary.col.percentTarget',
+        helpKey: 'summary.col.percentTarget.help',
+        render: (row) => `${row.percentTarget.toFixed(1)}%`,
+    },
+    {
+        id: 'crop',
+        group: 'base',
+        labelKey: 'summary.col.crop',
+        render: (row) => escapeHtml(row.cropLabel || '—'),
+    },
+    {
+        id: 'comune',
+        group: 'cadastral',
+        labelKey: 'summary.col.comune',
+        helpKey: 'summary.col.comune.help',
+        render: (row) => escapeHtml(row.cadastral?.comune || '—'),
+    },
+    {
+        id: 'foglio',
+        group: 'cadastral',
+        labelKey: 'summary.col.foglio',
+        render: (row) => escapeHtml(row.cadastral?.foglio || '—'),
+    },
+    {
+        id: 'particella',
+        group: 'cadastral',
+        labelKey: 'summary.col.particella',
+        render: (row) => escapeHtml(row.cadastral?.particella || '—'),
+    },
+    {
+        id: 'subalterno',
+        group: 'cadastral',
+        labelKey: 'summary.col.subalterno',
+        helpKey: 'summary.col.subalterno.help',
+        render: (row) => escapeHtml(row.cadastral?.subalterno || '—'),
+    },
+    {
+        id: 'inspireId',
+        group: 'cadastral',
+        labelKey: 'summary.col.inspireId',
+        render: (row) => escapeHtml(row.cadastral?.inspireId || '—'),
+    },
+    {
+        id: 'officialArea',
+        group: 'cadastral',
+        labelKey: 'summary.col.officialArea',
+        helpKey: 'summary.col.officialArea.help',
+        render: (row) => escapeHtml(row.cadastral?.officialArea || '—'),
+    },
+    {
+        id: 'perimeter',
+        group: 'geometry',
+        labelKey: 'summary.col.perimeter',
+        render: (row) => escapeHtml(row.perimeterStr || '—'),
+    },
+    {
+        id: 'vertices',
+        group: 'geometry',
+        labelKey: 'summary.col.vertices',
+        render: (row) => row.verticesCount != null ? String(row.verticesCount) : '—',
+    },
+];
+
+const DEFAULT_VISIBLE_COLUMNS = ['feature', 'area', 'percentSubject', 'crop'];
+
+export function getDefaultSummaryColumns() {
+    return [...DEFAULT_VISIBLE_COLUMNS];
+}
+
+export function getSummaryColumnDefs() {
+    return COLUMN_DEFS.map((c) => ({ id: c.id, group: c.group, labelKey: c.labelKey, helpKey: c.helpKey }));
+}
+
+function resolveColumns(visibleColumns) {
+    const ids = Array.isArray(visibleColumns) && visibleColumns.length
+        ? visibleColumns
+        : DEFAULT_VISIBLE_COLUMNS;
+    const set = new Set(ids);
+    // Preserve registry order, not user toggle order, so headers stay stable.
+    const resolved = COLUMN_DEFS.filter((c) => set.has(c.id));
+    // Always keep at least the "feature" column so the table is never empty.
+    if (!resolved.some((c) => c.id === 'feature')) {
+        resolved.unshift(COLUMN_DEFS.find((c) => c.id === 'feature'));
+    }
+    return resolved;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// INSPIRE local_id parser (Italian cadastral format, best-effort)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Parses INSPIRE-style cadastral local_id strings.
+ * Italian format observed: `IT.AGE.PLA.<comune[_sez]>.<foglio>.<particella>[.<sub>]`
+ * Falls back gracefully when the string does not match.
+ */
+export function parseInspireLocalId(localId) {
+    if (!localId || typeof localId !== 'string') return null;
+    const parts = localId.split('.').map((p) => p.trim()).filter(Boolean);
+    if (parts.length < 3) return null;
+    // Strip leading namespace (IT.AGE.PLA) if present.
+    const tail = parts.length >= 5 ? parts.slice(parts.length - (parts.length >= 6 ? 4 : 3)) : parts;
+    // Heuristic: last segments are particella (+ optional sub), preceded by foglio, preceded by comune_sez.
+    let particella = null;
+    let subalterno = null;
+    let foglio = null;
+    let comune = null;
+    let sezione = null;
+
+    if (tail.length >= 3) {
+        const last = tail[tail.length - 1];
+        const prev = tail[tail.length - 2];
+        // If last token is purely numeric and previous is also numeric → last = sub.
+        if (/^\d+$/.test(last) && /^\d+$/.test(prev) && tail.length >= 4) {
+            subalterno = stripLeadingZeros(last);
+            particella = stripLeadingZeros(prev);
+            foglio = stripLeadingZeros(tail[tail.length - 3]);
+            const comuneRaw = tail[tail.length - 4];
+            [comune, sezione] = splitComuneSezione(comuneRaw);
+        } else {
+            particella = stripLeadingZeros(last);
+            foglio = stripLeadingZeros(prev);
+            const comuneRaw = tail[tail.length - 3];
+            [comune, sezione] = splitComuneSezione(comuneRaw);
+        }
+    }
+
+    return { comune, sezione, foglio, particella, subalterno };
+}
+
+function splitComuneSezione(raw) {
+    if (!raw) return [null, null];
+    const m = /^([^_]+)(?:_(.+))?$/.exec(raw);
+    return [m?.[1] || raw, m?.[2] || null];
+}
+
+function stripLeadingZeros(s) {
+    if (!s) return s;
+    return s.replace(/^0+(?=\d)/, '') || s;
+}
+
+function extractCadastralData(feature, unitSystem) {
+    if (!feature?.get) return null;
+    const inspireId = feature.get('inspire_local_id') || feature.get('inspireLocalId') || null;
+    const parsed = parseInspireLocalId(inspireId) || {};
+    const officialAreaRaw = feature.get('superficie_ufficiale')
+        ?? feature.get('officialArea')
+        ?? feature.get('cadastralArea');
+    let officialArea = null;
+    if (typeof officialAreaRaw === 'number' && Number.isFinite(officialAreaRaw)) {
+        officialArea = unitSystem?.formatArea ? unitSystem.formatArea(officialAreaRaw) : `${officialAreaRaw} m²`;
+    } else if (typeof officialAreaRaw === 'string' && officialAreaRaw.trim()) {
+        officialArea = officialAreaRaw.trim();
+    }
+    return {
+        inspireId: inspireId || null,
+        comune: parsed.comune || null,
+        sezione: parsed.sezione || null,
+        foglio: parsed.foglio || null,
+        particella: parsed.particella || null,
+        subalterno: parsed.subalterno || null,
+        officialArea,
+    };
+}
+
+function countVertices(feature) {
+    const geom = feature?.getGeometry?.();
+    if (!geom) return null;
+    try {
+        const coords = geom.getCoordinates?.();
+        if (!coords) return null;
+        let total = 0;
+        const walk = (node) => {
+            if (!Array.isArray(node)) return;
+            if (typeof node[0] === 'number') { total++; return; }
+            for (const child of node) walk(child);
+        };
+        walk(coords);
+        return total;
+    } catch {
+        return null;
+    }
+}
+
+function renderSharedBadge(row) {
+    if (!row || !row.sharedCount || row.sharedCount <= 1) return '';
+    const label = t('summary.shared.badge', { count: row.sharedCount });
+    return ` <span class="summary-table__shared-badge" title="${escapeHtml(label)}">↔${row.sharedCount}</span>`;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Public API
+// ────────────────────────────────────────────────────────────────────────────
+
 /**
  * Open or update a non-modal, draggable cross-layer summary panel.
- * Shows intersection metrics between selected drawn areas and property scopes (or vice versa).
  *
- * @param {{
- *   container: HTMLElement,
- *   selectedFeatures: import('ol').Feature[],
- *   allDrawnAreas: import('ol').Feature[],
- *   allPropertyScopes: import('ol').Feature[],
- *   unitSystem: { formatArea: (m2: number) => string, formatPerimeter?: (m: number) => string },
- *   getPropertyScopeLabel: (feature: import('ol').Feature) => string,
- *   getCategoryLabel?: (categoryId: string, feature: import('ol').Feature) => string,
- *   getAreaLabel?: (feature: import('ol').Feature) => string,
- *   projection?: import('ol/proj').ProjectionLike,
- *   summaryMeta?: { layerLabel?: string, featureLabel?: string },
- * }} options
+ * @param {object} options
+ * @param {HTMLElement} options.container
+ * @param {import('ol').Feature[]} options.selectedFeatures
+ * @param {import('ol').Feature[]} options.allDrawnAreas
+ * @param {import('ol').Feature[]} options.allPropertyScopes
+ * @param {{formatArea:(n:number)=>string, formatPerimeter?:(n:number)=>string}} options.unitSystem
+ * @param {(f:import('ol').Feature)=>string} options.getPropertyScopeLabel
+ * @param {(id:string,f:import('ol').Feature)=>string} [options.getCategoryLabel]
+ * @param {(f:import('ol').Feature)=>string} [options.getAreaLabel]
+ * @param {import('ol/proj').ProjectionLike} [options.projection]
+ * @param {{layerLabel?:string,featureLabel?:string}} [options.summaryMeta]
+ * @param {string[]} [options.visibleColumns]
+ * @param {(ids:string[])=>void} [options.onColumnsChange]
  */
 export function openSummaryPanel(options) {
     const {
@@ -31,12 +266,18 @@ export function openSummaryPanel(options) {
         getAreaLabel = (feature) => feature?.get?.('featureName') || feature?.get?.('featureId') || t('feature.area'),
         projection,
         summaryMeta = null,
+        visibleColumns = DEFAULT_VISIBLE_COLUMNS,
+        onColumnsChange = null,
     } = options;
 
     if (!selectedFeatures.length) return;
 
     const selectedAreas = selectedFeatures.filter((f) => f.get('overlayLayer') === 'user');
     const selectedParcels = selectedFeatures.filter((f) => f.get('overlayLayer') === 'pertenenze');
+
+    // Pre-compute, for each property scope, how many drawn areas it intersects.
+    // Used to render a "shared with N areas" badge on parcel rows.
+    const parcelSharedCounts = computeSharedCountMap(allPropertyScopes, allDrawnAreas, projection);
 
     const sections = [];
 
@@ -50,6 +291,7 @@ export function openSummaryPanel(options) {
             subjectLabel: (f) => getAreaLabel(f),
             targetLabel: getPropertyScopeLabel,
             targetCropLabel: () => '—',
+            sharedCountFor: (target) => parcelSharedCounts.get(target) ?? 0,
             projection,
             unitSystem,
         }));
@@ -68,6 +310,7 @@ export function openSummaryPanel(options) {
                 const dsl = f.get('dsl');
                 return dsl?.categoryId ? getCategoryLabel(dsl.categoryId, f) : t('dsl.category.unassigned');
             },
+            sharedCountFor: () => 0,
             projection,
             unitSystem,
         }));
@@ -102,12 +345,36 @@ export function openSummaryPanel(options) {
         aggregateBlocks,
         sections,
         summaryMeta,
+        visibleColumns: [...visibleColumns],
+        onColumnsChange,
     });
 }
 
-/**
- * @private
- */
+// ────────────────────────────────────────────────────────────────────────────
+// Building blocks
+// ────────────────────────────────────────────────────────────────────────────
+
+function computeSharedCountMap(propertyScopes, drawnAreas, projection) {
+    const map = new Map();
+    for (const parcel of propertyScopes) {
+        const parcelExtent = parcel.getGeometry?.()?.getExtent?.();
+        let count = 0;
+        for (const area of drawnAreas) {
+            const areaExtent = area.getGeometry?.()?.getExtent?.();
+            if (!bboxesOverlap(parcelExtent, areaExtent)) continue;
+            const m = calculateIntersectionMetrics(area, parcel, {
+                sourceProjection: projection,
+                targetProjection: projection,
+                ratioBase: 'target',
+                includeIntersectionGeometry: false,
+            });
+            if (m.intersectionArea > 0.1) count++;
+        }
+        map.set(parcel, count);
+    }
+    return map;
+}
+
 function buildAggregateBlock({ titleKey, features, label, cropLabel, projection, unitSystem }) {
     const items = features.map((feature) => {
         const area = calculateArea(feature, projection);
@@ -137,10 +404,6 @@ function buildAggregateBlock({ titleKey, features, label, cropLabel, projection,
     };
 }
 
-/**
- * Build a directional intersection section with AABB pre-check.
- * @private
- */
 function buildSection({
     kind,
     sectionTitleKey,
@@ -150,6 +413,7 @@ function buildSection({
     subjectLabel,
     targetLabel,
     targetCropLabel,
+    sharedCountFor,
     projection,
     unitSystem,
 }) {
@@ -177,6 +441,7 @@ function buildSection({
             });
 
             if (metrics.intersectionArea > 0.1) {
+                const perimeter = calculatePerimeter(target, projection);
                 rows.push({
                     targetFeature: target,
                     targetLabel: targetLabel(target),
@@ -185,6 +450,10 @@ function buildSection({
                     intersectionAreaStr: unitSystem.formatArea(metrics.intersectionArea),
                     percentSubject: subjectArea > 0 ? (metrics.intersectionArea / subjectArea) * 100 : 0,
                     percentTarget: metrics.targetArea > 0 ? (metrics.intersectionArea / metrics.targetArea) * 100 : 0,
+                    cadastral: extractCadastralData(target, unitSystem),
+                    sharedCount: sharedCountFor ? sharedCountFor(target) : 0,
+                    perimeterStr: unitSystem.formatPerimeter ? unitSystem.formatPerimeter(perimeter) : `${perimeter.toFixed(1)} m`,
+                    verticesCount: countVertices(target),
                 });
                 coveredArea += metrics.intersectionArea;
             }
@@ -216,19 +485,16 @@ function buildSection({
     };
 }
 
-/**
- * AABB overlap test for two OL extents [minX, minY, maxX, maxY].
- * @private
- */
 function bboxesOverlap(a, b) {
     if (!Array.isArray(a) || !Array.isArray(b) || a.length < 4 || b.length < 4) return true;
     return !(a[2] < b[0] || a[0] > b[2] || a[3] < b[1] || a[1] > b[3]);
 }
 
-/**
- * @private
- */
-function renderSummaryPanel(container, { aggregateBlocks, sections, summaryMeta = null }) {
+// ────────────────────────────────────────────────────────────────────────────
+// Rendering
+// ────────────────────────────────────────────────────────────────────────────
+
+function renderSummaryPanel(container, { aggregateBlocks, sections, summaryMeta = null, visibleColumns, onColumnsChange }) {
     let panel = container.querySelector('#summary-panel');
     if (!panel) {
         panel = document.createElement('div');
@@ -238,6 +504,7 @@ function renderSummaryPanel(container, { aggregateBlocks, sections, summaryMeta 
             <div class="summary-panel__header">
                 <h3 data-i18n="summary.title">Summary</h3>
                 <div class="summary-panel__header-actions">
+                    <button type="button" class="summary-panel__columns" data-i18n-aria="summary.columns.toggle" aria-label="Columns" title="Columns">▦</button>
                     <button type="button" class="summary-panel__expand" data-state="normal" aria-label="Expand">⤢</button>
                     <button type="button" class="summary-panel__close" data-i18n-aria="summary.close" aria-label="Close">×</button>
                 </div>
@@ -253,6 +520,7 @@ function renderSummaryPanel(container, { aggregateBlocks, sections, summaryMeta 
                 <div class="summary-panel__aggregate" id="summary-aggregate"></div>
                 <div class="summary-panel__sections" id="summary-sections"></div>
             </div>
+            <div class="summary-columns-popover" id="summary-columns-popover" hidden></div>
         `;
         container.appendChild(panel);
 
@@ -260,6 +528,7 @@ function renderSummaryPanel(container, { aggregateBlocks, sections, summaryMeta 
 
         panel.querySelector('.summary-panel__close').addEventListener('click', () => {
             panel.hidden = true;
+            hidePopover(panel);
         });
 
         const expandBtn = panel.querySelector('.summary-panel__expand');
@@ -272,8 +541,28 @@ function renderSummaryPanel(container, { aggregateBlocks, sections, summaryMeta 
             }
         });
 
+        const columnsBtn = panel.querySelector('.summary-panel__columns');
+        columnsBtn?.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            togglePopover(panel);
+        });
+
+        document.addEventListener('click', (ev) => {
+            const popover = panel.querySelector('#summary-columns-popover');
+            if (!popover || popover.hidden) return;
+            if (!popover.contains(ev.target) && !columnsBtn.contains(ev.target)) {
+                hidePopover(panel);
+            }
+        });
+
         const onEscape = (ev) => {
-            if (ev.key === 'Escape' && !panel.hidden) {
+            if (ev.key !== 'Escape') return;
+            const popover = panel.querySelector('#summary-columns-popover');
+            if (popover && !popover.hidden) {
+                hidePopover(panel);
+                return;
+            }
+            if (!panel.hidden) {
                 panel.hidden = true;
                 document.removeEventListener('keydown', onEscape);
             }
@@ -282,6 +571,15 @@ function renderSummaryPanel(container, { aggregateBlocks, sections, summaryMeta 
     }
 
     panel.hidden = false;
+
+    // Store latest state on the element so popover re-renders use fresh data.
+    panel._summaryState = {
+        aggregateBlocks,
+        sections,
+        summaryMeta,
+        visibleColumns: [...visibleColumns],
+        onColumnsChange,
+    };
 
     const meta = panel.querySelector('#summary-panel-meta');
     const layerValue = panel.querySelector('#summary-layer-value');
@@ -295,11 +593,92 @@ function renderSummaryPanel(container, { aggregateBlocks, sections, summaryMeta 
     }
 
     renderAggregateBlocks(panel.querySelector('#summary-aggregate'), aggregateBlocks);
-    renderSections(panel.querySelector('#summary-sections'), sections);
+    renderSections(panel.querySelector('#summary-sections'), sections, panel._summaryState.visibleColumns);
+    renderColumnsPopover(panel);
 
     panel.querySelectorAll('[data-i18n]').forEach((el) => {
         const key = el.dataset.i18n;
         if (key) el.textContent = t(key);
+    });
+    panel.querySelectorAll('[data-i18n-aria]').forEach((el) => {
+        const key = el.dataset.i18nAria;
+        if (key) {
+            const label = t(key);
+            el.setAttribute('aria-label', label);
+            if (!el.title || el.title === el.getAttribute('aria-label')) el.title = label;
+        }
+    });
+}
+
+function togglePopover(panel) {
+    const popover = panel.querySelector('#summary-columns-popover');
+    if (!popover) return;
+    if (popover.hidden) {
+        renderColumnsPopover(panel);
+        popover.hidden = false;
+    } else {
+        popover.hidden = true;
+    }
+}
+
+function hidePopover(panel) {
+    const popover = panel.querySelector('#summary-columns-popover');
+    if (popover) popover.hidden = true;
+}
+
+function renderColumnsPopover(panel) {
+    const popover = panel.querySelector('#summary-columns-popover');
+    if (!popover) return;
+    const state = panel._summaryState;
+    if (!state) return;
+
+    const visibleSet = new Set(state.visibleColumns);
+    const groups = new Map();
+    for (const col of COLUMN_DEFS) {
+        if (!groups.has(col.group)) groups.set(col.group, []);
+        groups.get(col.group).push(col);
+    }
+
+    let html = `<div class="summary-columns-popover__header">
+        <strong>${escapeHtml(t('summary.columns.title'))}</strong>
+        <button type="button" class="summary-columns-popover__reset">${escapeHtml(t('summary.columns.reset'))}</button>
+    </div>`;
+
+    for (const [groupId, cols] of groups) {
+        html += `<fieldset class="summary-columns-popover__group">
+            <legend>${escapeHtml(t(`summary.columns.group.${groupId}`))}</legend>`;
+        for (const col of cols) {
+            const checked = visibleSet.has(col.id) ? 'checked' : '';
+            const disabled = col.id === 'feature' ? 'disabled' : '';
+            html += `<label class="summary-columns-popover__item">
+                <input type="checkbox" data-column-id="${escapeHtml(col.id)}" ${checked} ${disabled}>
+                <span>${escapeHtml(t(col.labelKey))}</span>
+            </label>`;
+        }
+        html += `</fieldset>`;
+    }
+
+    html += `<p class="summary-columns-popover__hint">${escapeHtml(t('summary.columns.hint'))}</p>`;
+    popover.innerHTML = html;
+
+    popover.querySelectorAll('input[type="checkbox"][data-column-id]').forEach((input) => {
+        input.addEventListener('change', () => {
+            const id = input.dataset.columnId;
+            const current = new Set(panel._summaryState.visibleColumns);
+            if (input.checked) current.add(id); else current.delete(id);
+            const ordered = COLUMN_DEFS.filter((c) => current.has(c.id)).map((c) => c.id);
+            panel._summaryState.visibleColumns = ordered;
+            renderSections(panel.querySelector('#summary-sections'), panel._summaryState.sections, ordered);
+            panel._summaryState.onColumnsChange?.(ordered);
+        });
+    });
+
+    popover.querySelector('.summary-columns-popover__reset')?.addEventListener('click', () => {
+        const defaults = [...DEFAULT_VISIBLE_COLUMNS];
+        panel._summaryState.visibleColumns = defaults;
+        renderColumnsPopover(panel);
+        renderSections(panel.querySelector('#summary-sections'), panel._summaryState.sections, defaults);
+        panel._summaryState.onColumnsChange?.(defaults);
     });
 }
 
@@ -354,10 +733,12 @@ function renderAggregateBlocks(host, blocks) {
     }
 }
 
-function renderSections(host, sections) {
+function renderSections(host, sections, visibleColumns) {
     if (!host) return;
     host.innerHTML = '';
     if (!sections || !sections.length) return;
+
+    const columns = resolveColumns(visibleColumns);
 
     for (const section of sections) {
         const wrap = document.createElement('section');
@@ -391,42 +772,30 @@ function renderSections(host, sections) {
 
             const table = document.createElement('table');
             table.className = 'summary-table';
-            table.innerHTML = `
-                <thead>
-                    <tr>
-                        <th>${escapeHtml(t('summary.col.feature'))}</th>
-                        <th>${escapeHtml(t('summary.col.area'))}</th>
-                        <th title="${escapeHtml(t('summary.col.percentSubject.help'))}">${escapeHtml(t('summary.col.percentSubject'))}</th>
-                        <th title="${escapeHtml(t('summary.col.percentTarget.help'))}">${escapeHtml(t('summary.col.percentTarget'))}</th>
-                        <th>${escapeHtml(t('summary.col.crop'))}</th>
-                    </tr>
-                </thead>
-                <tbody></tbody>
-            `;
+
+            const headRow = columns.map((col) => {
+                const label = escapeHtml(t(col.labelKey));
+                const title = col.helpKey ? ` title="${escapeHtml(t(col.helpKey))}"` : '';
+                return `<th${title}>${label}</th>`;
+            }).join('');
+            table.innerHTML = `<thead><tr>${headRow}</tr></thead><tbody></tbody>`;
             const tbody = table.querySelector('tbody');
 
             for (const row of group.rows) {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td>${escapeHtml(row.targetLabel || '—')}</td>
-                    <td>${escapeHtml(row.intersectionAreaStr)}</td>
-                    <td>${row.percentSubject.toFixed(1)}%</td>
-                    <td>${row.percentTarget.toFixed(1)}%</td>
-                    <td>${escapeHtml(row.cropLabel || '—')}</td>
-                `;
+                tr.innerHTML = columns.map((col) => `<td>${col.render(row)}</td>`).join('');
                 tbody.appendChild(tr);
             }
 
             if (group.uncovered > 0.1) {
                 const tr = document.createElement('tr');
                 tr.className = 'summary-table__uncovered';
-                tr.innerHTML = `
-                    <td><em>${escapeHtml(t('summary.uncoveredArea'))}</em></td>
-                    <td>${escapeHtml(group.uncoveredStr)}</td>
-                    <td>${group.uncoveredPercent.toFixed(1)}%</td>
-                    <td>—</td>
-                    <td>—</td>
-                `;
+                tr.innerHTML = columns.map((col) => {
+                    if (col.id === 'feature') return `<td><em>${escapeHtml(t('summary.uncoveredArea'))}</em></td>`;
+                    if (col.id === 'area') return `<td>${escapeHtml(group.uncoveredStr)}</td>`;
+                    if (col.id === 'percentSubject') return `<td>${group.uncoveredPercent.toFixed(1)}%</td>`;
+                    return `<td>—</td>`;
+                }).join('');
                 tbody.appendChild(tr);
             }
 
@@ -448,9 +817,6 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
-/**
- * @private
- */
 function makeElementDraggable(element) {
     let offsetX = 0;
     let offsetY = 0;
@@ -491,9 +857,6 @@ function makeElementDraggable(element) {
     });
 }
 
-/**
- * Close the summary panel.
- */
 export function closeSummaryPanel(container) {
     const panel = container?.querySelector('#summary-panel');
     if (panel) {

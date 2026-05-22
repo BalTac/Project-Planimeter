@@ -88,6 +88,7 @@ export default class Planimeter {
             this.state.m3DetectMaxRadius = this.state.m3DetectStartRadius;
         }
         this.state.m3TraceToleranceM = this.sanitizeM3TraceToleranceM(preferences.m3TraceToleranceM);
+        this.state.summaryColumns = this.sanitizeSummaryColumns(preferences.summaryColumns);
         this.state.parcelInfoStatusKey = preferences.parcelInfoEnabled
             ? 'parcelInfo.clickHint'
             : 'parcelInfo.disabled';
@@ -2510,6 +2511,13 @@ export default class Planimeter {
                 layerLabel: measurementLayerLabel,
                 featureLabel,
             },
+            visibleColumns: Array.isArray(this.state.summaryColumns) && this.state.summaryColumns.length
+                ? [...this.state.summaryColumns]
+                : undefined,
+            onColumnsChange: (ids) => {
+                this.state.summaryColumns = Array.isArray(ids) ? [...ids] : [];
+                this.persistPreferences();
+            },
         });
     }
 
@@ -4231,6 +4239,7 @@ export default class Planimeter {
             m3DetectStartRadius: this.state.m3DetectStartRadius,
             m3DetectMaxRadius: this.state.m3DetectMaxRadius,
             m3TraceToleranceM: this.state.m3TraceToleranceM,
+            summaryColumns: Array.isArray(this.state.summaryColumns) ? [...this.state.summaryColumns] : undefined,
         });
     }
 
@@ -4280,6 +4289,22 @@ export default class Planimeter {
         const value = Number.parseFloat(String(valueRaw));
         if (!Number.isFinite(value)) return 0.35;
         return Math.max(0.05, Math.min(2.5, value));
+    }
+
+    sanitizeSummaryColumns(value) {
+        const fallback = ['feature', 'area', 'percentSubject', 'crop'];
+        if (!Array.isArray(value)) return fallback;
+        const allowed = new Set([
+            'feature', 'area', 'percentSubject', 'percentTarget', 'crop',
+            'comune', 'foglio', 'particella', 'subalterno', 'inspireId', 'officialArea',
+            'perimeter', 'vertices',
+        ]);
+        const cleaned = value
+            .filter((v) => typeof v === 'string' && allowed.has(v));
+        if (!cleaned.length) return fallback;
+        // Ensure the "feature" column is always present so the table is not empty.
+        if (!cleaned.includes('feature')) cleaned.unshift('feature');
+        return cleaned;
     }
 
     sanitizePertenenzeColor(color) {

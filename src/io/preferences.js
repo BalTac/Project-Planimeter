@@ -24,6 +24,7 @@ export const DEFAULT_PREFERENCES = {
     m3DetectStartRadius: 1,
     m3DetectMaxRadius: 5,
     m3TraceToleranceM: 0.35,
+    summaryColumns: ['feature', 'area', 'percentSubject', 'crop'],
 };
 
 export function loadPreferences() {
