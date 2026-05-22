@@ -43,7 +43,7 @@ export function createInitialState() {
         cacheTtlDays: 30,
         cacheSizeMb: 500,
         parcelInfoLoading: false,
-        parcelInfoHtml: null,
+        parcelInfoData: null,
         parcelInfoStatusKey: 'parcelInfo.disabled',
         parcelInfoAnchorPixel: null,
         parcelInfoPopoverDismissed: false,

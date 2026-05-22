@@ -781,14 +781,126 @@ input[type="checkbox"] {
     background: rgba(255, 255, 255, 0.015);
 }
 
-.parcel-info-popover__frame {
+.parcel-info-popover__body {
     display: block;
+    padding: 4px 14px 14px;
+    max-height: calc(75vh - 110px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    color: var(--text-main);
+    font-size: 0.9rem;
+    line-height: 1.45;
+}
+
+.parcel-info-popover__body[hidden] {
+    display: none;
+}
+
+/* Summary card (native DOM, no iframe) */
+.parcel-info-popover__body .parcel-summary {
+    margin: 8px 0 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--stroke);
+    border-radius: 12px;
+    background: linear-gradient(180deg, rgba(115, 240, 191, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%);
+}
+
+.parcel-info-popover__body .parcel-summary h3 {
+    margin: 0 0 10px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+}
+
+.parcel-info-popover__body .parcel-summary dl {
+    margin: 0;
+    display: grid;
+    grid-template-columns: minmax(110px, max-content) 1fr;
+    column-gap: 14px;
+    row-gap: 6px;
+    align-items: baseline;
+}
+
+.parcel-info-popover__body .parcel-summary dl > div {
+    display: contents;
+}
+
+.parcel-info-popover__body .parcel-summary dt {
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-main);
+    letter-spacing: 0.02em;
+}
+
+.parcel-info-popover__body .parcel-summary dd {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--text-main);
+    word-break: break-word;
+    font-variant-numeric: tabular-nums;
+}
+
+.parcel-info-popover__body .parcel-summary dd.parcel-summary__value--primary {
+    color: var(--accent-warm);
+    font-weight: 600;
+    font-size: 1.05rem;
+}
+
+.parcel-info-popover__body .parcel-fields__header {
+    margin: 14px 0 6px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+/* GetFeatureInfo field table (native DOM) */
+.parcel-info-popover__body .parcel-fields {
     width: 100%;
-    min-height: 190px;
-    max-height: none;
-    border: 0;
-    background: transparent;
+    border-collapse: collapse;
+    margin-top: 6px;
+    font-size: 0.9rem;
+    border: 1px solid var(--stroke);
+    border-radius: 10px;
     overflow: hidden;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.parcel-info-popover__body .parcel-fields th,
+.parcel-info-popover__body .parcel-fields td {
+    padding: 9px 12px;
+    text-align: left;
+    vertical-align: top;
+    word-break: break-word;
+}
+
+.parcel-info-popover__body .parcel-fields tr + tr th,
+.parcel-info-popover__body .parcel-fields tr + tr td {
+    border-top: 1px solid var(--stroke);
+}
+
+.parcel-info-popover__body .parcel-fields th {
+    font-weight: 500;
+    font-size: 0.88rem;
+    color: var(--text-main);
+    background: rgba(255, 255, 255, 0.04);
+    white-space: nowrap;
+    width: 38%;
+}
+
+.parcel-info-popover__body .parcel-fields td {
+    color: var(--text-main);
+    font-size: 0.92rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.parcel-info-popover__body .parcel-fields tr:hover th,
+.parcel-info-popover__body .parcel-fields tr:hover td {
+    background: rgba(115, 240, 191, 0.05);
 }
 
 .m3-refine-report {

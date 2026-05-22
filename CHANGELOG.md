@@ -2,6 +2,17 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [Unreleased] — Parcel info popover: native DOM render (drop iframe)
+
+### Changed
+- [src/planimeter.js](src/planimeter.js) the parcel info popover no longer renders inside a sandboxed iframe. The two producers (`requestParcelInfoJsonViaProxy`, `requestParcelInfoHtml`) now build a structured payload via new `buildParcelInfoData({ primary, fields, sectionHeader })` and the new `renderParcelInfoBody(container, data)` paints native DOM (themed `<section class="parcel-summary">` + `<table class="parcel-fields">`) into `#parcel-info-popover-body`. This fixes the user-reported font-size/contrast issues (right-column values were nearly invisible) and lets the popover size naturally to its content without a manual `scrollHeight` measurement loop.
+- [src/core/state.js](src/core/state.js) renamed `parcelInfoHtml` → `parcelInfoData` (structured object instead of an HTML string).
+- [planimeter.html](planimeter.html) `#parcel-info-popover-frame` `<iframe>` replaced with `#parcel-info-popover-body` `<div>`.
+- [styles.css](styles.css) removed `.parcel-info-popover__frame`; added `.parcel-info-popover__body` plus scoped `.parcel-summary` / `.parcel-fields` rules using project theme tokens (`--accent`, `--accent-warm`, `--text-main`, `--stroke`). Header cells use `--text-main` (was `--text-muted`); value cells use `--text-main` at `0.92rem` with `tabular-nums`.
+
+### Removed
+- `buildParcelSummaryHtml`, `_buildParcelHtmlFromJson`, `wrapParcelInfoDocument`, `syncParcelInfoFrameSize` are gone — replaced by the native DOM renderer above. Area/Perimetro chips are no longer duplicated in the popover header: the per-feature summary panel already reports them for both drawn features and queried parcels.
+
 ## [Unreleased] — Parcel info popover redesign
 
 ### Changed

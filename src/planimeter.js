@@ -446,7 +446,7 @@ export default class Planimeter {
             parcelInfoStatus:          document.getElementById('parcel-info-status'),
             parcelInfoPopover:         document.getElementById('parcel-info-popover'),
             parcelInfoPopoverStatus:   document.getElementById('parcel-info-popover-status'),
-            parcelInfoPopoverFrame:    document.getElementById('parcel-info-popover-frame'),
+            parcelInfoPopoverBody:    document.getElementById('parcel-info-popover-body'),
             parcelInfoCloseButton:     document.getElementById('parcel-info-close'),
             m3RefineReport:            document.getElementById('m3-refine-report'),
             m3RefineReportTitle:       document.getElementById('m3-refine-report-title'),
@@ -1169,7 +1169,7 @@ export default class Planimeter {
 
         // Parcel info can be requested only from context menu in Navigate mode.
         if (mode !== 'navigate') {
-            this.state.parcelInfoHtml = null;
+            this.state.parcelInfoData = null;
             this.state.parcelInfoLoading = false;
             this.state.parcelInfoStatusKey = 'parcelInfo.clickHint';
             this.state.parcelInfoPopoverDismissed = true;
@@ -1602,40 +1602,6 @@ export default class Planimeter {
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
-    }
-
-    buildParcelSummaryHtml(parcel = {}, parcelGeometry = null, parcelGeometryCrs = 'EPSG:4326') {
-        const label = parcel.label ?? parcel.reference ?? parcel.id ?? parcel.local_id ?? '-';
-        const inspireLocalId = parcel.local_id ?? parcel.id ?? '-';
-        let areaLabel = '-';
-        let perimeterLabel = '-';
-
-        if (parcelGeometry && typeof parcelGeometry === 'object') {
-            try {
-                const geometry = this.geoJsonFormat.readGeometry(parcelGeometry, {
-                    dataProjection: parcelGeometryCrs,
-                    featureProjection: this.view.getProjection(),
-                });
-                if (geometry) {
-                    const feature = new Feature({ geometry });
-                    areaLabel = this.unitSystem.formatArea(calculateArea(feature, this.view?.getProjection()));
-                    perimeterLabel = this.unitSystem.formatPerimeter(calculatePerimeter(feature, this.view?.getProjection()));
-                }
-            } catch (error) {
-                console.warn('Unable to build parcel summary metrics:', error);
-            }
-        }
-
-        return `
-            <section class="parcel-summary">
-                <h3>${this.escapeHtml(t('parcelInfo.summaryTitle'))}</h3>
-                <dl>
-                    <div><dt>${this.escapeHtml(t('parcelInfo.label'))}</dt><dd>${this.escapeHtml(label)}</dd></div>
-                    <div><dt>${this.escapeHtml(t('parcelInfo.area'))}</dt><dd>${this.escapeHtml(areaLabel)}</dd></div>
-                    <div><dt>${this.escapeHtml(t('parcelInfo.perimeter'))}</dt><dd>${this.escapeHtml(perimeterLabel)}</dd></div>
-                    <div><dt>${this.escapeHtml(t('parcelInfo.inspireLocalId'))}</dt><dd>${this.escapeHtml(inspireLocalId)}</dd></div>
-                </dl>
-            </section>`;
     }
 
     extractParcelFieldsFromHtmlTable(rawHtml) {
@@ -4717,7 +4683,7 @@ export default class Planimeter {
 
     async fetchParcelInfoAtPixel(pixel) {
         if (!this.canQueryParcelFromContextMenu()) {
-            this.state.parcelInfoHtml = null;
+            this.state.parcelInfoData = null;
             this.state.parcelInfoLoading = false;
             this.state.parcelInfoStatusKey = this.state.parcelInfoEnabled
                 ? 'parcelInfo.clickHint'
@@ -4732,7 +4698,7 @@ export default class Planimeter {
         this.state.suppressNextParcelInfoClick = false;
         this.state.parcelInfoAnchorPixel = pixel;
         this.state.parcelInfoLoading = true;
-        this.state.parcelInfoHtml = null;
+        this.state.parcelInfoData = null;
         this.state.parcelInfoStatusKey = 'parcelInfo.loading';
         this.renderParcelInfo();
 
@@ -4740,7 +4706,7 @@ export default class Planimeter {
             const result = Planimeter.FEATUREINFO_USE_JSON
                 ? await this.requestParcelInfoJson(pixel)
                 : await this.requestParcelInfoHtml(pixel);
-            this.state.parcelInfoHtml = result.parcelInfoHtml ?? null;
+            this.state.parcelInfoData = result.parcelInfoData ?? null;
             this.state.parcelInfoStatusKey = result.statusKey;
             if (result.parcelId) {
                 this.state.lastParcelId = result.parcelId;
@@ -4793,7 +4759,7 @@ export default class Planimeter {
             }
         } catch (error) {
             console.error('Parcel info request failed:', error);
-            this.state.parcelInfoHtml = null;
+            this.state.parcelInfoData = null;
             this.state.parcelInfoStatusKey = 'parcelInfo.error';
         } finally {
             this.state.parcelInfoLoading = false;
@@ -4810,27 +4776,35 @@ export default class Planimeter {
 
     async requestParcelInfoJsonViaProxy(pixel) {
         const rawUrl = this.buildParcelInfoUrl(pixel, 'text/html');
-        if (!rawUrl) return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty' };
+        if (!rawUrl) return { parcelInfoData: null, statusKey: 'parcelInfo.empty' };
 
         const url = rawUrl + '&OUTPUT=json';
         let data;
         try {
             const response = await fetch(url, { headers: { Accept: 'application/json' } });
-            if (!response.ok) return { parcelInfoHtml: null, statusKey: 'parcelInfo.error' };
+            if (!response.ok) return { parcelInfoData: null, statusKey: 'parcelInfo.error' };
             data = await response.json();
         } catch {
-            return { parcelInfoHtml: null, statusKey: 'parcelInfo.error' };
+            return { parcelInfoData: null, statusKey: 'parcelInfo.error' };
         }
 
         if (data?.error === 'parse_failed') {
-            return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty', parcelId: null };
+            return { parcelInfoData: null, statusKey: 'parcelInfo.empty', parcelId: null };
         }
         if (!data?.parcel || !Object.keys(data.parcel).length) {
-            return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty', parcelId: null };
+            return { parcelInfoData: null, statusKey: 'parcelInfo.empty', parcelId: null };
         }
 
         const parcelId = data.parcel?.id ?? data.parcel?.local_id ?? null;
-        return { parcelInfoHtml: this._buildParcelHtmlFromJson(data), statusKey: 'parcelInfo.ready', parcelId, parcelData: data };
+        const p = data.parcel ?? {};
+        const parcelInfoData = this.buildParcelInfoData({
+            primary: {
+                label: p.label ?? p.reference ?? p.id ?? p.local_id ?? '-',
+                inspireLocalId: p.local_id ?? p.id ?? '-',
+            },
+            fields: data.raw ?? p,
+        });
+        return { parcelInfoData, statusKey: 'parcelInfo.ready', parcelId, parcelData: data };
     }
 
     populateCadastralLinkMetrics(feature, link, parcelGeometry, parcelGeometryCrs = 'EPSG:4326') {
@@ -4872,23 +4846,9 @@ export default class Planimeter {
         }
     }
 
-    _buildParcelHtmlFromJson(data) {
-        const p = data.parcel ?? {};
-        const rows = Object.entries(data.raw ?? p)
-            .filter(([, v]) => v)
-            .map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`)
-            .join('');
-        const summaryHtml = this.buildParcelSummaryHtml(
-            p,
-            data.parcelGeometry ?? null,
-            data.parcelGeometryCrs ?? 'EPSG:4326',
-        );
-        return `${summaryHtml}<table>${rows}</table>`;
-    }
-
     async requestParcelInfoHtml(pixel) {
         const url = this.buildParcelInfoUrl(pixel, 'text/html');
-        if (!url) return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty' };
+        if (!url) return { parcelInfoData: null, statusKey: 'parcelInfo.empty' };
 
         const response = await fetch(url, {
             headers: { Accept: 'text/html, text/*;q=0.8, */*;q=0.2' },
@@ -4896,40 +4856,75 @@ export default class Planimeter {
         const payload = await response.text();
 
         if (this.isFeatureInfoUnsupported(payload)) {
-            return { parcelInfoHtml: null, statusKey: 'parcelInfo.unsupported' };
+            return { parcelInfoData: null, statusKey: 'parcelInfo.unsupported' };
         }
         if (!response.ok) {
-            return { parcelInfoHtml: null, statusKey: 'parcelInfo.error' };
+            return { parcelInfoData: null, statusKey: 'parcelInfo.error' };
         }
 
         const rawHtml = this.extractFeatureInfoHtmlPage(payload);
         if (!rawHtml) {
-            return { parcelInfoHtml: null, statusKey: 'parcelInfo.empty' };
+            return { parcelInfoData: null, statusKey: 'parcelInfo.empty' };
         }
 
-        let summaryHtml = '';
+        const fields = this.extractParcelFieldsFromHtmlTable(rawHtml);
+        const sectionHeader = this.extractParcelSectionHeader(rawHtml);
+
+        let primary = {
+            label: fields.Label ?? fields.label ?? fields.NationalCadastralReference ?? '-',
+            inspireLocalId: fields.InspireId_localId ?? fields.InspireId_localid ?? fields.InspireIdlocalId ?? '-',
+        };
+
+        // Best-effort enrichment from the semantic endpoint (better label/id).
         try {
             const coordinate = this.map.getCoordinateFromPixel(pixel);
             if (coordinate) {
                 const [lon, lat] = toLonLat(coordinate, this.view.getProjection());
                 const summaryData = await this.fetchParcelSummaryAtLonLat(lon, lat);
                 if (summaryData?.parcel) {
-                    summaryHtml = this.buildParcelSummaryHtml(
-                        summaryData.parcel,
-                        summaryData.parcelGeometry ?? null,
-                        summaryData.parcelGeometryCrs ?? 'EPSG:4326',
-                    );
+                    primary = {
+                        label: summaryData.parcel.label ?? summaryData.parcel.reference ?? summaryData.parcel.id ?? primary.label,
+                        inspireLocalId: summaryData.parcel.local_id ?? summaryData.parcel.id ?? primary.inspireLocalId,
+                    };
                 }
             }
-        } catch {
-            const fields = this.extractParcelFieldsFromHtmlTable(rawHtml);
-            summaryHtml = this.buildParcelSummaryHtml({
-                label: fields.Label ?? fields.label ?? fields.NationalCadastralReference ?? '-',
-                local_id: fields.InspireId_localId ?? fields.InspireId_localid ?? fields.InspireIdlocalId ?? '-',
-            });
-        }
+        } catch { /* keep parsed primary */ }
 
-        return { parcelInfoHtml: `${summaryHtml}${rawHtml}`, statusKey: 'parcelInfo.ready' };
+        return {
+            parcelInfoData: this.buildParcelInfoData({ primary, fields, sectionHeader }),
+            statusKey: 'parcelInfo.ready',
+        };
+    }
+
+    buildParcelInfoData({ primary, fields, sectionHeader = null }) {
+        const fieldEntries = Object.entries(fields || {})
+            .filter(([k, v]) => k && v != null && String(v).trim() !== '')
+            .map(([key, value]) => ({ key: String(key), value: String(value) }));
+        return {
+            primary: {
+                label: primary?.label ?? '-',
+                inspireLocalId: primary?.inspireLocalId ?? '-',
+            },
+            fields: fieldEntries,
+            sectionHeader: sectionHeader || null,
+        };
+    }
+
+    extractParcelSectionHeader(rawHtml) {
+        // Upstream WMS prepends a row like "Strato CP.CadastralParcel 'Particelle'"
+        // via either a colspan>1 cell or a caption. Capture the first if present.
+        const html = String(rawHtml || '');
+        const colspan = html.match(/<t[hd]\b[^>]*\bcolspan\b[^>]*>([\s\S]*?)<\/t[hd]>/i);
+        if (colspan) {
+            const text = colspan[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            if (text) return text;
+        }
+        const caption = html.match(/<caption\b[^>]*>([\s\S]*?)<\/caption>/i);
+        if (caption) {
+            const text = caption[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            if (text) return text;
+        }
+        return null;
     }
 
     extractFeatureInfoHtmlPage(payload) {
@@ -5594,196 +5589,11 @@ export default class Planimeter {
         this.renderParcelInfo();
     }
 
-    wrapParcelInfoDocument(innerHtml) {
-        const body = String(innerHtml || '');
-        // Wrap upstream summary+table HTML in a themed shell so the iframe
-        // body inherits planimeter's dark design tokens. CSS is inlined to
-        // avoid cross-document/file load complications inside the iframe.
-        return `<!DOCTYPE html>
-<html lang="it">
-<head>
-<meta charset="utf-8">
-<base target="_blank">
-<style>
-:root {
-    --pi-bg:        transparent;
-    --pi-surface:   rgba(255, 255, 255, 0.04);
-    --pi-surface-2: rgba(255, 255, 255, 0.02);
-    --pi-stroke:    rgba(255, 255, 255, 0.08);
-    --pi-text:      #eef6f1;
-    --pi-muted:     #9cb7aa;
-    --pi-accent:    #73f0bf;
-    --pi-accent-warm: #ffe38a;
-}
-* { box-sizing: border-box; }
-html, body {
-    margin: 0;
-    padding: 0;
-    background: var(--pi-bg);
-    color: var(--pi-text);
-    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-}
-body {
-    padding: 4px 14px 14px;
-}
-
-/* ── Summary card ──────────────────────────────────────────────────── */
-.parcel-summary {
-    margin: 8px 0 12px;
-    padding: 12px 14px;
-    border: 1px solid var(--pi-stroke);
-    border-radius: 12px;
-    background:
-        linear-gradient(180deg, rgba(115, 240, 191, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%);
-}
-.parcel-summary h3 {
-    margin: 0 0 10px;
-    font-size: 0.74rem;
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--pi-accent);
-}
-.parcel-summary dl {
-    margin: 0;
-    display: grid;
-    grid-template-columns: minmax(110px, max-content) 1fr;
-    column-gap: 14px;
-    row-gap: 4px;
-    align-items: baseline;
-}
-.parcel-summary dl > div {
-    display: contents;
-}
-.parcel-summary dt {
-    font-size: 0.74rem;
-    font-weight: 500;
-    color: var(--pi-muted);
-    letter-spacing: 0.02em;
-}
-.parcel-summary dd {
-    margin: 0;
-    font-size: 0.86rem;
-    font-weight: 500;
-    color: var(--pi-text);
-    word-break: break-word;
-    font-variant-numeric: tabular-nums;
-}
-.parcel-summary dt:first-of-type + dd,
-.parcel-summary dl > div:first-child dd {
-    color: var(--pi-accent-warm);
-    font-weight: 600;
-    font-size: 1rem;
-}
-
-/* ── GetFeatureInfo upstream tables ────────────────────────────────── */
-table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 10px 0 0;
-    font-size: 0.8rem;
-    border: 1px solid var(--pi-stroke);
-    border-radius: 10px;
-    overflow: hidden;
-    background: var(--pi-surface-2);
-}
-caption {
-    padding: 8px 10px;
-    text-align: left;
-    font-size: 0.74rem;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--pi-muted);
-    background: var(--pi-surface);
-    border-bottom: 1px solid var(--pi-stroke);
-}
-th, td {
-    padding: 7px 10px;
-    text-align: left;
-    vertical-align: top;
-    border-top: 1px solid var(--pi-stroke);
-    word-break: break-word;
-}
-tr:first-child th,
-tr:first-child td {
-    border-top: 0;
-}
-th {
-    font-weight: 500;
-    font-size: 0.74rem;
-    letter-spacing: 0.04em;
-    color: var(--pi-muted);
-    background: var(--pi-surface);
-    white-space: nowrap;
-    width: 38%;
-}
-td {
-    color: var(--pi-text);
-    font-variant-numeric: tabular-nums;
-}
-tr:hover td,
-tr:hover th { background: rgba(115, 240, 191, 0.04); }
-
-/* Upstream "header" rows that span both columns */
-tr > th[colspan],
-tr > td[colspan] {
-    background: linear-gradient(180deg, rgba(115, 240, 191, 0.10), transparent);
-    color: var(--pi-text);
-    font-weight: 600;
-    font-size: 0.78rem;
-    letter-spacing: 0.04em;
-    text-transform: none;
-    white-space: normal;
-}
-
-a { color: var(--pi-accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
-
-/* Hide stray bold "section" markers some WMS pages emit */
-body > h1, body > h2, body > h3 { display: none; }
-
-/* Scrollbar */
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.24); }
-</style>
-</head>
-<body>
-${body}
-</body>
-</html>`;
-    }
-
-    syncParcelInfoFrameSize() {
-        const frame = this.elements.parcelInfoPopoverFrame;
-        const popover = this.elements.parcelInfoPopover;
-        if (!frame || !popover || frame.hidden) return;
-
-        try {
-            const doc = frame.contentDocument;
-            if (!doc?.body) return;
-            const viewport = this.map?.getViewport();
-            const viewportRect = viewport?.getBoundingClientRect();
-            const maxHeight = Math.max(220, (viewportRect?.height || window.innerHeight) - 80);
-            const maxWidth = Math.max(360, (viewportRect?.width || window.innerWidth) - 40);
-            const contentHeight = Math.min(maxHeight, Math.max(180, doc.body.scrollHeight + 8));
-            const contentWidth = Math.min(maxWidth, Math.max(320, doc.body.scrollWidth + 16));
-
-            frame.style.height = `${contentHeight}px`;
-            popover.style.width = `${contentWidth}px`;
-        } catch {
-            // ignore sizing errors and keep defaults
-        }
-    }
-
     renderParcelInfo() {
         const statusEl = this.elements.parcelInfoStatus;
         const popoverEl = this.elements.parcelInfoPopover;
         const popoverStatusEl = this.elements.parcelInfoPopoverStatus;
-        const popoverFrameEl = this.elements.parcelInfoPopoverFrame;
+        const bodyEl = this.elements.parcelInfoPopoverBody;
 
         const setStatus = (key) => {
             const text = t(key);
@@ -5796,53 +5606,106 @@ ${body}
             popoverEl.hidden = !visible;
         };
 
+        const hideBody = () => {
+            if (!bodyEl) return;
+            bodyEl.hidden = true;
+            bodyEl.replaceChildren();
+        };
+
         const shouldShowPopover = () => !this.state.parcelInfoPopoverDismissed && Boolean(this.state.parcelInfoAnchorPixel);
 
         if (!this.state.parcelInfoEnabled) {
             setStatus('parcelInfo.disabled');
-            if (popoverFrameEl) popoverFrameEl.hidden = true;
+            hideBody();
             setPopoverVisible(false);
             return;
         }
 
         if (!this.elements.layerCatasto.checked || this.state.catastoSource !== 'official') {
             setStatus('parcelInfo.notAvailable');
-            if (popoverFrameEl) popoverFrameEl.hidden = true;
+            hideBody();
             setPopoverVisible(false);
             return;
         }
 
         if (this.state.parcelInfoLoading) {
             setStatus('parcelInfo.loading');
-            if (popoverFrameEl) popoverFrameEl.hidden = true;
+            hideBody();
             this.positionParcelInfoPopover();
             setPopoverVisible(shouldShowPopover());
             return;
         }
 
-        if (!this.state.parcelInfoHtml) {
+        if (!this.state.parcelInfoData) {
             setStatus(this.state.parcelInfoStatusKey || 'parcelInfo.clickHint');
-            if (popoverFrameEl) popoverFrameEl.hidden = true;
+            hideBody();
             this.positionParcelInfoPopover();
             setPopoverVisible(shouldShowPopover());
             return;
         }
 
         setStatus('parcelInfo.ready');
-        if (popoverFrameEl) {
-            popoverFrameEl.hidden = false;
-            const desiredSrcdoc = this.wrapParcelInfoDocument(this.state.parcelInfoHtml);
-            if (popoverFrameEl.srcdoc !== desiredSrcdoc) {
-                popoverFrameEl.srcdoc = desiredSrcdoc;
-                popoverFrameEl.onload = () => {
-                    this.syncParcelInfoFrameSize();
-                    this.positionParcelInfoPopover();
-                };
-            }
-            this.syncParcelInfoFrameSize();
+        if (bodyEl) {
+            this.renderParcelInfoBody(bodyEl, this.state.parcelInfoData);
+            bodyEl.hidden = false;
         }
         this.positionParcelInfoPopover();
         setPopoverVisible(shouldShowPopover());
+    }
+
+    renderParcelInfoBody(container, data) {
+        container.replaceChildren();
+        if (!data) return;
+
+        const doc = container.ownerDocument;
+        const summary = doc.createElement('section');
+        summary.className = 'parcel-summary';
+
+        const title = doc.createElement('h3');
+        title.textContent = t('parcelInfo.summaryTitle');
+        summary.appendChild(title);
+
+        const dl = doc.createElement('dl');
+        const addRow = (labelKey, value, modifier = null) => {
+            const row = doc.createElement('div');
+            const dt = doc.createElement('dt');
+            dt.textContent = t(labelKey);
+            const dd = doc.createElement('dd');
+            dd.textContent = value ?? '-';
+            if (modifier) dd.classList.add(modifier);
+            row.appendChild(dt);
+            row.appendChild(dd);
+            dl.appendChild(row);
+        };
+        addRow('parcelInfo.label', data.primary?.label ?? '-', 'parcel-summary__value--primary');
+        addRow('parcelInfo.inspireLocalId', data.primary?.inspireLocalId ?? '-');
+        summary.appendChild(dl);
+        container.appendChild(summary);
+
+        if (data.sectionHeader) {
+            const h4 = doc.createElement('h4');
+            h4.className = 'parcel-fields__header';
+            h4.textContent = data.sectionHeader;
+            container.appendChild(h4);
+        }
+
+        if (Array.isArray(data.fields) && data.fields.length) {
+            const table = doc.createElement('table');
+            table.className = 'parcel-fields';
+            const tbody = doc.createElement('tbody');
+            for (const { key, value } of data.fields) {
+                const tr = doc.createElement('tr');
+                const th = doc.createElement('th');
+                th.textContent = key;
+                const td = doc.createElement('td');
+                td.textContent = value;
+                tr.appendChild(th);
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+            }
+            table.appendChild(tbody);
+            container.appendChild(table);
+        }
     }
 
     positionParcelInfoPopover() {
