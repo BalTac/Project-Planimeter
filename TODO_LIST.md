@@ -9,6 +9,15 @@
 
 ## Priorita prossime task
 
+### UX — Toolbar redesign (mode | action | view)
+- [x] Step A: audit information architecture della toolbar, classificazione `mode | action | view` (vedi [wiki/toolbar-redesign.md](wiki/toolbar-redesign.md)).
+- [ ] Step B: cluster refactor — riorganizzare [planimeter.html](planimeter.html) + [styles.css](styles.css) in 3 zone (mode segmented top, action grid middle, view accordion bottom); ridurre `Strumenti` a 4 modi reali; promuovere snap a toggle esplicito; spostare matrice WMS sublayer da Settings a `view.catasto-wms` gated dal layer catasto attivo; spostare stats live in HUD bar separata; deduplicare lang switcher.
+- [ ] Step C: QoL — command palette (`Ctrl+K`) sopra il registry `mode|action|view`; shortcuts overlay (`?`); azione `dsl.load-domain` come entry point UI.
+
+### Parcel info — refactor popover (DONE)
+- [x] Sostituire iframe con render DOM nativo (`renderParcelInfoBody`); state `parcelInfoHtml` → `parcelInfoData`; rimozione `wrapParcelInfoDocument`/`syncParcelInfoFrameSize`/`buildParcelSummaryHtml`/`_buildParcelHtmlFromJson`; fix contrasto/dimensione font colonna valori; rimozione Area/Perimetro dall'header (gia coperti dal summary panel).
+
+
 ### P0 — Stabilizzazione e validazione corrente
 - [x] Verificare resa responsive desktop/mobile toolbar e tool icons senza overflow.
 - [x] Verificare hint hover IT/EN e accessibilita keyboard/screen-reader dei pulsanti.
