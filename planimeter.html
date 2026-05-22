@@ -74,7 +74,7 @@
                     <p class="eyebrow" data-i18n="app.eyebrow">Geo Tools</p>
                     <div class="switcher-row">
                         <label class="sr-only" for="lang-switcher">Language / Lingua</label>
-                        <select id="lang-switcher" class="compact-select" aria-label="Language / Lingua">
+                        <select id="lang-switcher" class="parameter-picker parameter-picker--compact" aria-label="Language / Lingua">
                             <option value="it">IT</option>
                             <option value="en">EN</option>
                         </select>
@@ -150,7 +150,7 @@
                     </div>
                     <div class="layer-source-wrap">
                         <label for="catasto-source" data-i18n="layer.catasto.sourceLabel">Sorgente layer catasto</label>
-                        <select id="catasto-source" class="layer-source-select" aria-label="Scegli la sorgente del layer catasto">
+                        <select id="catasto-source" class="parameter-picker" aria-label="Scegli la sorgente del layer catasto">
                             <option value="official" selected data-i18n="layer.catasto.official">Ufficiale Agenzia Entrate</option>
                             <option value="fallback" data-i18n="layer.catasto.fallback">Sostitutivo confini amministrativi</option>
                         </select>
@@ -287,7 +287,7 @@
                     </div>
                     <div class="layer-source-wrap">
                         <label for="editing-layer-select" data-i18n="tool.editingLayerLabel">Editing layer</label>
-                        <select id="editing-layer-select" class="layer-source-select" aria-label="Scegli quale layer modificare">
+                        <select id="editing-layer-select" class="parameter-picker" aria-label="Scegli quale layer modificare">
                             <option value="user" selected data-i18n="tool.editingLayer.user">Aree disegnate</option>
                             <option value="pertenenze" data-i18n="tool.editingLayer.pertenenze">Pertinenze</option>
                         </select>
@@ -331,7 +331,7 @@
                     </div>
                     <div class="action-format-wrap">
                         <label for="export-format" data-i18n="action.exportFormat">Formato export</label>
-                        <select id="export-format" class="layer-source-select" aria-label="Scegli il formato di esportazione">
+                        <select id="export-format" class="parameter-picker" aria-label="Scegli il formato di esportazione">
                             <option value="geojson" selected>GeoJSON</option>
                             <option value="kml">KML</option>
                             <option value="geotiff" data-i18n="export.format.geotiff">TIFF raster</option>
@@ -360,7 +360,7 @@
                         </div>
                         <label class="settings-field" for="dsl-category-select">
                             <span data-i18n="dsl.category.label">Categoria</span>
-                            <select id="dsl-category-select" class="layer-source-select" aria-label="Categoria DSL">
+                            <select id="dsl-category-select" class="parameter-picker" aria-label="Categoria DSL">
                                 <option value="" data-i18n="dsl.assign.selectCategory">Seleziona categoria...</option>
                             </select>
                         </label>
@@ -433,14 +433,14 @@
                     <div class="settings-grid">
                         <label class="settings-field">
                             <span data-i18n="settings.units">Sistema di misura</span>
-                            <select id="settings-unit-system" class="layer-source-select">
+                            <select id="settings-unit-system" class="parameter-picker">
                                 <option value="metric" data-i18n="unit.metric">Metrico (m, km, ha)</option>
                                 <option value="imperial" data-i18n="unit.imperial">Imperiale (ft, mi, ac)</option>
                             </select>
                         </label>
                         <label class="settings-field">
                             <span data-i18n="settings.exportQuality">Qualita export immagine</span>
-                            <select id="settings-export-quality" class="layer-source-select">
+                            <select id="settings-export-quality" class="parameter-picker">
                                 <option value="standard" data-i18n="settings.exportQuality.standard">Standard (1x)</option>
                                 <option value="high" data-i18n="settings.exportQuality.high">High (1.5x)</option>
                                 <option value="ultra" data-i18n="settings.exportQuality.ultra">Ultra (2x)</option>

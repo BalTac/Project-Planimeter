@@ -44,8 +44,7 @@ select {
 
 /* Keep all combo boxes readable with consistent contrast. */
 select,
-.layer-source-select,
-.compact-select,
+.parameter-picker,
 .full-width-select,
 select.dsl-field-input {
     color: var(--text-main);
@@ -389,7 +388,7 @@ select option[disabled] {
     font-size: 0.84rem;
 }
 
-.layer-source-select {
+.parameter-picker {
     width: 100%;
     min-height: 42px;
     padding: 8px 12px;
@@ -399,7 +398,7 @@ select option[disabled] {
     color: var(--text-main);
 }
 
-.layer-source-select:focus-visible {
+.parameter-picker:focus-visible {
     outline: none;
     border-color: rgba(115, 240, 191, 0.6);
 }
@@ -1419,13 +1418,13 @@ input[type="checkbox"] {
     flex-shrink: 0;
 }
 
-.compact-select {
+.parameter-picker--compact {
     appearance: none;
+    width: auto;
+    min-height: 0;
     padding: 3px 8px 3px 6px;
-    border: 1px solid var(--stroke);
     border-radius: 6px;
     background: rgba(255, 255, 255, 0.07);
-    color: var(--text-main);
     font-size: 0.72rem;
     font-weight: 600;
     letter-spacing: 0.04em;
@@ -1433,8 +1432,8 @@ input[type="checkbox"] {
     transition: border-color 0.15s, background 0.15s;
 }
 
-.compact-select:hover,
-.compact-select:focus {
+.parameter-picker--compact:hover,
+.parameter-picker--compact:focus {
     border-color: var(--accent);
     background: rgba(115, 240, 191, 0.1);
     outline: none;
