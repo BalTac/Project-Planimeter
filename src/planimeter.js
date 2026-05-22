@@ -39,6 +39,7 @@ import { loadPreferences, savePreferences } from './io/preferences.js';
 import { loadBelfioreCodes } from './io/belfiore.js';
 import { CATASTO_WMS_LAYER_DEFS, DEFAULT_CATASTO_WMS_LAYER_SETTINGS } from './core/constants.js';
 import { initDsl, getDomain, getDomainsForLayer, registerDomain } from './dsl/loader.js';
+import { initCommandPalette, initShortcutsOverlay } from './ui/command-palette.js';
 import { aggregateByCategory, totalAggArea } from './dsl/aggregation.js';
 import { buildDslPayload } from './dsl/schema.js';
 import { openSummaryPanel, closeSummaryPanel } from './ui/summary-panel.js';
@@ -148,6 +149,8 @@ export default class Planimeter {
         // ── UI bindings ───────────────────────────────────────────────────────
         this.bindUI();
         this.bindPointerCoordinatesOverlay();
+        initCommandPalette(this);
+        initShortcutsOverlay();
         initContextMenu({
             map:             this.map,
             elements:        this.elements,

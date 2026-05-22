@@ -2319,3 +2319,171 @@ input[type="checkbox"] {
         max-height: 60vh;
     }
 }
+
+/* ── Command palette (Ctrl+K) ───────────────────────────────────────────── */
+.command-palette {
+    position: fixed;
+    inset: 0;
+    z-index: 9000;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 12vh;
+}
+
+.command-palette[hidden] {
+    display: none;
+}
+
+.command-palette__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(4px);
+}
+
+.command-palette__panel {
+    position: relative;
+    width: min(560px, 92vw);
+    max-height: 70vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-panel-strong);
+    border: 1px solid var(--stroke);
+    border-radius: 14px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+}
+
+.command-palette__input {
+    appearance: none;
+    width: 100%;
+    padding: 14px 18px;
+    border: none;
+    border-bottom: 1px solid var(--stroke);
+    background: transparent;
+    color: var(--text-main);
+    font-size: 1rem;
+    outline: none;
+}
+
+.command-palette__list {
+    list-style: none;
+    margin: 0;
+    padding: 6px 0;
+    overflow-y: auto;
+    flex: 1 1 auto;
+}
+
+.command-palette__item {
+    padding: 8px 18px;
+    color: var(--text-main);
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.command-palette__item.is-active,
+.command-palette__item:hover {
+    background: rgba(115, 240, 191, 0.12);
+}
+
+.command-palette__empty,
+.command-palette__hint {
+    margin: 0;
+    padding: 8px 18px;
+    color: var(--text-muted);
+    font-size: 0.76rem;
+}
+
+.command-palette__hint {
+    border-top: 1px solid var(--stroke);
+}
+
+/* ── Shortcuts overlay (?) ──────────────────────────────────────────────── */
+.shortcuts-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 8900;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.shortcuts-overlay[hidden] {
+    display: none;
+}
+
+.shortcuts-overlay__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+}
+
+.shortcuts-overlay__panel {
+    position: relative;
+    width: min(440px, 92vw);
+    background: var(--bg-panel-strong);
+    border: 1px solid var(--stroke);
+    border-radius: 14px;
+    padding: 18px 22px 16px;
+    color: var(--text-main);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+
+.shortcuts-overlay__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.shortcuts-overlay__header h2 {
+    margin: 0;
+    font-size: 1.05rem;
+}
+
+.shortcuts-overlay__close {
+    appearance: none;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1rem;
+    cursor: pointer;
+}
+
+.shortcuts-overlay__list {
+    margin: 0;
+    display: grid;
+    grid-template-columns: minmax(120px, max-content) 1fr;
+    gap: 8px 16px;
+}
+
+.shortcuts-overlay__list > div {
+    display: contents;
+}
+
+.shortcuts-overlay__list dt {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    align-items: center;
+    color: var(--text-main);
+    font-weight: 600;
+}
+
+.shortcuts-overlay__list dd {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.86rem;
+}
+
+.shortcuts-overlay__list kbd {
+    display: inline-block;
+    padding: 1px 6px;
+    border: 1px solid var(--stroke);
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.78rem;
+}
+

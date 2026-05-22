@@ -619,6 +619,32 @@
         <nav id="map-context-menu" class="map-context-menu" hidden aria-label="Menu contestuale mappa">
             <ul class="context-menu-list"></ul>
         </nav>
+
+        <div id="command-palette" class="command-palette" hidden role="dialog" aria-label="Command palette" aria-modal="true">
+            <div class="command-palette__backdrop" data-cp-close></div>
+            <div class="command-palette__panel">
+                <input id="command-palette-input" type="text" class="command-palette__input" autocomplete="off" spellcheck="false" data-i18n-placeholder="palette.placeholder" placeholder="Cerca un comando..." aria-label="Search commands">
+                <ul id="command-palette-list" class="command-palette__list" role="listbox"></ul>
+                <p id="command-palette-empty" class="command-palette__empty" hidden data-i18n="palette.empty">Nessun comando trovato.</p>
+                <p class="command-palette__hint" data-i18n="palette.hint">↑ ↓ per navigare, Invio per eseguire, Esc per chiudere.</p>
+            </div>
+        </div>
+
+        <div id="shortcuts-overlay" class="shortcuts-overlay" hidden role="dialog" aria-label="Keyboard shortcuts" aria-modal="true">
+            <div class="shortcuts-overlay__backdrop" data-shortcuts-close></div>
+            <div class="shortcuts-overlay__panel">
+                <header class="shortcuts-overlay__header">
+                    <h2 data-i18n="shortcuts.title">Scorciatoie da tastiera</h2>
+                    <button type="button" class="shortcuts-overlay__close" data-shortcuts-close aria-label="Close">✕</button>
+                </header>
+                <dl class="shortcuts-overlay__list">
+                    <div><dt><kbd>Ctrl</kbd>+<kbd>K</kbd></dt><dd data-i18n="shortcuts.palette">Apri command palette</dd></div>
+                    <div><dt><kbd>?</kbd></dt><dd data-i18n="shortcuts.help">Mostra/nascondi questa lista</dd></div>
+                    <div><dt><kbd>Ctrl</kbd></dt><dd data-i18n="shortcuts.snapCtrl">Inverti temporaneamente lo snap (XOR con il toggle persistente).</dd></div>
+                    <div><dt><kbd>Esc</kbd></dt><dd data-i18n="shortcuts.escape">Chiudi overlay / popover attivi.</dd></div>
+                </dl>
+            </div>
+        </div>
     </main>
 
     <noscript>

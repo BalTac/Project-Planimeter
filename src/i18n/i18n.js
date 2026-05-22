@@ -63,4 +63,8 @@ function applyToDOM() {
         const key = el.dataset.i18nTitle;
         if (key) el.title = t(key);
     });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+        const key = el.dataset.i18nPlaceholder;
+        if (key) el.setAttribute('placeholder', t(key));
+    });
 }
