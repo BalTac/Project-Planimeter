@@ -2,6 +2,17 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [Unreleased] — Belfiore lookup: comune code → name resolution
+
+### Added
+- [scripts/build_belfiore_codes.py](scripts/build_belfiore_codes.py) one-shot downloader that fetches the [matteocontrini/comuni-json](https://github.com/matteocontrini/comuni-json) dataset (MIT, sourced from ISTAT + Agenzia delle Entrate) and writes a compact `{ "<belfiore>": "<Name> (<PR>)" }` map. Run `python scripts/build_belfiore_codes.py` to regenerate the asset when the upstream dataset changes.
+- [domains/belfiore-codes.json](domains/belfiore-codes.json) generated lookup asset (~216 KB, 7 904 entries) served alongside the existing DSL domains.
+- [src/io/belfiore.js](src/io/belfiore.js) lazy loader (`loadBelfioreCodes()`) and synchronous accessor (`getComuneName(code)`) with module-level cache; failures are swallowed and log a warning so the UI degrades gracefully to bare Belfiore codes.
+- [src/planimeter.js](src/planimeter.js) fires `loadBelfioreCodes()` at app init (non-blocking, in parallel with DSL init) and re-renders the summary panel when the lookup is ready.
+
+### Changed
+- [src/ui/summary-panel.js](src/ui/summary-panel.js) `extractCadastralData` now decorates the cadastral payload with `comuneName` resolved via `getComuneName`; the `comune` column renders as `<CODE> — <Name (PR)>` when known, falling back to the raw code (e.g. `B609 — Cannara (PG)`). Help tooltip updated accordingly in [src/i18n/it.js](src/i18n/it.js) and [src/i18n/en.js](src/i18n/en.js).
+
 ## [Unreleased] — Summary panel UX: dynamic width + cadastral fallback parser
 
 ### Changed

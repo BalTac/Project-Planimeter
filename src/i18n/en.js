@@ -459,7 +459,7 @@ export default {
     'summary.columns.group.geometry':  'Geometry',
     'summary.columns.group.possession': 'Possession',
     'summary.col.comune':              'Comune',
-    'summary.col.comune.help':         'Cadastral municipality code (parsed from INSPIRE local_id)',
+    'summary.col.comune.help':         'Cadastral municipality code (Belfiore), with resolved name when available',
     'summary.col.foglio':              'Sheet',
     'summary.col.particella':          'Parcel #',
     'summary.col.subalterno':          'Sub.',

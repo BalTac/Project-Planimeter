@@ -1,6 +1,7 @@
 import { t } from '../i18n/i18n.js';
 import { calculateIntersectionMetrics } from '../geometry/intersection.js';
 import { calculateArea, calculatePerimeter } from '../geometry/calculations.js';
+import { getComuneName } from '../io/belfiore.js';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Column registry
@@ -58,7 +59,12 @@ const COLUMN_DEFS = [
         group: 'cadastral',
         labelKey: 'summary.col.comune',
         helpKey: 'summary.col.comune.help',
-        render: (row) => escapeHtml(row.cadastral?.comune || '—'),
+        render: (row) => {
+            const code = row.cadastral?.comune;
+            if (!code) return '—';
+            const name = row.cadastral?.comuneName;
+            return name ? `${escapeHtml(code)} — ${escapeHtml(name)}` : escapeHtml(code);
+        },
     },
     {
         id: 'foglio',
@@ -285,6 +291,7 @@ function extractCadastralData(feature, unitSystem) {
     return {
         inspireId: inspireId || null,
         comune: parsed.comune || null,
+        comuneName: parsed.comune ? getComuneName(parsed.comune) : null,
         sezione: parsed.sezione || null,
         foglio: parsed.foglio || null,
         particella: parsed.particella || null,

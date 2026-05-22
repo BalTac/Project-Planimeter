@@ -480,7 +480,7 @@ export default {
     'summary.columns.group.possession': 'Possesso',
     'summary.col.percentTarget':       '% controparte',
     'summary.col.comune':              'Comune',
-    'summary.col.comune.help':         'Codice catastale comune (parsing INSPIRE local_id)',
+    'summary.col.comune.help':         'Codice catastale (Belfiore) del comune, con nome risolto quando disponibile',
     'summary.col.foglio':              'Foglio',
     'summary.col.particella':          'Particella',
     'summary.col.subalterno':          'Sub.',

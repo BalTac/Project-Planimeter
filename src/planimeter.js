@@ -36,6 +36,7 @@ import {
 import { buildExportConfig, triggerDownload, requestBackendExport } from './io/export.js';
 import { detectImportFormat, readImportedFeatures } from './io/import.js';
 import { loadPreferences, savePreferences } from './io/preferences.js';
+import { loadBelfioreCodes } from './io/belfiore.js';
 import { CATASTO_WMS_LAYER_DEFS, DEFAULT_CATASTO_WMS_LAYER_SETTINGS } from './core/constants.js';
 import { initDsl, getDomain, getDomainsForLayer } from './dsl/loader.js';
 import { aggregateByCategory, totalAggArea } from './dsl/aggregation.js';
@@ -216,6 +217,11 @@ export default class Planimeter {
             this.updateDslAssignmentControls();
         }).catch((err) => {
             console.warn('[DSL] init failed:', err);
+        });
+
+        // ── Belfiore (comune name) lookup — async, non-blocking ──────────────
+        loadBelfioreCodes().then(() => {
+            this.updateSummary();
         });
 
         this.updateSummary();
