@@ -2,6 +2,15 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [Unreleased] — Summary panel UX: dynamic width + cadastral fallback parser
+
+### Changed
+- [styles.css](styles.css) `.summary-panel` now grows with visible content: `width: max-content; min-width: 520px; max-width: calc(100vw - 32px)`. Adding columns expands the panel rightward toward the viewport edge instead of squeezing cells; cells use `white-space: nowrap` so numeric values like `0.2494 ha` no longer wrap. `.summary-panel__body` switches to `overflow-x: auto` as fallback when the panel reaches viewport max width.
+
+### Added
+- [src/ui/summary-panel.js](src/ui/summary-panel.js) `parseNationalCadastralReference(reference)` parses Italian WMS `NationalCadastralReference` strings (e.g. `B609_000200.406` → `{ comune: "B609", foglio: "2", particella: "406" }`). Format: `<COMUNE>[_<SEZIONE>]_<FOGLIO6>.<PARTICELLA>[.<SUB>]` with 4-char Belfiore comune code and zero-padded 6-digit foglio.
+- [src/ui/summary-panel.js](src/ui/summary-panel.js) `extractCadastralData` now falls back to `parseNationalCadastralReference(feature.get('parcel_id'))` when `inspire_local_id` is missing or unparseable, so cadastral columns (`comune`, `foglio`, `particella`, `subalterno`) populate from the AGE WMS payload that only returns `NationalCadastralReference`.
+
 ## [Unreleased] — Bugfix: geodesic intersection area
 
 ### Fixed

@@ -1633,7 +1633,10 @@ input[type="checkbox"] {
     position: absolute;
     top: 60px;
     right: 16px;
-    width: 520px;
+    /* Grow with visible content (more columns => wider panel), capped to viewport. */
+    width: max-content;
+    min-width: 520px;
+    max-width: calc(100vw - 32px);
     max-height: 75vh;
     border: 1px solid var(--stroke);
     border-radius: var(--radius-md);
@@ -1936,7 +1939,8 @@ input[type="checkbox"] {
 .summary-panel__body {
     flex: 1;
     overflow-y: auto;
-    overflow-x: hidden;
+    /* Allow horizontal scroll as fallback when panel hits viewport max-width. */
+    overflow-x: auto;
     padding: 12px 0;
 }
 
@@ -2004,6 +2008,12 @@ input[type="checkbox"] {
     padding: 7px 12px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.04);
     vertical-align: middle;
+    /* Prevent intra-cell wrap (e.g. "0.2494\nha") so columns size to natural content. */
+    white-space: nowrap;
+}
+
+.summary-table td.summary-table__cell--wrap {
+    white-space: normal;
 }
 
 .summary-table td:not(:first-child) {

@@ -201,6 +201,55 @@ export function parseInspireLocalId(localId) {
     return { comune, sezione, foglio, particella, subalterno };
 }
 
+/**
+ * Parses Italian NationalCadastralReference strings as returned by Agenzia
+ * Entrate WMS FeatureInfo (and stored as `parcel_id` on features).
+ *
+ * Observed format: `<COMUNE>[_<SEZIONE>]_<FOGLIO6>.<PARTICELLA>[.<SUB>]`
+ *   - COMUNE: 4-char Belfiore code (e.g. "B609", "A382")
+ *   - SEZIONE: optional alphanumeric section code
+ *   - FOGLIO6: 6-digit zero-padded sheet number (e.g. "000200" → foglio 2)
+ *   - PARTICELLA: parcel number (numeric or alphanumeric)
+ *   - SUB: optional subaltern number
+ *
+ * Returns null when the string does not match the expected shape.
+ *
+ * @param {string} reference
+ * @returns {{ comune: string|null, sezione: string|null, foglio: string|null,
+ *             particella: string|null, subalterno: string|null } | null}
+ */
+export function parseNationalCadastralReference(reference) {
+    if (!reference || typeof reference !== 'string') return null;
+    const trimmed = reference.trim();
+    if (!trimmed) return null;
+
+    // Split on '.' → [comuneFoglio, particella, sub?]
+    const dotParts = trimmed.split('.').map((p) => p.trim()).filter(Boolean);
+    if (dotParts.length < 2) return null;
+
+    const head = dotParts[0];
+    const particellaRaw = dotParts[1];
+    const subRaw = dotParts[2] ?? null;
+
+    // Split head on '_' → [comune, (sezione)?, foglio6]
+    const headParts = head.split('_').map((p) => p.trim()).filter(Boolean);
+    if (headParts.length < 2) return null;
+
+    const foglioRaw = headParts[headParts.length - 1];
+    if (!/^\d+$/.test(foglioRaw)) return null;
+
+    const comune = headParts[0] || null;
+    const sezione = headParts.length >= 3 ? headParts.slice(1, -1).join('_') : null;
+
+    return {
+        comune,
+        sezione,
+        foglio: stripLeadingZeros(foglioRaw),
+        particella: particellaRaw ? stripLeadingZeros(particellaRaw) : null,
+        subalterno: subRaw ? stripLeadingZeros(subRaw) : null,
+    };
+}
+
 function splitComuneSezione(raw) {
     if (!raw) return [null, null];
     const m = /^([^_]+)(?:_(.+))?$/.exec(raw);
@@ -215,7 +264,15 @@ function stripLeadingZeros(s) {
 function extractCadastralData(feature, unitSystem) {
     if (!feature?.get) return null;
     const inspireId = feature.get('inspire_local_id') || feature.get('inspireLocalId') || null;
-    const parsed = parseInspireLocalId(inspireId) || {};
+    const parcelId = feature.get('parcel_id') || null;
+    // Primary: parse INSPIRE local_id. Fallback: NationalCadastralReference
+    // (Agenzia Entrate WMS) stored as `parcel_id` (e.g. "B609_000200.406").
+    let parsed = parseInspireLocalId(inspireId);
+    if (!parsed || (!parsed.comune && !parsed.foglio && !parsed.particella)) {
+        const fromParcelId = parseNationalCadastralReference(parcelId);
+        if (fromParcelId) parsed = fromParcelId;
+    }
+    parsed = parsed || {};
     const officialAreaRaw = feature.get('superficie_ufficiale')
         ?? feature.get('officialArea')
         ?? feature.get('cadastralArea');
