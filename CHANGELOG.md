@@ -2,6 +2,18 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [Unreleased] — Toolbar redesign Step B-1: WMS sublayer matrix moved to Operate, lang switcher dedup, actions sub-grouped
+
+### Changed
+- [planimeter.html](planimeter.html) moved the entire WMS sublayer matrix (`#settings-wms-part-*`, `data-wms-layer-part`, `data-wms-layer-opacity`) out of the Settings panel (Overlay section) into a new gated `#section-catasto-wms` (`.toolbar-section--gated`) at the top of the Operate panel, placed right after the Layer section. The section is hidden by default and only shows when both the Catasto layer is on AND the source is `official`. This puts the live tuning controls next to the layer toggle that owns them, rather than buried in a separate "Settings" tab.
+- [planimeter.html](planimeter.html) `.action-grid` in the Actions section is now split into 3 sub-groups inside `.action-subgroup` containers, each with a small uppercase kicker label: **Generale** (Localizza / Esporta / Importa), **Sulla selezione** (Duplica / Elimina selezione), **Distruttive** (Svuota tutte le aree, on a warm-tinted background). Same buttons, same handlers, same `data-i18n` keys — pure visual grouping.
+- [planimeter.html](planimeter.html) removed the duplicate `#settings-language` field from Settings → Display. The header pill `#lang-switcher` is the single source of truth. JS references are already optional-chained so no handler changes are needed; the unused `settingsLanguage` element ref will be cleaned up in a later sub-step.
+- [src/planimeter.js](src/planimeter.js) `updateCatastoVisibility()` now also toggles `#section-catasto-wms` visibility, so the WMS tuning panel appears/disappears with the layer toggle and source change.
+- [styles.css](styles.css) added `.action-subgroup` (themed box with kicker label), variants `.action-subgroup--destructive` (warm-tinted) / `.action-subgroup--selection` (accent-warm kicker), and `.toolbar-section--gated` (dashed accent border + faint accent fill) for the new WMS panel.
+
+### Added
+- [src/i18n/it.js](src/i18n/it.js), [src/i18n/en.js](src/i18n/en.js) new keys `section.catastoWms` / `section.catastoWms.kicker` / `action.group.global` / `action.group.selection` / `action.group.destructive`.
+
 ## [Unreleased] — Parcel info popover: native DOM render (drop iframe)
 
 ### Changed

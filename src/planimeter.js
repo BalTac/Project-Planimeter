@@ -3920,6 +3920,8 @@ export default class Planimeter {
         const isOfficial = this.state.catastoSource === 'official';
         this.applyCatastoWmsLayerSettings();
         this.layers.catastoFallback.setVisible(show && !isOfficial);
+        const wmsSection = document.getElementById('section-catasto-wms');
+        if (wmsSection) wmsSection.hidden = !(show && isOfficial);
     }
 
     // ── Locale/unit refresh ──────────────────────────────────────────────────────

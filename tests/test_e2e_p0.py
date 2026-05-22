@@ -204,7 +204,7 @@ class TestSettingsTab:
         page.wait_for_load_state("networkidle")
         page.click("#tab-settings")
         page.wait_for_timeout(300)
-        lang_select = page.locator("#settings-language")
+        lang_select = page.locator("#settings-unit-system")
         expect(lang_select).to_be_visible()
 
 

@@ -403,6 +403,48 @@ input[type="checkbox"] {
     gap: 10px;
 }
 
+.action-subgroup {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--stroke);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.action-subgroup + .action-subgroup {
+    margin-top: 8px;
+}
+
+.action-subgroup-label {
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+.action-subgroup--destructive {
+    border-color: rgba(255, 114, 98, 0.22);
+    background: rgba(255, 114, 98, 0.06);
+}
+
+.action-subgroup--destructive .action-subgroup-label {
+    color: #ffb8b0;
+}
+
+.action-subgroup--selection .action-subgroup-label {
+    color: var(--accent-warm);
+}
+
+.toolbar-section--gated {
+    border: 1px dashed rgba(115, 240, 191, 0.25);
+    border-radius: 14px;
+    padding: 10px 12px;
+    background: rgba(115, 240, 191, 0.04);
+}
+
 .action-button {
     padding: 10px 12px;
     text-align: center;

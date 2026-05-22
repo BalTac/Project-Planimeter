@@ -12,6 +12,13 @@
 ### UX — Toolbar redesign (mode | action | view)
 - [x] Step A: audit information architecture della toolbar, classificazione `mode | action | view` (vedi [wiki/toolbar-redesign.md](wiki/toolbar-redesign.md)).
 - [ ] Step B: cluster refactor — riorganizzare [planimeter.html](planimeter.html) + [styles.css](styles.css) in 3 zone (mode segmented top, action grid middle, view accordion bottom); ridurre `Strumenti` a 4 modi reali; promuovere snap a toggle esplicito; spostare matrice WMS sublayer da Settings a `view.catasto-wms` gated dal layer catasto attivo; spostare stats live in HUD bar separata; deduplicare lang switcher.
+  - [x] B-1: matrice WMS sublayer spostata in `#section-catasto-wms` gated; lang switcher de-duplicato (rimosso `#settings-language`); azioni splittate in 3 sub-grid (Generale / Sulla selezione / Distruttive).
+  - [ ] B-2: riclassificare modi `measure-straight` / `measure-polyline` come azioni globali.
+  - [ ] B-3: spostare stats live (`Riepilogo`) in HUD bar fuori dalla toolbar.
+  - [ ] B-4: promuovere snap a toggle esplicito (richiede preferenza + persistenza).
+  - [ ] B-5: aggiungere azione `dsl.load-domain` come entry point UI.
+  - [ ] B-6: cleanup Settings (collassare in 3 audience: Display, Detection, Cache).
+  - [ ] B-7: unificare i parameter `<select>` sotto un singolo pattern `.parameter-picker`.
 - [ ] Step C: QoL — command palette (`Ctrl+K`) sopra il registry `mode|action|view`; shortcuts overlay (`?`); azione `dsl.load-domain` come entry point UI.
 
 ### Parcel info — refactor popover (DONE)
