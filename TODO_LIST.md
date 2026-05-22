@@ -14,6 +14,7 @@
 - [ ] Step B: cluster refactor — riorganizzare [planimeter.html](planimeter.html) + [styles.css](styles.css) in 3 zone (mode segmented top, action grid middle, view accordion bottom); ridurre `Strumenti` a 4 modi reali; promuovere snap a toggle esplicito; spostare matrice WMS sublayer da Settings a `view.catasto-wms` gated dal layer catasto attivo; spostare stats live in HUD bar separata; deduplicare lang switcher.
   - [x] B-1: matrice WMS sublayer spostata in `#section-catasto-wms` gated; lang switcher de-duplicato (rimosso `#settings-language`); azioni splittate in 3 sub-grid (Generale / Sulla selezione / Distruttive).
   - [x] B-2: modi `measure-straight` / `measure-polyline` spostati dal segmented-control nella sub-grid Generale (action-button + `data-mode` invariato).
+  - [x] B-3: stats live (`Riepilogo`) spostate dalla toolbar a HUD bar `#stats-hud` overlay sulla mappa (top-right, pillole compatte); stessi ID, nessuna riconfigurazione JS.
   - [ ] B-3: spostare stats live (`Riepilogo`) in HUD bar fuori dalla toolbar.
   - [ ] B-4: promuovere snap a toggle esplicito (richiede preferenza + persistenza).
   - [ ] B-5: aggiungere azione `dsl.load-domain` come entry point UI.
