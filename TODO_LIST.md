@@ -21,6 +21,7 @@
   - [x] B-6: Settings collassate in 3 audience (Display / Detection / Cache); rimossa la sezione `Overlay`, `parcel-info` checkbox migrata in `Detection`, color picker pertinenze migrato in `Display`.
   - [x] B-7: tutti i `<select>` della toolbar unificati sotto la classe canonica `.parameter-picker` (variante `.parameter-picker--compact` per il lang switcher); rimossi `.layer-source-select` e `.compact-select`.
 - [x] Step C: QoL — command palette (`Ctrl+K`) sopra il registry `mode|action|view` (`src/ui/command-palette.js`); shortcuts overlay (`?`); entry point UI `dsl.load-domain` già coperto in B-5.
+- [x] Step D: Mosaico catastale — slider "Trasparenza globale" sempre visibile in cima alla sezione WMS che fa da master sui per-sottolayer; controlli per sottolayer collassati in un `<details>` aperto on demand. Sync bidirezionale: muovere il globale propaga a tutti gli individuali; valori divergenti mostrano `misto/mixed`.
 
 ### Persistenza & History — roadmap (DOPO il refactor toolbar)
 

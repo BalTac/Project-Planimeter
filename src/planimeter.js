@@ -1102,8 +1102,12 @@ export default class Planimeter {
             el.addEventListener('change', () => this.updateCatastoWmsLayersFromSettings());
         });
         this.elements.settingsWmsLayerOpacity?.forEach((el) => {
-            el.addEventListener('input', () => this.updateCatastoWmsLayerOpacityFromSettings());
+            el.addEventListener('input', () => {
+                this.updateCatastoWmsLayerOpacityFromSettings();
+                this.syncWmsGlobalOpacityFromIndividual();
+            });
         });
+        this.bindWmsGlobalOpacity();
     }
 
     // ── Feature style ────────────────────────────────────────────────────────────
@@ -4405,6 +4409,7 @@ export default class Planimeter {
                 if (valueEl) valueEl.textContent = `${Math.round(opacity * 100)}%`;
             });
         }
+        this.syncWmsGlobalOpacityFromIndividual?.();
 
         // Keep layer checkboxes synchronized with persisted group selections.
         this.applyLayerGroupSelection();
@@ -4566,6 +4571,41 @@ export default class Planimeter {
         this.applyCatastoWmsLayerSettings();
         this.syncPreferenceControls();
         this.persistPreferences();
+    }
+
+    bindWmsGlobalOpacity() {
+        const slider = document.getElementById('settings-wms-opacity-global');
+        const valueEl = document.getElementById('settings-wms-opacity-global-value');
+        if (!slider || !valueEl) return;
+        this.elements.settingsWmsGlobalOpacity = slider;
+        this.elements.settingsWmsGlobalOpacityValue = valueEl;
+        slider.addEventListener('input', () => {
+            const pct = Number(slider.value);
+            valueEl.textContent = `${pct}%`;
+            this.elements.settingsWmsLayerOpacity?.forEach((el) => {
+                el.value = String(pct);
+            });
+            this.updateCatastoWmsLayerOpacityFromSettings();
+        });
+        this.syncWmsGlobalOpacityFromIndividual();
+    }
+
+    syncWmsGlobalOpacityFromIndividual() {
+        const slider = this.elements.settingsWmsGlobalOpacity;
+        const valueEl = this.elements.settingsWmsGlobalOpacityValue;
+        if (!slider || !valueEl) return;
+        const values = (this.elements.settingsWmsLayerOpacity ?? [])
+            .map((el) => Number(el.value));
+        if (!values.length) return;
+        const allEqual = values.every((v) => v === values[0]);
+        if (allEqual) {
+            slider.value = String(values[0]);
+            valueEl.textContent = `${values[0]}%`;
+        } else {
+            const avg = Math.round(values.reduce((s, v) => s + v, 0) / values.length);
+            slider.value = String(avg);
+            valueEl.textContent = t('settings.wms.opacityMixed');
+        }
     }
 
     applyCatastoWmsLayerSettings() {

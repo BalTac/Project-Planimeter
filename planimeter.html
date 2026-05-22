@@ -182,7 +182,18 @@
                         <span class="section-kicker" data-i18n="section.catastoWms.kicker">WMS ufficiale</span>
                     </div>
                     <p class="section-help" data-i18n="settings.catastoWmsLayersHint">Scegli visibilita e trasparenza per ogni sottolayer catastale WMS. Almeno un layer deve restare attivo.</p>
-                    <div class="settings-grid wms-layer-settings">
+                    <div class="wms-global-control">
+                        <label class="settings-field settings-field-slider wms-layer-opacity wms-layer-opacity--global">
+                            <span data-i18n="settings.wms.opacityGlobal">Trasparenza globale</span>
+                            <input type="range" min="0" max="100" value="90" id="settings-wms-opacity-global">
+                            <small id="settings-wms-opacity-global-value">90%</small>
+                        </label>
+                    </div>
+                    <details class="wms-layer-details">
+                        <summary class="wms-layer-details__summary">
+                            <span data-i18n="settings.wms.perLayerToggle">Controlli per sottolayer</span>
+                        </summary>
+                        <div class="settings-grid wms-layer-settings">
                         <div class="wms-layer-row">
                             <label class="settings-check wms-layer-toggle">
                                 <input type="checkbox" id="settings-wms-part-parcels" data-wms-layer-part="parcels" checked>
@@ -271,7 +282,8 @@
                                 <small data-wms-layer-opacity-value="vestizioni">90%</small>
                             </label>
                         </div>
-                    </div>
+                        </div>
+                    </details>
                 </section>
 
                 <section class="toolbar-section" aria-labelledby="tools-title">
