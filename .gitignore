@@ -11,8 +11,6 @@ AGENTS.md
 logs/
 _tile_cache/
 *.db
-wiki/
-raw/
 .agents/
 .planimeter_request_quota.json
 .planimeter_state_store.json

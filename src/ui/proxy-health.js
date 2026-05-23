@@ -94,12 +94,14 @@ export class ProxyHealthMonitor {
             const used = Number(payload.used);
             const limit = Number(payload.limit);
             const remaining = Number(payload.remaining_estimate);
+            const cached = Number(payload.cached_total ?? 0);
             if (!Number.isFinite(used) || !Number.isFinite(limit) || !Number.isFinite(remaining)) return '';
 
             return t('quota.estimate', {
                 used: Math.max(0, Math.floor(used)),
                 limit: Math.max(1, Math.floor(limit)),
                 remaining: Math.max(0, Math.floor(remaining)),
+                cached: Math.max(0, Math.floor(cached)),
             });
         } catch {
             return '';

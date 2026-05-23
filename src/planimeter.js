@@ -148,13 +148,24 @@ export default class Planimeter {
             zIndex: 40,
             updateWhileAnimating: true,
             updateWhileInteracting: true,
-            style: (feature) => new OLStyle({
-                image: new CircleStyle({
-                    radius: feature.get('vertexSelected') ? 7 : 5,
-                    fill: new Fill({ color: feature.get('vertexSelected') ? '#0a84ff' : 'rgba(255,255,255,0.92)' }),
-                    stroke: new Stroke({ color: feature.get('vertexSelected') ? '#ffffff' : '#ff6b00', width: 2.5 }),
-                }),
-            }),
+            style: (feature) => {
+                if (feature.get('vertexGhost')) {
+                    return new OLStyle({
+                        image: new CircleStyle({
+                            radius: 4,
+                            fill: new Fill({ color: 'rgba(150,150,170,0.45)' }),
+                            stroke: new Stroke({ color: 'rgba(90,90,120,0.70)', width: 1.5 }),
+                        }),
+                    });
+                }
+                return new OLStyle({
+                    image: new CircleStyle({
+                        radius: feature.get('vertexSelected') ? 7 : 5,
+                        fill: new Fill({ color: feature.get('vertexSelected') ? '#0a84ff' : 'rgba(255,255,255,0.92)' }),
+                        stroke: new Stroke({ color: feature.get('vertexSelected') ? '#ffffff' : '#ff6b00', width: 2.5 }),
+                    }),
+                });
+            },
         });
         this.holeDraftSource = new VectorSource();
         this.holeDraftLayer = new VectorLayer({
@@ -1661,7 +1672,39 @@ export default class Planimeter {
     refreshEditVertexOverlay() {
         this.editVertexSource.clear();
 
-        if (this.state.mode !== 'edit' || !this.isPolygonFeature(this.state.selectedFeature)) {
+        if (this.state.mode !== 'edit' && this.state.mode !== 'draw') {
+            return;
+        }
+
+        const addGhostVerticesFromSources = (sources) => {
+            for (const source of sources) {
+                for (const otherFeature of source.getFeatures()) {
+                    if (!this.isPolygonFeature(otherFeature)) continue;
+                    const otherPolygonSets = this.getFeaturePolygonCoordinateSets(otherFeature);
+                    for (let pi = 0; pi < otherPolygonSets.length; pi += 1) {
+                        const rings = otherPolygonSets[pi] || [];
+                        for (let ri = 0; ri < rings.length; ri += 1) {
+                            const ring = rings[ri] || [];
+                            const limit = Math.max(0, ring.length - 1);
+                            for (let vi = 0; vi < limit; vi += 1) {
+                                const coord = ring[vi];
+                                if (!Array.isArray(coord) || coord.length < 2) continue;
+                                const ghostFeature = new Feature({ geometry: new PointGeom(coord) });
+                                ghostFeature.set('vertexGhost', true);
+                                this.editVertexSource.addFeature(ghostFeature);
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        if (this.state.mode === 'draw') {
+            addGhostVerticesFromSources([this.vectorSource, this.pertenenzaSource]);
+            return;
+        }
+
+        if (!this.isPolygonFeature(this.state.selectedFeature)) {
             return;
         }
 
@@ -1692,6 +1735,16 @@ export default class Planimeter {
                 }
             }
         }
+
+        // Ghost vertices: vertices of all other polygon features (non-selected)
+        const selectedSource = this.getSourceForFeature(feature);
+        const candidateSources = selectedSource === this.pertenenzaSource
+            ? [this.pertenenzaSource, this.vectorSource]
+            : [this.vectorSource, this.pertenenzaSource];
+        const ghostSources = candidateSources.map((source) => ({
+            getFeatures: () => source.getFeatures().filter((otherFeature) => otherFeature !== feature),
+        }));
+        addGhostVerticesFromSources(ghostSources);
     }
 
     getFeatureInspireLocalId(feature) {

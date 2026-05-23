@@ -203,7 +203,7 @@ export default {
     'proxy.awaitCatasto':   'Proxy monitoring paused — enable official Cadastral layer.',
     'proxy.awaitInit':      'Enable the official Cadastral layer to run the proxy health check.',
     'proxy.unreachable':    'WMS proxy unreachable.',
-    'quota.estimate':       'Estimated daily quota: {used}/{limit} (remaining ~{remaining})',
+    'quota.estimate':       'Estimated daily quota: {used}/{limit} (remaining ~{remaining}, cached {cached})',
 
     'settings.language':          'Language',
     'settings.units':             'Unit system',

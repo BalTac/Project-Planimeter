@@ -31,6 +31,12 @@ end user through the i18n system in `src/i18n/` (`it.js`, `en.js`, future locale
 user-visible text as i18n keys (`t('namespace.key')`) — never hard-code localized strings in
 component logic. Translations live in the locale files; default key fallback must be English.
 
-This applies to new code and to any text you author. When editing legacy Italian comments or
-identifiers in passing, you may opportunistically convert them to English if the change is in
-scope; do not perform large-scale renames as a side effect of unrelated work.
+This applies to new code and to any text you author. You may convert Italian identifiers or
+comments to English only within the file or function you are already editing for the primary task;
+do not perform large-scale renames as a side effect of unrelated work.
+
+## Operating system conventions
+
+**You are on a Windows system using PowerShell.** Always write file paths with forward slashes
+(`/`) as separators in source code, documentation, terminal commands, and tool arguments.
+For example, write `src/io/history.js` (never `src\io\history.js`).

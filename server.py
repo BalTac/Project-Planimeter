@@ -153,7 +153,13 @@ DAILY_REQUEST_QUOTA_ESTIMATE = 3000
 
 
 class DailyRequestQuotaCounter:
-    """Local daily upstream-request counter with optional JSON persistence."""
+    """Local daily upstream-request counter with optional JSON persistence.
+
+    Schema (v2):
+      total         — upstream requests made (budget-relevant)
+      cached_total  — requests served from local tile cache
+      by_request    — per-type breakdown: {"GETMAP": {"upstream": N, "cached": N}, ...}
+    """
 
     def __init__(self, store_path: pathlib.Path, daily_limit: int = DAILY_REQUEST_QUOTA_ESTIMATE) -> None:
         self._store_path = store_path
@@ -162,10 +168,11 @@ class DailyRequestQuotaCounter:
         self._state = {
             "day_key": self._today_key(),
             "total": 0,
+            "cached_total": 0,
             "by_request": {
-                "GETMAP": 0,
-                "GETFEATUREINFO": 0,
-                "OTHER": 0,
+                "GETMAP": {"upstream": 0, "cached": 0},
+                "GETFEATUREINFO": {"upstream": 0, "cached": 0},
+                "OTHER": {"upstream": 0, "cached": 0},
             },
         }
         self._load()
@@ -174,6 +181,10 @@ class DailyRequestQuotaCounter:
     def _today_key() -> str:
         return time.strftime("%Y-%m-%d", time.localtime())
 
+    @staticmethod
+    def _empty_request_entry() -> dict:
+        return {"upstream": 0, "cached": 0}
+
     def _ensure_current_day(self) -> None:
         today = self._today_key()
         if self._state.get("day_key") == today:
@@ -181,10 +192,11 @@ class DailyRequestQuotaCounter:
         self._state = {
             "day_key": today,
             "total": 0,
+            "cached_total": 0,
             "by_request": {
-                "GETMAP": 0,
-                "GETFEATUREINFO": 0,
-                "OTHER": 0,
+                "GETMAP": self._empty_request_entry(),
+                "GETFEATUREINFO": self._empty_request_entry(),
+                "OTHER": self._empty_request_entry(),
             },
         }
 
@@ -197,13 +209,21 @@ class DailyRequestQuotaCounter:
                 return
             self._state["day_key"] = str(payload.get("day_key") or self._state["day_key"])
             self._state["total"] = max(0, int(payload.get("total") or 0))
+            self._state["cached_total"] = max(0, int(payload.get("cached_total") or 0))
             raw_by_request = payload.get("by_request")
             by_request = raw_by_request if isinstance(raw_by_request, dict) else {}
             for key in ("GETMAP", "GETFEATUREINFO", "OTHER"):
                 raw_val = by_request.get(key, 0)
-                if not isinstance(raw_val, (int, float, str)):
-                    raw_val = 0
-                self._state["by_request"][key] = max(0, int(raw_val or 0))
+                if isinstance(raw_val, dict):
+                    # v2 format: {"upstream": N, "cached": N}
+                    entry = {
+                        "upstream": max(0, int(raw_val.get("upstream") or 0)),
+                        "cached": max(0, int(raw_val.get("cached") or 0)),
+                    }
+                else:
+                    # v1 flat format: treat existing count as upstream
+                    entry = {"upstream": max(0, int(raw_val or 0)), "cached": 0}
+                self._state["by_request"][key] = entry
             self._ensure_current_day()
         except Exception:
             # Keep runtime robust even if persisted state is corrupted.
@@ -218,6 +238,7 @@ class DailyRequestQuotaCounter:
             return
 
     def increment_from_url(self, url: str) -> None:
+        """Count one upstream (non-cached) request, inferred from the request URL."""
         request_name = "OTHER"
         try:
             parsed = urllib.parse.urlparse(url)
@@ -232,7 +253,29 @@ class DailyRequestQuotaCounter:
             self._ensure_current_day()
             self._state["total"] = int(self._state.get("total") or 0) + 1
             by_request = self._state.get("by_request") or {}
-            by_request[request_name] = int(by_request.get(request_name) or 0) + 1
+            entry = by_request.get(request_name) or self._empty_request_entry()
+            if not isinstance(entry, dict):
+                entry = {"upstream": max(0, int(entry or 0)), "cached": 0}
+            entry["upstream"] = int(entry.get("upstream") or 0) + 1
+            by_request[request_name] = entry
+            self._state["by_request"] = by_request
+            self._save()
+
+    def increment_cached_request(self, request_type: str) -> None:
+        """Count one request served from the local tile cache (no upstream fetch made)."""
+        request_name = request_type.strip().upper() if request_type else "OTHER"
+        if request_name not in {"GETMAP", "GETFEATUREINFO"}:
+            request_name = "OTHER"
+
+        with self._lock:
+            self._ensure_current_day()
+            self._state["cached_total"] = int(self._state.get("cached_total") or 0) + 1
+            by_request = self._state.get("by_request") or {}
+            entry = by_request.get(request_name) or self._empty_request_entry()
+            if not isinstance(entry, dict):
+                entry = {"upstream": max(0, int(entry or 0)), "cached": 0}
+            entry["cached"] = int(entry.get("cached") or 0) + 1
+            by_request[request_name] = entry
             self._state["by_request"] = by_request
             self._save()
 
@@ -240,11 +283,13 @@ class DailyRequestQuotaCounter:
         with self._lock:
             self._ensure_current_day()
             used = int(self._state.get("total") or 0)
+            cached = int(self._state.get("cached_total") or 0)
             remaining = max(0, self._daily_limit - used)
             return {
                 "day": self._state.get("day_key"),
                 "limit": self._daily_limit,
                 "used": used,
+                "cached_total": cached,
                 "remaining_estimate": remaining,
                 "ratio": round((used / self._daily_limit), 6),
                 "by_request": dict(self._state.get("by_request") or {}),
@@ -2702,6 +2747,7 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             if cached:
                 content_type, data = cached
                 _log.debug("wms-tile HIT layers=%s %db", layers, len(data))
+                _daily_quota_counter.increment_cached_request(request_type)
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(data)))

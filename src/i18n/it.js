@@ -204,7 +204,7 @@ export default {
     'proxy.awaitCatasto':   'Monitoraggio proxy in attesa: abilita Catasto ufficiale.',
     'proxy.awaitInit':      'Attiva il layer Catasto ufficiale per eseguire il check proxy.',
     'proxy.unreachable':    'Proxy WMS non raggiungibile.',
-    'quota.estimate':       'Quota stimata oggi: {used}/{limit} (residue ~{remaining})',
+    'quota.estimate':       'Quota stimata oggi: {used}/{limit} (residue ~{remaining}, cache {cached})',
 
     'settings.language':          'Lingua',
     'settings.units':             'Sistema di misura',
