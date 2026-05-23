@@ -476,6 +476,15 @@
                             <input type="checkbox" id="settings-parcel-info-enabled">
                             <span data-i18n="settings.parcelInfoEnabled">Interroga particelle dal menu contestuale in Navigate (solo catasto ufficiale).</span>
                         </label>
+                        <label class="settings-check">
+                            <input type="checkbox" id="settings-m3-refine-use-trace" checked>
+                            <span data-i18n="settings.m3.refineUseTrace">Refine M3: usa algoritmo Trace (sperimentale, consigliato)</span>
+                        </label>
+                        <label class="settings-check">
+                            <input type="checkbox" id="settings-m3-refine-corner-snap" checked>
+                            <span data-i18n="settings.m3.refineCornerSnap">Refine M3 classico: abilita corner-snap (line-fit)</span>
+                            <small data-i18n="settings.m3.refineCornerSnap.hint">Usato solo quando Trace e disattivato.</small>
+                        </label>
                         <label class="settings-field">
                             <span data-i18n="settings.m3.detectStartRadius">Detect M3: raggio iniziale</span>
                             <input type="number" id="settings-m3-detect-start-radius" min="1" max="5" step="1" value="1">

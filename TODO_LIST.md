@@ -174,6 +174,7 @@ locale è baseline-only.
 - [x] Eseguire micro-step fine tuning: continuity base `balanced` a 0.035 e clamp distanza `balanced` a 0.40 m (senza toccare probeMeters).
 - [x] Introdurre endpoint `/parcel-geometry-m3-trace` per ottenere il bordo catastale pixel-perfect via `findContours` sulla `ownership_mask` + RDP a tolleranza in metri (default 0.35 m). Validato su particelle 21 (+1.13 %) e 402 (-1.10 %).
 - [x] Migrare il frontend (`refineParcelM3ForFeature` + tab Settings) da `/parcel-geometry-m3-refine` a `/parcel-geometry-m3-trace`. Rimossi controlli `m3RefineQuality` e `m3RefineMaxRequests`, esposto unico setting `m3TraceToleranceM` (default 0.35 m, range 0.05-2.5 m). Endpoint legacy resta lato server per compatibilita test/tooling.
+- [x] Rendere opzionale il nuovo comportamento refine in tab Settings: toggle `m3RefineUseTrace` (default ON) per usare `/parcel-geometry-m3-trace`, con fallback manuale a refine classico `/parcel-geometry-m3-refine` e toggle `m3RefineCornerSnap` persistente per il path classico.
 
 ### P1 — Interpretation layer backend
 - [x] Estendere [server.py](server.py) con `OUTPUT=json` per `GetFeatureInfo`, senza rompere il path raw HTML/XML corrente.

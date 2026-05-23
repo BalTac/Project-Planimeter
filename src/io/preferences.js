@@ -25,6 +25,8 @@ export const DEFAULT_PREFERENCES = {
     m3DetectStartRadius: 1,
     m3DetectMaxRadius: 5,
     m3TraceToleranceM: 0.35,
+    m3RefineUseTrace: true,
+    m3RefineCornerSnap: true,
     summaryColumns: ['feature', 'area', 'percentSubject', 'crop'],
     historyPopoverOpen: false,
     historyPopoverPosition: null,

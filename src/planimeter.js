@@ -111,6 +111,8 @@ export default class Planimeter {
             this.state.m3DetectMaxRadius = this.state.m3DetectStartRadius;
         }
         this.state.m3TraceToleranceM = this.sanitizeM3TraceToleranceM(preferences.m3TraceToleranceM);
+        this.state.m3RefineUseTrace = preferences.m3RefineUseTrace !== false;
+        this.state.m3RefineCornerSnap = preferences.m3RefineCornerSnap !== false;
         this.state.summaryColumns = this.sanitizeSummaryColumns(preferences.summaryColumns);
         this.state.historyPopoverOpen = Boolean(preferences.historyPopoverOpen);
         this.state.historyPopoverPosition = (preferences.historyPopoverPosition
@@ -498,6 +500,8 @@ export default class Planimeter {
             settingsM3DetectStartRadius: document.getElementById('settings-m3-detect-start-radius'),
             settingsM3DetectMaxRadius: document.getElementById('settings-m3-detect-max-radius'),
             settingsM3TraceToleranceM: document.getElementById('settings-m3-trace-tolerance-m'),
+            settingsM3RefineUseTrace: document.getElementById('settings-m3-refine-use-trace'),
+            settingsM3RefineCornerSnap: document.getElementById('settings-m3-refine-corner-snap'),
             settingsParcelInfoEnabled: document.getElementById('settings-parcel-info-enabled'),
             settingsPertenenzeColor:   document.getElementById('settings-pertenenze-color'),
             settingsWmsLayerParts:     [...document.querySelectorAll('[data-wms-layer-part]')],
@@ -1156,6 +1160,18 @@ export default class Planimeter {
 
         this.elements.settingsM3TraceToleranceM?.addEventListener('change', (ev) => {
             this.state.m3TraceToleranceM = this.sanitizeM3TraceToleranceM(ev.target.value);
+            this.syncPreferenceControls();
+            this.persistPreferences();
+        });
+
+        this.elements.settingsM3RefineUseTrace?.addEventListener('change', (ev) => {
+            this.state.m3RefineUseTrace = ev.target.checked;
+            this.syncPreferenceControls();
+            this.persistPreferences();
+        });
+
+        this.elements.settingsM3RefineCornerSnap?.addEventListener('change', (ev) => {
+            this.state.m3RefineCornerSnap = ev.target.checked;
             this.syncPreferenceControls();
             this.persistPreferences();
         });
@@ -3601,11 +3617,13 @@ export default class Planimeter {
                     this.refreshEditVertexOverlay();
                 }
 
+                const items = [
+                    { key: 'ctx.vertexDeleteSelected', action: 'vertexDeleteSelected' },
+                ];
+                items.push({ key: 'ctx.vertexDeleteAll', action: 'vertexDeleteAll' });
+
                 return {
-                    items: [
-                        { key: 'ctx.vertexDeleteSelected', action: 'vertexDeleteSelected' },
-                        { key: 'ctx.vertexDeleteAll', action: 'vertexDeleteAll' },
-                    ],
+                    items,
                     actions: {
                         vertexDeleteSelected: () => this.requestDeleteSelectedVertex(),
                         vertexDeleteAll: () => this.promptDeleteAllSelectedVertices(),
@@ -4634,6 +4652,14 @@ export default class Planimeter {
         }
         if (this.elements.settingsM3TraceToleranceM) {
             this.elements.settingsM3TraceToleranceM.value = String(this.state.m3TraceToleranceM);
+            this.elements.settingsM3TraceToleranceM.disabled = this.state.m3RefineUseTrace === false;
+        }
+        if (this.elements.settingsM3RefineUseTrace) {
+            this.elements.settingsM3RefineUseTrace.checked = this.state.m3RefineUseTrace !== false;
+        }
+        if (this.elements.settingsM3RefineCornerSnap) {
+            this.elements.settingsM3RefineCornerSnap.checked = this.state.m3RefineCornerSnap !== false;
+            this.elements.settingsM3RefineCornerSnap.disabled = this.state.m3RefineUseTrace !== false;
         }
         if (this.elements.settingsParcelInfoEnabled) {
             this.elements.settingsParcelInfoEnabled.checked = this.state.parcelInfoEnabled;
@@ -4687,6 +4713,8 @@ export default class Planimeter {
             m3DetectStartRadius: this.state.m3DetectStartRadius,
             m3DetectMaxRadius: this.state.m3DetectMaxRadius,
             m3TraceToleranceM: this.state.m3TraceToleranceM,
+            m3RefineUseTrace: this.state.m3RefineUseTrace !== false,
+            m3RefineCornerSnap: this.state.m3RefineCornerSnap !== false,
             summaryColumns: Array.isArray(this.state.summaryColumns) ? [...this.state.summaryColumns] : undefined,
             historyPopoverOpen: this.state.historyPopoverOpen === true,
             historyPopoverPosition: this.state.historyPopoverPosition || null,
@@ -5560,15 +5588,27 @@ export default class Planimeter {
         this.setToolbarMessage(t('m3.refine.running'));
 
         try {
-            const response = await fetch('/parcel-geometry-m3-trace', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+            const useTrace = this.state.m3RefineUseTrace !== false;
+            const endpoint = useTrace ? '/parcel-geometry-m3-trace' : '/parcel-geometry-m3-refine';
+            const payload = useTrace
+                ? {
                     lat,
                     lon,
                     coarseRing,
                     toleranceM: this.state.m3TraceToleranceM,
-                }),
+                }
+                : {
+                    lat,
+                    lon,
+                    coarseRing,
+                    quality: 'precise',
+                    cornerSnap: this.state.m3RefineCornerSnap !== false,
+                };
+
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
             });
 
             const result = await response.json().catch(() => ({}));
