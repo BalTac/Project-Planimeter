@@ -865,6 +865,13 @@ export default class Planimeter {
 
         this.map.on('singleclick', (event) => {
             if (this.state.mode !== 'edit') return;
+            if (this.holeDrawInteraction?.getActive?.()) return;
+
+            const candidates = this.getVisibleFeatureCandidatesAtPixel(event.pixel);
+            if (!candidates.length) {
+                this.setMode('navigate');
+                return;
+            }
 
             // In overlap scenarios, keep vertex editing stable on current feature:
             // if click is on a vertex of selected feature, select vertex first
