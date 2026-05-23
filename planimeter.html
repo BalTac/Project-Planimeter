@@ -19,7 +19,8 @@
     <script type="importmap">
     {
         "imports": {
-            "ol/": "https://esm.sh/ol@8.2.0/"
+            "ol/": "https://esm.sh/ol@8.2.0/",
+            "lz-string": "https://esm.sh/lz-string@1.5.0"
         }
     }
     </script>
@@ -337,6 +338,7 @@
                     <div class="action-subgroup action-subgroup--destructive">
                         <span class="action-subgroup-label" data-i18n="action.group.destructive">Distruttive</span>
                         <div class="action-grid">
+                            <button type="button" id="btn-history-toggle" class="action-button icon-button" data-i18n="tool.history" data-i18n-title="hint.tool.history" data-icon="🕒" aria-pressed="false">Cronologia</button>
                             <button type="button" id="btn-clear" class="action-button action-button-danger action-button-wide icon-button" data-i18n="action.clearAll" data-i18n-title="hint.action.clearAll" data-icon="🧹">Svuota tutte le aree</button>
                         </div>
                     </div>
@@ -529,6 +531,35 @@
             <p id="parcel-info-popover-status" class="section-help info-card-status" data-i18n="parcelInfo.clickHint">In modalità Navigate, usa il menu contestuale della mappa su una particella per leggerne i dati.</p>
             <div id="parcel-info-popover-body" class="parcel-info-popover__body" hidden></div>
         </section>
+
+        <section id="history-popover" class="history-popover" hidden aria-label="Cronologia modifiche">
+            <header id="history-popover-header" class="history-popover__header">
+                <strong data-i18n="history.title">🕒 Cronologia</strong>
+                <div class="history-popover__actions">
+                    <button type="button" id="history-undo" class="history-popover__mini" data-i18n-title="action.history.undo" aria-label="Annulla">⤺</button>
+                    <button type="button" id="history-redo" class="history-popover__mini" data-i18n-title="action.history.redo" aria-label="Ripeti">⤻</button>
+                    <button type="button" id="history-snapshot" class="history-popover__mini" data-i18n-title="action.history.snapshot" aria-label="Snapshot manuale">📸</button>
+                    <button type="button" id="history-manage" class="history-popover__mini" data-i18n-title="history.manage" aria-label="Gestisci snapshot">⋯</button>
+                    <button type="button" id="history-close" class="history-popover__close" aria-label="Chiudi">X</button>
+                </div>
+            </header>
+            <p id="history-popover-status" class="history-popover__status" data-i18n="history.empty">Nessuna voce ancora registrata.</p>
+            <ol id="history-popover-list" class="history-popover__list" hidden></ol>
+        </section>
+
+        <dialog id="history-manage-dialog" class="history-manage-dialog">
+            <form method="dialog" class="history-manage-dialog__form">
+                <header class="history-manage-dialog__header">
+                    <strong data-i18n="history.manage.title">Gestisci cronologia</strong>
+                    <button type="button" id="history-manage-close" class="history-manage-dialog__close" aria-label="Chiudi">X</button>
+                </header>
+                <p id="history-manage-summary" class="history-manage-dialog__summary"></p>
+                <ol id="history-manage-list" class="history-manage-dialog__list"></ol>
+                <footer class="history-manage-dialog__footer">
+                    <button type="submit" class="action-button" value="close" data-i18n="common.close">Chiudi</button>
+                </footer>
+            </form>
+        </dialog>
 
         <section id="m3-refine-report" class="m3-refine-report" hidden aria-live="polite">
             <header class="m3-refine-report__header">

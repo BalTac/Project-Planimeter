@@ -26,6 +26,8 @@ export const DEFAULT_PREFERENCES = {
     m3DetectMaxRadius: 5,
     m3TraceToleranceM: 0.35,
     summaryColumns: ['feature', 'area', 'percentSubject', 'crop'],
+    historyPopoverOpen: false,
+    historyPopoverPosition: null,
 };
 
 export function loadPreferences() {

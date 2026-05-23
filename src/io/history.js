@@ -29,6 +29,7 @@
  */
 
 import GeoJSON from 'ol/format/GeoJSON.js';
+import LZString from 'lz-string';
 import {
     HISTORY_AUTO_RETENTION,
     HISTORY_COALESCE_MS,
@@ -39,6 +40,17 @@ import {
 } from '../core/constants.js';
 
 const geoJsonFormat = new GeoJSON();
+
+// ── Pub/sub ─────────────────────────────────────────────────────────────────
+// Modules subscribe via HistoryEngine.subscribe(fn) to react to any mutation
+// (UI popover refresh, backend mirror sync). Fired after the in-memory store
+// is persisted to localStorage.
+const _listeners = new Set();
+function _emit(reason) {
+    for (const fn of _listeners) {
+        try { fn(reason); } catch (err) { console.warn('History listener failed', err); }
+    }
+}
 
 function nowIso() {
     return new Date().toISOString();
@@ -102,6 +114,47 @@ function serializeFeatures(vectorSource, pertenenzaSource) {
         featureProjection: 'EPSG:3857',
         decimals: 6,
     });
+}
+
+/**
+ * Compress a FeatureCollection to UTF-16 string (efficient localStorage
+ * footprint). Returns null if compression fails — caller falls back to
+ * embedding the raw object.
+ */
+function compressFeatures(fc) {
+    try {
+        const json = JSON.stringify(fc);
+        const z = LZString.compressToUTF16(json);
+        return z || null;
+    } catch (err) {
+        console.warn('History: compression failed.', err);
+        return null;
+    }
+}
+
+function decompressFeatures(z) {
+    try {
+        const json = LZString.decompressFromUTF16(z);
+        if (!json) return null;
+        return JSON.parse(json);
+    } catch (err) {
+        console.warn('History: decompression failed.', err);
+        return null;
+    }
+}
+
+/** Read either the compressed `featuresZ` or the legacy raw `features`. */
+function readEntryFeatures(entry) {
+    if (entry?.featuresZ) {
+        return decompressFeatures(entry.featuresZ)
+            || { type: 'FeatureCollection', features: [] };
+    }
+    return entry?.features ?? { type: 'FeatureCollection', features: [] };
+}
+
+function makeEntryPayload(fc) {
+    const z = compressFeatures(fc);
+    return z ? { featuresZ: z } : { features: fc };
 }
 
 function summarizeFeatureCollection(fc) {
@@ -168,6 +221,13 @@ function enforceRetention(bucket, history) {
  * mutate the supplied OL sources directly when restoring.
  */
 export const HistoryEngine = {
+    /** Subscribe to mutations. Returns an unsubscribe function. */
+    subscribe(fn) {
+        if (typeof fn !== 'function') return () => {};
+        _listeners.add(fn);
+        return () => _listeners.delete(fn);
+    },
+
     /**
      * Take an initial baseline snapshot for the campaign if its bucket is
      * empty. Idempotent: subsequent calls are no-ops once a baseline exists.
@@ -176,18 +236,21 @@ export const HistoryEngine = {
         const history = loadHistory();
         const bucket = ensureCampaignBucket(history, state.activeCampaignId);
         if (bucket.entries.length === 0) {
-            const features = serializeFeatures(vectorSource, pertenenzaSource);
+            const fc = serializeFeatures(vectorSource, pertenenzaSource);
             bucket.entries.push({
                 id: makeId(),
                 ts: nowIso(),
                 kind: 'auto',
                 label: 'history.entry.auto.baseline',
                 tags: [],
-                summary: summarizeFeatureCollection(features),
-                features,
+                summary: summarizeFeatureCollection(fc),
+                ...makeEntryPayload(fc),
             });
             bucket.cursor = 0;
             saveHistory(history);
+            _emit('bootstrap');
+        } else {
+            _emit('bootstrap');
         }
     },
 
@@ -205,7 +268,7 @@ export const HistoryEngine = {
     record({ state, vectorSource, pertenenzaSource, kind = 'auto', label = '', tags = [] }) {
         const history = loadHistory();
         const bucket = ensureCampaignBucket(history, state.activeCampaignId);
-        const features = serializeFeatures(vectorSource, pertenenzaSource);
+        const fc = serializeFeatures(vectorSource, pertenenzaSource);
 
         // Truncate any "future" entries (Photoshop semantics).
         if (bucket.cursor >= 0 && bucket.cursor < bucket.entries.length - 1) {
@@ -214,8 +277,9 @@ export const HistoryEngine = {
 
         const current = bucket.entries[bucket.cursor];
 
-        // Skip identical snapshots.
-        if (current && shapesEqual(current.features, features)) {
+        // Skip identical snapshots. Compare against the decoded current state
+        // so compressed and raw payloads behave consistently.
+        if (current && shapesEqual(readEntryFeatures(current), fc)) {
             return { recorded: false, coalesced: false };
         }
 
@@ -224,10 +288,13 @@ export const HistoryEngine = {
             const ageMs = Date.now() - Date.parse(current.ts || 0);
             if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= HISTORY_COALESCE_MS) {
                 current.ts = nowIso();
-                current.summary = summarizeFeatureCollection(features);
-                current.features = features;
+                current.summary = summarizeFeatureCollection(fc);
+                delete current.features;
+                delete current.featuresZ;
+                Object.assign(current, makeEntryPayload(fc));
                 enforceRetention(bucket, history);
                 saveHistory(history);
+                _emit('coalesce');
                 return { recorded: true, coalesced: true, entryId: current.id };
             }
         }
@@ -238,13 +305,14 @@ export const HistoryEngine = {
             kind,
             label,
             tags: Array.isArray(tags) ? tags.slice(0, 16).map(String) : [],
-            summary: summarizeFeatureCollection(features),
-            features,
+            summary: summarizeFeatureCollection(fc),
+            ...makeEntryPayload(fc),
         };
         bucket.entries.push(entry);
         bucket.cursor = bucket.entries.length - 1;
         enforceRetention(bucket, history);
         saveHistory(history);
+        _emit('record');
         return { recorded: true, coalesced: false, entryId: entry.id };
     },
 
@@ -268,6 +336,7 @@ export const HistoryEngine = {
         const entry = bucket.entries[bucket.cursor];
         applyEntry(entry, state, vectorSource, pertenenzaSource);
         saveHistory(history);
+        _emit('undo');
         return { ok: true, entry };
     },
 
@@ -281,7 +350,72 @@ export const HistoryEngine = {
         const entry = bucket.entries[bucket.cursor];
         applyEntry(entry, state, vectorSource, pertenenzaSource);
         saveHistory(history);
+        _emit('redo');
         return { ok: true, entry };
+    },
+
+    /**
+     * Restore a specific entry by id, regardless of its position. Cursor is
+     * moved to that entry; redo/undo stack remains intact (future entries
+     * past the cursor stay reachable via Ctrl+Y until a new record arrives).
+     */
+    restoreById(entryId, state, vectorSource, pertenenzaSource) {
+        const history = loadHistory();
+        const bucket = ensureCampaignBucket(history, state.activeCampaignId);
+        const idx = bucket.entries.findIndex((e) => e.id === entryId);
+        if (idx < 0) return { ok: false, reason: 'notFound' };
+        bucket.cursor = idx;
+        applyEntry(bucket.entries[idx], state, vectorSource, pertenenzaSource);
+        saveHistory(history);
+        _emit('restoreById');
+        return { ok: true, entry: bucket.entries[idx] };
+    },
+
+    /** Rename a single entry (manual snapshots — but allowed on any). */
+    renameEntry(entryId, newLabel, state) {
+        const history = loadHistory();
+        const bucket = ensureCampaignBucket(history, state.activeCampaignId);
+        const entry = bucket.entries.find((e) => e.id === entryId);
+        if (!entry) return { ok: false, reason: 'notFound' };
+        entry.label = String(newLabel || '').slice(0, 200);
+        saveHistory(history);
+        _emit('rename');
+        return { ok: true };
+    },
+
+    /**
+     * Delete a single entry. Cursor is adjusted; the baseline (index 0) is
+     * protected so undo always has somewhere to land.
+     */
+    deleteEntry(entryId, state) {
+        const history = loadHistory();
+        const bucket = ensureCampaignBucket(history, state.activeCampaignId);
+        const idx = bucket.entries.findIndex((e) => e.id === entryId);
+        if (idx < 0) return { ok: false, reason: 'notFound' };
+        if (idx === 0 && bucket.entries.length > 1) {
+            return { ok: false, reason: 'baselineProtected' };
+        }
+        bucket.entries.splice(idx, 1);
+        if (idx < bucket.cursor) bucket.cursor -= 1;
+        if (bucket.cursor >= bucket.entries.length) {
+            bucket.cursor = bucket.entries.length - 1;
+        }
+        saveHistory(history);
+        _emit('delete');
+        return { ok: true };
+    },
+
+    /** Export a single entry as a stand-alone GeoJSON FeatureCollection. */
+    exportEntry(entryId, state) {
+        const history = loadHistory();
+        const bucket = ensureCampaignBucket(history, state.activeCampaignId);
+        const entry = bucket.entries.find((e) => e.id === entryId);
+        if (!entry) return null;
+        return {
+            entry: { id: entry.id, ts: entry.ts, kind: entry.kind, label: entry.label,
+                tags: [...(entry.tags || [])], summary: { ...(entry.summary || {}) } },
+            featureCollection: readEntryFeatures(entry),
+        };
     },
 
     /**
@@ -296,6 +430,16 @@ export const HistoryEngine = {
             tags: [...(e.tags || [])], summary: { ...(e.summary || {}) },
         })) };
     },
+
+    /** Raw store accessor for sync layers. Treat as read-only. */
+    _dumpRaw() { return loadHistory(); },
+    /** Replace the entire store; used by mirror restore. */
+    _replaceRaw(store) {
+        if (!store || store.version !== HISTORY_LOCAL_STORAGE_SCHEMA_VERSION) return false;
+        saveHistory(store);
+        _emit('replace');
+        return true;
+    },
 };
 
 /**
@@ -304,7 +448,7 @@ export const HistoryEngine = {
  * `overlayLayer` routing stay consistent.
  */
 function applyEntry(entry, state, vectorSource, pertenenzaSource) {
-    const fc = entry?.features ?? { type: 'FeatureCollection', features: [] };
+    const fc = readEntryFeatures(entry);
     const restored = geoJsonFormat
         .readFeatures(fc, {
             dataProjection: 'EPSG:4326',

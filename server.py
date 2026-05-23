@@ -255,6 +255,8 @@ class DailyRequestQuotaCounter:
 _daily_quota_counter = DailyRequestQuotaCounter(pathlib.Path(".planimeter_request_quota.json"))
 _local_state_store_path = pathlib.Path(".planimeter_state_store.json")
 _local_state_store_lock = threading.Lock()
+_local_history_store_path = pathlib.Path(".planimeter_history_store.json")
+_local_history_store_lock = threading.Lock()
 
 
 TILE_CACHE_TTL_DAYS_DEFAULT = 30
@@ -420,7 +422,8 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             or self.path.startswith("/cache-clear") or self.path.startswith("/cache-config")
             or self.path.startswith("/export-geotiff") or self.path.startswith("/export-pgw")
             or self.path.startswith("/export-bundle") or self.path.startswith("/parcel-at-point")
-            or self.path.startswith("/local-state-load") or self.path.startswith("/local-state-save")):
+            or self.path.startswith("/local-state-load") or self.path.startswith("/local-state-save")
+            or self.path.startswith("/local-history-load") or self.path.startswith("/local-history-save")):
             self.send_response(HTTPStatus.NO_CONTENT)
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -455,6 +458,9 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         if parsed.path in {"/local-state-load", "/local-state-load/"}:
             self.handle_local_state_load()
             return
+        if parsed.path in {"/local-history-load", "/local-history-load/"}:
+            self.handle_local_history_load()
+            return
         super().do_GET()
 
     def do_POST(self) -> None:
@@ -467,6 +473,9 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path in {"/local-state-save", "/local-state-save/"}:
             self.handle_local_state_save()
+            return
+        if parsed.path in {"/local-history-save", "/local-history-save/"}:
+            self.handle_local_history_save()
             return
         if parsed.path in {"/export-geotiff", "/export-geotiff/"}:
             self.handle_export_geotiff()
@@ -2900,6 +2909,54 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             tmp_path.write_text(serialized, encoding="utf-8")
             tmp_path.replace(_local_state_store_path)
 
+        self.send_json(HTTPStatus.OK, {"ok": True, "savedAt": store.get("savedAt")})
+
+    # ------------------------------------------------------------------
+    # History mirror (P3 slice B)
+    #
+    # Stores the undo/redo history JSON on disk so users can recover after a
+    # browser data wipe / different profile. Same conservative pattern as
+    # the state mirror: GET returns {ok, store} or {ok, store: null}; POST
+    # accepts {store: {...}} and writes atomically. The history payload may
+    # be much larger than the state payload because it embeds compressed
+    # snapshots, so we lift the cap to 50 MB.
+    # ------------------------------------------------------------------
+
+    def handle_local_history_load(self) -> None:
+        with _local_history_store_lock:
+            if not _local_history_store_path.exists():
+                self.send_json(HTTPStatus.OK, {"ok": True, "store": None})
+                return
+            try:
+                payload = json.loads(_local_history_store_path.read_text(encoding="utf-8"))
+            except Exception:
+                self.send_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"ok": False, "message": "History locale non leggibile."},
+                )
+                return
+        if not isinstance(payload, dict):
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "History locale non valida."})
+            return
+        self.send_json(HTTPStatus.OK, {"ok": True, "store": payload})
+
+    def handle_local_history_save(self) -> None:
+        payload = self._read_json_payload()
+        if payload is None:
+            return
+        store = payload.get("store")
+        if not isinstance(store, dict):
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "store non valido."})
+            return
+        serialized = json.dumps(store, ensure_ascii=False)
+        if len(serialized.encode("utf-8")) > 50 * 1024 * 1024:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "store troppo grande."})
+            return
+        with _local_history_store_lock:
+            _local_history_store_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = _local_history_store_path.with_suffix(".tmp")
+            tmp_path.write_text(serialized, encoding="utf-8")
+            tmp_path.replace(_local_history_store_path)
         self.send_json(HTTPStatus.OK, {"ok": True, "savedAt": store.get("savedAt")})
 
     def _read_json_payload(self) -> dict[str, object] | None:

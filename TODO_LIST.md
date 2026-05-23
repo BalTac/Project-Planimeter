@@ -99,7 +99,7 @@ Modello dati: `localStorage` chiave `planimeter.history.v1` + mirror backend com
 }
 ```
 
-- [ ] Snapshot **completo** per voce (no delta) compresso con lz-string (~70-80% di riduzione).
+- [x] Snapshot **completo** per voce (no delta) compresso con lz-string (~70-80% di riduzione). _(Slice B: `LZString.compressToUTF16` su feature collection; backward-compat read da legacy `entry.features`.)_
 - [x] `cursor` per undo/redo deterministico (semantica Photoshop: modifica dopo undo tronca il
   futuro a `cursor+1`).
 - [x] Coalescing: snapshot auto consecutivi dello stesso `kind` entro 2s vengono fusi.
@@ -110,17 +110,17 @@ Modello dati: `localStorage` chiave `planimeter.history.v1` + mirror backend com
   `modifyend`, `translateend`, import bulk (1 voce per batch). **Forzato silenzioso** prima di
   "Svuota tutte le aree" + toast "Snapshot di sicurezza creato. Annulla con Ctrl+Z."
 - [x] Trigger manuale: bottone `📸 Snapshot...` apre prompt con label + tag opzionali. _(Slice A: voce palette `action.history.snapshot`; bottone toolbar in Slice B.)_
-- [ ] UI: pannello flottante `#history-popover` (fratello di `#parcel-info-popover`, stesso glass
+- [x] UI: pannello flottante `#history-popover` (fratello di `#parcel-info-popover`, stesso glass
   theme), ancorato in alto-destra mappa, **draggable dall'header**, larghezza ~340px, altezza
   max ~60vh con scroll interno. Stato aperto/chiuso e posizione persistiti in preferenze.
-- [ ] Trigger toolbar: bottone 🕒 "Cronologia" (i18n `tool.history`) toggle on/off; non chiude
-  su click fuori (palette style); badge contatore "Cronologia · 12" quando ci sono modifiche
-  non snapshottate manualmente.
-- [ ] Mini-toolbar in header pannello: `⤺ Undo`  `⤻ Redo`  `📸 Snapshot...`  `⋯ Gestisci`.
-- [ ] Lista entries: click su voce → dialog "Ripristinare? Verra creato uno snapshot dello stato
+- [x] Trigger toolbar: bottone 🕒 "Cronologia" (i18n `tool.history`) toggle on/off; non chiude
+  su click fuori (palette style); badge contatore tramite `data-history-count` e tooltip
+  aggiornato a ogni mutazione.
+- [x] Mini-toolbar in header pannello: `⤆ Undo` `⤻ Redo` `📸 Snapshot...` `⋯ Gestisci`.
+- [x] Lista entries: click su voce → dialog "Ripristinare? Verra creato uno snapshot dello stato
   attuale." Indicatori: ◉ corrente, ○ altre, 📸 per voci manuali.
-- [ ] Dialog "Gestisci...": elenco completo, rename, delete, export singolo snapshot come
-  `.geojson`.
+- [x] Dialog "Gestisci...": elenco completo, rename, delete, export singolo snapshot come
+  `.geojson` (baseline-protected su delete).
 - [x] Shortcut: `Ctrl+Z` undo, `Ctrl+Y` / `Ctrl+Shift+Z` redo. Inseriti nel registry
   `mode|action|view` dello Step C toolbar (sinergia, zero conflitti).
 - [x] i18n IT/EN per: `action.history.undo|redo|snapshot`, `history.entry.auto.*`, `history.entry.manual.*`,
@@ -128,8 +128,11 @@ Modello dati: `localStorage` chiave `planimeter.history.v1` + mirror backend com
   `history.snapshot.prompt.label`. _(`tool.history`, `history.title`, `history.confirm.restore`,
   `history.snapshot.prompt.tags`, `history.manage` deferred a Slice B.)_
 
-**Slice A (engine + shortcut + palette) — commit corrente.** Slice B (UI popover + manage +
-backend mirror + lz-string) pianificata.
+**Slice A (engine + shortcut + palette) — commit `ee74fdc`.**
+**Slice B (UI popover + manage dialog + backend mirror + lz-string) — commit corrente.**
+Backend mirror live: endpoints `GET /local-history-load` + `POST /local-history-save` con file
+`.planimeter_history_store.json` (cap 50 MB, atomic write), adozione automatica al boot solo se
+locale è baseline-only.
 
 ### Parcel info — refactor popover (DONE)
 - [x] Sostituire iframe con render DOM nativo (`renderParcelInfoBody`); state `parcelInfoHtml` → `parcelInfoData`; rimozione `wrapParcelInfoDocument`/`syncParcelInfoFrameSize`/`buildParcelSummaryHtml`/`_buildParcelHtmlFromJson`; fix contrasto/dimensione font colonna valori; rimozione Area/Perimetro dall'header (gia coperti dal summary panel).

@@ -35,6 +35,8 @@ import {
     syncPersistenceFromLocalMirror,
 } from './io/persistence.js';
 import { HistoryEngine } from './io/history.js';
+import { initHistoryBackendSync, pullMirrorIfLocalBaselineOnly } from './io/history-sync.js';
+import { initHistoryPopover } from './ui/history-popover.js';
 import { buildExportConfig, triggerDownload, requestBackendExport } from './io/export.js';
 import { detectImportFormat, readImportedFeatures } from './io/import.js';
 import { loadPreferences, savePreferences } from './io/preferences.js';
@@ -110,6 +112,12 @@ export default class Planimeter {
         }
         this.state.m3TraceToleranceM = this.sanitizeM3TraceToleranceM(preferences.m3TraceToleranceM);
         this.state.summaryColumns = this.sanitizeSummaryColumns(preferences.summaryColumns);
+        this.state.historyPopoverOpen = Boolean(preferences.historyPopoverOpen);
+        this.state.historyPopoverPosition = (preferences.historyPopoverPosition
+            && Number.isFinite(preferences.historyPopoverPosition.left)
+            && Number.isFinite(preferences.historyPopoverPosition.top))
+            ? { left: preferences.historyPopoverPosition.left, top: preferences.historyPopoverPosition.top }
+            : null;
         this.state.parcelInfoStatusKey = preferences.parcelInfoEnabled
             ? 'parcelInfo.clickHint'
             : 'parcelInfo.disabled';
@@ -242,6 +250,18 @@ export default class Planimeter {
         // either the restored campaign or an empty world. Subsequent edits
         // record their own auto-snapshots; undo cannot regress past this.
         HistoryEngine.bootstrap(this.state, this.vectorSource, this.pertenenzaSource);
+
+        // Backend mirror (best-effort): adopt server-side history if local is
+        // baseline-only, then keep them in sync as the user edits.
+        pullMirrorIfLocalBaselineOnly(this.state).then((res) => {
+            if (res?.adopted) {
+                HistoryEngine.bootstrap(this.state, this.vectorSource, this.pertenenzaSource);
+            }
+            initHistoryBackendSync();
+        }).catch(() => initHistoryBackendSync());
+
+        // Floating Cronologia popover (P3 slice B).
+        initHistoryPopover(this);
 
         // ── DSL init (async, non-blocking) ────────────────────────────────────
         initDsl().then(() => {
@@ -4668,7 +4688,27 @@ export default class Planimeter {
             m3DetectMaxRadius: this.state.m3DetectMaxRadius,
             m3TraceToleranceM: this.state.m3TraceToleranceM,
             summaryColumns: Array.isArray(this.state.summaryColumns) ? [...this.state.summaryColumns] : undefined,
+            historyPopoverOpen: this.state.historyPopoverOpen === true,
+            historyPopoverPosition: this.state.historyPopoverPosition || null,
         });
+    }
+
+    /**
+     * Lightweight preference setter used by ancillary UI modules (e.g. the
+     * history popover) to persist their state without each one needing to
+     * know the full `persistPreferences` payload shape.
+     */
+    setPreference(key, value) {
+        if (!key) return;
+        this.state[key] = value;
+        try { this.persistPreferences(); } catch (err) { console.warn('setPreference', key, err); }
+    }
+
+    get preferences() {
+        return {
+            historyPopoverOpen: this.state.historyPopoverOpen === true,
+            historyPopoverPosition: this.state.historyPopoverPosition || null,
+        };
     }
 
     updateLocale(locale) {
