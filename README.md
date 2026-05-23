@@ -70,7 +70,7 @@ Launcher pronti all'uso:
 
 ## Funzionalità
 
-- Disegno e modifica poligoni con marker vertici dedicati (vuoto/pieno).
+- Disegno e modifica poligoni con marker vertici dedicati (attivo + ghost): in Edit e Draw sono visibili i vertici ghost delle altre particelle; in Edit, click su mappa vuota riporta rapidamente a Navigate.
 - Rimozione vertice via tasto destro o `Canc`.
 - Misura distanze (segmento singolo e polyline).
 - Calcolo area e perimetro **geodetici**.

@@ -12,6 +12,7 @@ logs/
 _tile_cache/
 *.db
 .agents/
+.planimeter_history_store.json
 .planimeter_request_quota.json
 .planimeter_state_store.json
 AUDIT_*.md
