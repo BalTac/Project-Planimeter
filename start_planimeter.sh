@@ -43,9 +43,7 @@ else
     exit 1
 fi
 
-URL="http://${HOST}:${PORT}/planimeter.html"
-
-echo "Starting Project Planimeter server on ${URL}"
+echo "Starting Project Planimeter server requested on http://${HOST}:${PORT}/planimeter.html"
 "$PYTHON_BIN" server.py --host "$HOST" --port "$PORT" "${FORWARD_ARGS[@]}" &
 SERVER_PID=$!
 
@@ -55,14 +53,6 @@ cleanup() {
     fi
 }
 trap cleanup EXIT INT TERM
-
-if command -v xdg-open >/dev/null 2>&1; then
-    xdg-open "$URL" >/dev/null 2>&1 || true
-elif command -v open >/dev/null 2>&1; then
-    open "$URL" >/dev/null 2>&1 || true
-else
-    echo "Open ${URL} in your browser."
-fi
 
 echo "Press Ctrl+C to stop."
 wait "$SERVER_PID"

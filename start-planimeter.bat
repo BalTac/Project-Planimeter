@@ -31,8 +31,6 @@ shift
 goto parse_args
 
 :args_done
-set "URL=http://%HOST%:%PORT%/planimeter.html"
-
 where python >nul 2>&1
 if errorlevel 1 (
     echo Python non trovato nel PATH.
@@ -42,9 +40,8 @@ if errorlevel 1 (
 )
 
 start "Project Planimeter Server" cmd /k "cd /d ""%CD%"" && python server.py --host %HOST% --port %PORT%%EXTRA_ARGS%"
-start "Project Planimeter" "%URL%"
 
 echo Avvio completato.
-echo Se la pagina non risponde subito, aggiorna il browser dopo qualche secondo.
+echo Il browser verra aperto dal server dopo aver risolto la porta effettiva.
 
 exit /b 0

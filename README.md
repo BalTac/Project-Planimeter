@@ -118,6 +118,7 @@ tests/                  smoke e regression test
 | GET  | `/local-state-load`       | Lettura snapshot campagne dal mirror locale backend |
 | POST | `/cache-config`           | Aggiornamento TTL/quota cache |
 | POST | `/cache-clear`            | Pulizia cache tile |
+| POST | `/cache-rebuild`          | Rebuild cache su DB nuovo + cleanup file cache obsoleti (diagnostica lock inclusa) |
 | POST | `/local-state-save`       | Scrittura snapshot campagne nel mirror locale backend |
 | POST | `/export-geotiff`         | Export TIFF georeferenziato |
 | POST | `/export-pgw`             | Export PNG + sidecar PGW |
@@ -127,6 +128,12 @@ tests/                  smoke e regression test
 | POST | `/parcel-geometry-m3-trace` | **M3 trace** — bordo pixel-perfect da `ownership_mask` + RDP |
 
 > Nota: `/parcel-geometry-m3-refine` (variante storica con snapping edge-attraction e budget di richieste) resta esposta per compatibilità test/tooling, ma il frontend è migrato al `trace`.
+
+`POST /cache-rebuild` supporta payload JSON opzionale:
+
+- `{"cleanup_stale": true|false}` (default `true`)
+
+Risposta include diagnostica file-level (`removed_paths`, `failed_paths`) utile quando su Windows alcuni file SQLite restano lockati (`WinError 32`).
 
 ## Workflow M3 (Detect → Trace)
 
@@ -154,6 +161,8 @@ python server.py \
   --host 127.0.0.1 \
   --port 8000 \
   --instance-policy reuse|replace \
+  --no-browser \
+  --print-url \
   --upstream-timeout 20 \
   --upstream-retries 1 \
   --tile-cache-ttl 30 \
@@ -163,6 +172,9 @@ python server.py \
 
 - Se la porta è occupata da un'altra istanza Planimeter e `--instance-policy reuse`, il server riusa l'istanza esistente.
 - Se la porta è occupata da un servizio diverso, può fare fallback su una porta libera.
+- Di default il browser viene aperto dal server **dopo** la risoluzione della porta effettiva (anche in fallback).
+- `--no-browser` disabilita l'apertura automatica del browser.
+- `--print-url` stampa l'URL effettivo finale (`http://host:effective_port/planimeter.html`) utile per script/test.
 
 ## Test e verifica locale
 

@@ -25,6 +25,7 @@ import sqlite3
 import threading
 import urllib.parse
 import urllib.request
+import webbrowser
 import zipfile
 import zlib
 from collections.abc import Mapping
@@ -324,24 +325,101 @@ class TileCache:
         self._ttl = ttl_days * 86400
         self._max_size_bytes = max_size_mb * 1024 * 1024
         cache_dir.mkdir(parents=True, exist_ok=True)
+        self._cache_dir = cache_dir
         self._db_path = str(cache_dir / "tiles.db")
         self._lock = threading.Lock()
-        with self._connect() as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS tiles "
-                "(key TEXT PRIMARY KEY, ctype TEXT NOT NULL, data BLOB NOT NULL, ts REAL NOT NULL)"
-            )
-            conn.execute("PRAGMA journal_mode=WAL")
+        self._init_db()
+
+    @staticmethod
+    def _is_sqlite_corruption_error(exc: BaseException) -> bool:
+        msg = str(exc).lower()
+        markers = (
+            "database disk image is malformed",
+            "malformed",
+            "database corruption",
+            "file is not a database",
+        )
+        return any(marker in msg for marker in markers)
+
+    def _archive_corrupted_db(self, reason: str) -> bool:
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+        base = pathlib.Path(self._db_path)
+        archived_any = False
+        for suffix in ("", "-wal", "-shm"):
+            src = pathlib.Path(f"{self._db_path}{suffix}")
+            if not src.exists():
+                continue
+            try:
+                dst = self._cache_dir / f"{base.name}.{stamp}.corrupt{suffix}"
+                src.replace(dst)
+                archived_any = True
+            except Exception as exc:
+                _log.warning("tile-cache archive failed file=%s: %s", src, exc)
+        if archived_any:
+            _log.warning("tile-cache corrupted database archived reason=%s stamp=%s", reason, stamp)
+        return archived_any
+
+    def _recover_corrupted_db(self, reason: str) -> None:
+        archived = self._archive_corrupted_db(reason)
+        if archived:
+            return
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+        fallback_path = self._cache_dir / f"tiles.recovered.{stamp}.db"
+        self._db_path = str(fallback_path)
+        _log.warning("tile-cache switched to fresh db path=%s", self._db_path)
+
+    def _iter_db_artifacts(self, db_path: str | pathlib.Path) -> list[pathlib.Path]:
+        base = pathlib.Path(db_path)
+        return [pathlib.Path(f"{base}{suffix}") for suffix in ("", "-wal", "-shm")]
+
+    def _try_remove_artifact(self, path: pathlib.Path) -> tuple[bool, str | None]:
+        try:
+            path.unlink()
+            return True, None
+        except Exception as exc:
+            _log.warning("tile-cache cleanup failed file=%s: %s", path, exc)
+            return False, str(exc)
+
+    def _init_db(self) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS tiles "
+                    "(key TEXT PRIMARY KEY, ctype TEXT NOT NULL, data BLOB NOT NULL, ts REAL NOT NULL)"
+                )
+                conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.DatabaseError as exc:
+            if not self._is_sqlite_corruption_error(exc):
+                raise
+            _log.warning("tile-cache init detected corruption: %s", exc)
+            self._recover_corrupted_db(str(exc))
+            with self._connect() as conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS tiles "
+                    "(key TEXT PRIMARY KEY, ctype TEXT NOT NULL, data BLOB NOT NULL, ts REAL NOT NULL)"
+                )
+                conn.execute("PRAGMA journal_mode=WAL")
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self._db_path)
 
     def get(self, key: str) -> tuple[str, bytes] | None:
         with self._lock:
-            with self._connect() as conn:
-                row = conn.execute(
-                    "SELECT ctype, data, ts FROM tiles WHERE key = ?", (key,)
-                ).fetchone()
+            rebuilt = False
+            while True:
+                try:
+                    with self._connect() as conn:
+                        row = conn.execute(
+                            "SELECT ctype, data, ts FROM tiles WHERE key = ?", (key,)
+                        ).fetchone()
+                    break
+                except sqlite3.DatabaseError as exc:
+                    if rebuilt or not self._is_sqlite_corruption_error(exc):
+                        raise
+                    _log.warning("tile-cache get detected corruption, rebuilding: %s", exc)
+                    self._recover_corrupted_db(str(exc))
+                    self._init_db()
+                    rebuilt = True
         if row is None:
             return None
         ctype, data, ts = row
@@ -354,19 +432,37 @@ class TileCache:
 
     def put(self, key: str, ctype: str, data: bytes) -> None:
         with self._lock:
-            with self._connect() as conn:
-                conn.execute(
-                    "INSERT OR REPLACE INTO tiles (key, ctype, data, ts) VALUES (?, ?, ?, ?)",
-                    (key, ctype, sqlite3.Binary(data), time.time()),
-                )
-                self._enforce_size_limit(conn)
+            rebuilt = False
+            while True:
+                try:
+                    with self._connect() as conn:
+                        conn.execute(
+                            "INSERT OR REPLACE INTO tiles (key, ctype, data, ts) VALUES (?, ?, ?, ?)",
+                            (key, ctype, sqlite3.Binary(data), time.time()),
+                        )
+                        self._enforce_size_limit(conn)
+                    return
+                except sqlite3.DatabaseError as exc:
+                    if rebuilt or not self._is_sqlite_corruption_error(exc):
+                        raise
+                    _log.warning("tile-cache put detected corruption, rebuilding: %s", exc)
+                    self._recover_corrupted_db(str(exc))
+                    self._init_db()
+                    rebuilt = True
 
     def set_config(self, ttl_days: int, max_size_mb: int) -> None:
         with self._lock:
             self._ttl = max(ttl_days, 1) * 86400
             self._max_size_bytes = max(max_size_mb, 1) * 1024 * 1024
-            with self._connect() as conn:
-                self._enforce_size_limit(conn)
+            try:
+                with self._connect() as conn:
+                    self._enforce_size_limit(conn)
+            except sqlite3.DatabaseError as exc:
+                if not self._is_sqlite_corruption_error(exc):
+                    raise
+                _log.warning("tile-cache set_config detected corruption, rebuilding: %s", exc)
+                self._recover_corrupted_db(str(exc))
+                self._init_db()
 
     def get_config(self) -> dict[str, int]:
         return {
@@ -389,15 +485,100 @@ class TileCache:
 
     def clear_all(self) -> int:
         with self._lock:
-            with self._connect() as conn:
-                cur = conn.execute("DELETE FROM tiles")
-                return cur.rowcount
+            rebuilt = False
+            while True:
+                try:
+                    with self._connect() as conn:
+                        cur = conn.execute("DELETE FROM tiles")
+                        return cur.rowcount
+                except sqlite3.DatabaseError as exc:
+                    if rebuilt or not self._is_sqlite_corruption_error(exc):
+                        raise
+                    _log.warning("tile-cache clear detected corruption, rebuilding: %s", exc)
+                    self._recover_corrupted_db(str(exc))
+                    self._init_db()
+                    rebuilt = True
 
     def stats(self) -> dict[str, int]:
         with self._lock:
-            with self._connect() as conn:
-                row = conn.execute("SELECT COUNT(*), SUM(LENGTH(data)) FROM tiles").fetchone()
+            try:
+                with self._connect() as conn:
+                    row = conn.execute("SELECT COUNT(*), SUM(LENGTH(data)) FROM tiles").fetchone()
+            except sqlite3.DatabaseError as exc:
+                if not self._is_sqlite_corruption_error(exc):
+                    raise
+                _log.warning("tile-cache stats detected corruption, rebuilding: %s", exc)
+                self._recover_corrupted_db(str(exc))
+                self._init_db()
+                row = (0, 0)
         return {"count": row[0] or 0, "size_bytes": row[1] or 0}
+
+    def rebuild_and_cleanup(self, cleanup_stale: bool = True) -> dict[str, object]:
+        with self._lock:
+            previous_db_path = self._db_path
+            stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+            fresh_db_path = self._cache_dir / f"tiles.rebuild.{stamp}.db"
+            self._db_path = str(fresh_db_path)
+            self._init_db()
+
+            removed_files = 0
+            failed_files = 0
+            removed_paths: list[str] = []
+            failed_paths: list[dict[str, str]] = []
+
+            for artifact in self._iter_db_artifacts(previous_db_path):
+                if not artifact.exists():
+                    continue
+                removed, reason = self._try_remove_artifact(artifact)
+                if removed:
+                    removed_files += 1
+                    removed_paths.append(str(artifact))
+                else:
+                    failed_files += 1
+                    failed_paths.append({"path": str(artifact), "reason": reason or "unknown"})
+
+            if cleanup_stale:
+                current_artifacts = {str(path.resolve()) for path in self._iter_db_artifacts(self._db_path)}
+                for candidate in self._cache_dir.glob("tiles*"):
+                    if not candidate.is_file():
+                        continue
+                    name = candidate.name
+                    if ".corrupt" in name:
+                        continue
+                    if not (
+                        name.startswith("tiles.recovered.")
+                        or name.startswith("tiles.rebuild.")
+                        or name in {"tiles.db", "tiles.db-wal", "tiles.db-shm"}
+                    ):
+                        continue
+                    try:
+                        resolved = str(candidate.resolve())
+                    except Exception:
+                        resolved = str(candidate)
+                    if resolved in current_artifacts:
+                        continue
+                    removed, reason = self._try_remove_artifact(candidate)
+                    if removed:
+                        removed_files += 1
+                        removed_paths.append(str(candidate))
+                    else:
+                        failed_files += 1
+                        failed_paths.append({"path": str(candidate), "reason": reason or "unknown"})
+
+            _log.warning(
+                "tile-cache manual rebuild complete active_db=%s removed=%d failed=%d",
+                self._db_path,
+                removed_files,
+                failed_files,
+            )
+            return {
+                "active_db": self._db_path,
+                "removed_files": removed_files,
+                "failed_files": failed_files,
+                "removed_paths": removed_paths,
+                "failed_paths": failed_paths,
+                "cleanup_stale": bool(cleanup_stale),
+            }
 
 
 class UpstreamHTTPError(Exception):
@@ -465,6 +646,7 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
     def do_OPTIONS(self) -> None:
         if (self.path.startswith("/wms-proxy") or self.path.startswith("/wms-tile")
             or self.path.startswith("/cache-clear") or self.path.startswith("/cache-config")
+            or self.path.startswith("/cache-rebuild")
             or self.path.startswith("/export-geotiff") or self.path.startswith("/export-pgw")
             or self.path.startswith("/export-bundle") or self.path.startswith("/parcel-at-point")
             or self.path.startswith("/local-state-load") or self.path.startswith("/local-state-save")
@@ -512,6 +694,9 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path in {"/cache-clear", "/cache-clear/"}:
             self.handle_cache_clear()
+            return
+        if parsed.path in {"/cache-rebuild", "/cache-rebuild/"}:
+            self.handle_cache_rebuild()
             return
         if parsed.path in {"/cache-config", "/cache-config/"}:
             self.handle_cache_config_update()
@@ -2845,6 +3030,34 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         deleted = cache.clear_all()
         self.send_json(HTTPStatus.OK, {"deleted": deleted, "enabled": True})
 
+    def handle_cache_rebuild(self) -> None:
+        cache: TileCache | None = getattr(self.server, "tile_cache", None)
+        if cache is None:
+            self.send_json(HTTPStatus.OK, {"ok": False, "enabled": False, "message": "Cache non disponibile."})
+            return
+
+        payload: dict[str, object] = {}
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length > 0:
+            try:
+                parsed_payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                if isinstance(parsed_payload, dict):
+                    payload = parsed_payload
+            except Exception:
+                self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "Payload JSON non valido."})
+                return
+
+        cleanup_stale = bool(payload.get("cleanup_stale", True))
+        result = cache.rebuild_and_cleanup(cleanup_stale=cleanup_stale)
+        self.send_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "enabled": True,
+                **result,
+            },
+        )
+
     def handle_cache_config_get(self) -> None:
         cache: TileCache | None = getattr(self.server, "tile_cache", None)
         if cache is None:
@@ -3241,6 +3454,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="127.0.0.1", help="Host di bind")
     parser.add_argument("--port", type=int, default=8000, help="Porta di ascolto")
     parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Non aprire automaticamente il browser dopo aver risolto la porta effettiva",
+    )
+    parser.add_argument(
+        "--print-url",
+        action="store_true",
+        help="Stampa l'URL effettivo finale del server all'avvio",
+    )
+    parser.add_argument(
         "--instance-policy",
         choices=["reuse", "replace"],
         default="reuse",
@@ -3436,15 +3659,29 @@ def resolve_startup_binding(host: str, requested_port: int, instance_policy: str
     return random_port, "random-fallback"
 
 
+def maybe_open_browser(url: str, enabled: bool) -> None:
+    if not enabled:
+        return
+    try:
+        webbrowser.open(url)
+    except Exception as exc:
+        _log.warning("browser open failed url=%s: %s", url, exc)
+
+
 def main() -> None:
     args = parse_args()
     workspace = pathlib.Path(__file__).resolve().parent
     os.chdir(workspace)
 
     selected_port, mode = resolve_startup_binding(args.host, args.port, args.instance_policy)
+    effective_port = selected_port if selected_port is not None else args.port
+    app_url = f"http://{args.host}:{effective_port}/planimeter.html"
     if mode == "reuse-existing":
+        if args.print_url:
+            print(app_url)
+        maybe_open_browser(app_url, enabled=not args.no_browser)
         print(
-            f"Project Planimeter gia attivo su http://{args.host}:{args.port}/planimeter.html "
+            f"Project Planimeter gia attivo su {app_url} "
             f"(instance-policy={args.instance_policy})."
         )
         return
@@ -3454,8 +3691,6 @@ def main() -> None:
             f"Porta {args.port} occupata da servizio non Planimeter. "
             f"Avvio su porta libera {selected_port}."
         )
-
-    effective_port = selected_port if selected_port is not None else args.port
 
     def factory(*handler_args, **handler_kwargs):
         return PlanimeterHandler(*handler_args, directory=str(workspace), **handler_kwargs)
@@ -3469,13 +3704,16 @@ def main() -> None:
         ttl_days=max(args.tile_cache_ttl, MIN_CACHE_TTL_DAYS),
         max_size_mb=max(args.tile_cache_max_mb, MIN_CACHE_SIZE_MB),
     )
-    print(f"Project Planimeter server attivo su http://{args.host}:{effective_port}/planimeter.html")
+    if args.print_url:
+        print(app_url)
+    print(f"Project Planimeter server attivo su {app_url}")
     print(
         "Tile cache WMS: "
         f"{cache_dir / 'tiles.db'} "
         f"(TTL: {max(args.tile_cache_ttl, MIN_CACHE_TTL_DAYS)} giorni, "
         f"limite: {max(args.tile_cache_max_mb, MIN_CACHE_SIZE_MB)} MB)"
     )
+    maybe_open_browser(app_url, enabled=not args.no_browser)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
