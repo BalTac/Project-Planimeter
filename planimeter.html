@@ -382,6 +382,31 @@
                             <div id="dsl-cadastral-links" class="dsl-cadastral-links"></div>
                         </div>
                         <div id="dsl-fields-form" class="dsl-fields-form" role="group" aria-labelledby="dsl-fields-title"></div>
+                        <div id="dsl-cultivar-catalog" class="dsl-assignment-meta dsl-cultivar-catalog" hidden>
+                            <strong data-i18n="dsl.cultivar.catalogTitle">Catalogo cultivar</strong>
+                            <div class="dsl-cultivar-grid">
+                                <label class="settings-field" for="dsl-cultivar-name">
+                                    <span data-i18n="dsl.cultivar.name">Cultivar</span>
+                                    <input id="dsl-cultivar-name" type="text" class="parameter-picker" autocomplete="off">
+                                </label>
+                                <label class="settings-field" for="dsl-cultivar-yield">
+                                    <span data-i18n="dsl.cultivar.expectedYield">Resa prevista (q/ha)</span>
+                                    <input id="dsl-cultivar-yield" type="number" min="0" step="any" class="parameter-picker" autocomplete="off">
+                                </label>
+                                <label class="settings-field" for="dsl-cultivar-method">
+                                    <span data-i18n="dsl.cultivar.method">Metodo coltivazione</span>
+                                    <select id="dsl-cultivar-method" class="parameter-picker" aria-label="Metodo coltivazione cultivar">
+                                        <option value="" data-i18n="dsl.cultivar.method.none">Nessuno</option>
+                                        <option value="convenzionale" data-i18n="dsl.fertilization.convenzionale">Convenzionale</option>
+                                        <option value="integrata" data-i18n="dsl.fertilization.integrata">Integrata</option>
+                                        <option value="biologica" data-i18n="dsl.fertilization.biologica">Biologica</option>
+                                    </select>
+                                </label>
+                                <button type="button" id="btn-dsl-cultivar-save" class="action-button icon-button" data-i18n="dsl.cultivar.save" data-icon="💾">Salva cultivar</button>
+                                <button type="button" id="btn-dsl-cultivar-delete" class="action-button action-button-danger icon-button" data-i18n="dsl.cultivar.delete" data-icon="🗑">Elimina</button>
+                            </div>
+                            <p id="dsl-cultivar-status" class="section-help" data-i18n="dsl.cultivar.hint">Aggiungi o aggiorna preset cultivar per il dominio agricoltura.</p>
+                        </div>
                         <div class="dsl-assignment-actions">
                             <button type="button" id="btn-dsl-assign" class="action-button icon-button" data-i18n="dsl.category.assign" data-icon="🏷">Assegna categoria</button>
                             <button type="button" id="btn-dsl-unassign" class="action-button action-button-danger icon-button" data-i18n="dsl.category.unassign" data-icon="🧹" hidden>Unassign</button>

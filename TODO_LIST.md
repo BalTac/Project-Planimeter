@@ -221,6 +221,11 @@ locale è baseline-only.
 - [ ] Aggiungere editor UX per dominio/categorie (crea, rinomina, elimina, aggiungi campi enum/number/text/color).
 - [x] Aggiungere assegnazione categoria alla feature selezionata (context menu + pannello Operativo).
 - [x] Generare form dinamica dalla categoria selezionata e bind su `feature.properties.dsl`.
+- [x] Aggiungere catalogo cultivar su tabella SQLite dedicata (`agriculture_cultivars`) con endpoint backend e integrazione DSL: suggerimenti dropdown nel campo `variety` + autopopolamento di `expected_yield_q_ha` e `fertilization` da preset salvati.
+- [x] Aggiungere UI esplicita "Catalogo cultivar" nel pannello DSL (dominio agricoltura) con campi cultivar/resa/metodo e salvataggio preset diretto su DB.
+- [x] Correggere flusso DSL su feature `unassigned`: edit campi prima dell'assegnazione ora persiste correttamente e `Assign/Change category` applica sempre anche i valori correnti del form (inclusi cultivar/resa/metodo).
+- [x] Contestualizzare il catalogo cultivar per `category_id` con filtri progressivi `cultivation_method` + `irrigated`; in assenza di match esatti, fallback automatico a sole cultivar della categoria selezionata.
+- [x] Completare UX catalogo cultivar: aggiunta azione `Elimina`, refresh immediato combobox post-save/delete, feedback esplicito su `Cambia categoria` e fallback legacy/global (`category_id=''`) per preset storici (es. Arabesk).
 - [x] Aggiornare bundle export con report semantico per categoria (totali, percentuali, anno/stagione).
 - [x] Introdurre gestione dinamica pertinenze catastali sulla feature selezionata (lista link `links.cadastral` con rimozione puntuale post-setup).
 - [x] Calcolare automaticamente `intersection_area` e `coverage_ratio` al collegamento della pertinenza catastale su area selezionata.

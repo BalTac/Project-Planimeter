@@ -2,6 +2,20 @@
 
 Tutte le modifiche rilevanti del progetto Project Planimeter.
 
+## [Unreleased] — Agriculture cultivar catalog UX + legacy fallback hardening
+
+### Added
+- [planimeter.html](planimeter.html), [src/planimeter.js](src/planimeter.js), [src/i18n/it.js](src/i18n/it.js), [src/i18n/en.js](src/i18n/en.js) aggiunto flusso esplicito di eliminazione preset cultivar dal pannello DSL (`Elimina`) con stato UI dedicato e messaggi localizzati.
+- [server.py](server.py) aggiunto endpoint `DELETE /agriculture-cultivars` con validazione input e cancellazione contestuale per `category_id + cultivar + cultivation_method + irrigated`.
+
+### Changed
+- [src/planimeter.js](src/planimeter.js) migliorato feedback toolbar su `Cambia categoria`: quando la feature era gia assegnata mostra ora messaggio specifico di aggiornamento (`msg.categoryChanged`) invece del messaggio di prima assegnazione.
+- [src/planimeter.js](src/planimeter.js) refresh del form agricoltura reso robusto anche nel flusso `unassigned`/pre-DSL consolidata, forzando il rerender dei controlli cultivar dopo save/delete.
+- [server.py](server.py) fallback list cultivar esteso ai preset legacy/globali (`category_id=''`) quando la categoria selezionata non ha match, inclusi casi senza filtri metodo/irriguo (scenario operativo Sorgo/Arabesk).
+
+### Validation
+- [tests/test_server_smoke.py](tests/test_server_smoke.py) aggiunti smoke test su fallback legacy globale e delete contestuale preset cultivar.
+
 ## [Unreleased] — Toolbar redesign Step B-1: WMS sublayer matrix moved to Operate, lang switcher dedup, actions sub-grouped
 
 ### Changed

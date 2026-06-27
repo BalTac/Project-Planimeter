@@ -303,6 +303,7 @@ _local_state_store_path = pathlib.Path(".planimeter_state_store.json")
 _local_state_store_lock = threading.Lock()
 _local_history_store_path = pathlib.Path(".planimeter_history_store.json")
 _local_history_store_lock = threading.Lock()
+_agriculture_cultivar_db_path = pathlib.Path(".planimeter_agriculture.db")
 
 
 TILE_CACHE_TTL_DAYS_DEFAULT = 30
@@ -311,6 +312,272 @@ MIN_CACHE_TTL_DAYS = 1
 MAX_CACHE_TTL_DAYS = 365
 MIN_CACHE_SIZE_MB = 32
 MAX_CACHE_SIZE_MB = 4096
+
+
+def _load_agriculture_cultivar_seed() -> list[dict[str, object]]:
+    # No automatic category-as-cultivar seeding: presets are user-defined
+    # in an explicit category/method/irrigation context.
+    return []
+
+
+class AgricultureCultivarStore:
+    """Thread-safe SQLite store for agriculture cultivar presets."""
+
+    def __init__(self, db_path: pathlib.Path, seed_rows: list[dict[str, object]] | None = None) -> None:
+        self._db_path = db_path
+        self._lock = threading.Lock()
+        self._init_db()
+        self._seed_if_empty(seed_rows or [])
+
+    def _connect(self) -> sqlite3.Connection:
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        return sqlite3.connect(str(self._db_path))
+
+    def _init_db(self) -> None:
+        with self._lock:
+            with self._connect() as conn:
+                self._migrate_schema_if_needed(conn)
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS agriculture_cultivars ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "category_id TEXT NOT NULL DEFAULT '', "
+                    "cultivar TEXT NOT NULL, "
+                    "expected_yield_q_ha REAL, "
+                    "cultivation_method TEXT NOT NULL DEFAULT '', "
+                    "irrigated INTEGER NOT NULL DEFAULT -1, "
+                    "updated_at TEXT NOT NULL"
+                    ")"
+                )
+                conn.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_agriculture_cultivar_ctx "
+                    "ON agriculture_cultivars(category_id, cultivar, cultivation_method, irrigated)"
+                )
+
+    @staticmethod
+    def _table_columns(conn: sqlite3.Connection) -> set[str]:
+        rows = conn.execute("PRAGMA table_info(agriculture_cultivars)").fetchall()
+        return {str(row[1]) for row in rows}
+
+    def _migrate_schema_if_needed(self, conn: sqlite3.Connection) -> None:
+        exists = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='agriculture_cultivars'"
+        ).fetchone()
+        if not exists:
+            return
+
+        columns = self._table_columns(conn)
+        required = {"id", "category_id", "cultivar", "expected_yield_q_ha", "cultivation_method", "irrigated", "updated_at"}
+        if required.issubset(columns):
+            return
+
+        stamp = time.strftime("%Y%m%d_%H%M%S", time.gmtime())
+        legacy_name = f"agriculture_cultivars_legacy_{stamp}"
+        conn.execute(f"ALTER TABLE agriculture_cultivars RENAME TO {legacy_name}")
+        conn.execute(
+            "CREATE TABLE agriculture_cultivars ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "category_id TEXT NOT NULL DEFAULT '', "
+            "cultivar TEXT NOT NULL, "
+            "expected_yield_q_ha REAL, "
+            "cultivation_method TEXT NOT NULL DEFAULT '', "
+            "irrigated INTEGER NOT NULL DEFAULT -1, "
+            "updated_at TEXT NOT NULL"
+            ")"
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_agriculture_cultivar_ctx "
+            "ON agriculture_cultivars(category_id, cultivar, cultivation_method, irrigated)"
+        )
+
+        legacy_cols = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({legacy_name})").fetchall()}
+        if "cultivar" in legacy_cols:
+            updated_expr = "updated_at" if "updated_at" in legacy_cols else "''"
+            method_expr = "cultivation_method" if "cultivation_method" in legacy_cols else "''"
+            yield_expr = "expected_yield_q_ha" if "expected_yield_q_ha" in legacy_cols else "NULL"
+            conn.execute(
+                "INSERT INTO agriculture_cultivars "
+                "(category_id, cultivar, expected_yield_q_ha, cultivation_method, irrigated, updated_at) "
+                f"SELECT '', TRIM(cultivar), {yield_expr}, COALESCE({method_expr}, ''), -1, COALESCE({updated_expr}, '') "
+                f"FROM {legacy_name} WHERE TRIM(COALESCE(cultivar, '')) <> ''"
+            )
+
+    def _seed_if_empty(self, seed_rows: list[dict[str, object]]) -> None:
+        if not seed_rows:
+            return
+        with self._lock:
+            with self._connect() as conn:
+                count = int(conn.execute("SELECT COUNT(*) FROM agriculture_cultivars").fetchone()[0])
+                if count > 0:
+                    return
+                now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                conn.executemany(
+                    "INSERT OR IGNORE INTO agriculture_cultivars "
+                    "(category_id, cultivar, expected_yield_q_ha, cultivation_method, irrigated, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    [
+                        (
+                            str(row.get("category_id") or "").strip(),
+                            str(row.get("cultivar") or "").strip(),
+                            row.get("expected_yield_q_ha"),
+                            str(row.get("cultivation_method") or "").strip(),
+                            -1,
+                            now,
+                        )
+                        for row in seed_rows
+                        if str(row.get("cultivar") or "").strip()
+                    ],
+                )
+
+    @staticmethod
+    def _decode_irrigated(value: int) -> bool | None:
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+        return None
+
+    def _query_items(
+        self,
+        conn: sqlite3.Connection,
+        category_id: str | None,
+        cultivation_method: str | None,
+        irrigated: int | None,
+    ) -> list[dict[str, object]]:
+        clauses: list[str] = []
+        params: list[object] = []
+        if category_id is not None:
+            clauses.append("category_id = ?")
+            params.append(category_id)
+        if cultivation_method is not None:
+            clauses.append("cultivation_method = ?")
+            params.append(cultivation_method)
+        if irrigated is not None:
+            clauses.append("irrigated = ?")
+            params.append(irrigated)
+
+        where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = conn.execute(
+            "SELECT category_id, cultivar, expected_yield_q_ha, cultivation_method, irrigated, updated_at "
+            "FROM agriculture_cultivars "
+            f"{where_sql} "
+            "ORDER BY cultivar COLLATE NOCASE ASC"
+            , params
+        ).fetchall()
+        return [
+            {
+                "category_id": str(row[0]),
+                "cultivar": str(row[1]),
+                "expected_yield_q_ha": None if row[2] is None else float(row[2]),
+                "cultivation_method": (str(row[3]) if row[3] is not None else "") or None,
+                "irrigated": self._decode_irrigated(int(row[4])),
+                "updated_at": str(row[5]),
+            }
+            for row in rows
+        ]
+
+    def list_items(
+        self,
+        *,
+        category_id: str | None = None,
+        cultivation_method: str | None = None,
+        irrigated: int | None = None,
+        fallback_to_category: bool = True,
+    ) -> tuple[list[dict[str, object]], bool]:
+        normalized_category = str(category_id or "").strip() or None
+        normalized_method = str(cultivation_method or "").strip() or None
+        with self._lock:
+            with self._connect() as conn:
+                if normalized_category is None:
+                    return self._query_items(conn, None, None, None), False
+
+                filtered = self._query_items(conn, normalized_category, normalized_method, irrigated)
+                if filtered or not fallback_to_category:
+                    return filtered, False
+
+                if normalized_method is None and irrigated is None:
+                    legacy_any = self._query_items(conn, "", None, None)
+                    return legacy_any, bool(legacy_any)
+
+                category_only = self._query_items(conn, normalized_category, None, None)
+                if category_only:
+                    return category_only, True
+
+                # Transitional fallback for legacy presets saved before category-aware schema.
+                legacy_filtered = self._query_items(conn, "", normalized_method, irrigated)
+                if legacy_filtered:
+                    return legacy_filtered, True
+
+                legacy_any = self._query_items(conn, "", None, None)
+                return legacy_any, True
+
+    def delete(
+        self,
+        *,
+        category_id: str,
+        cultivar: str,
+        cultivation_method: str | None,
+        irrigated: bool | None,
+    ) -> int:
+        normalized_category = str(category_id or "").strip()
+        normalized_cultivar = str(cultivar or "").strip()
+        if not normalized_category or not normalized_cultivar:
+            raise ValueError("Categoria o cultivar non valida")
+
+        normalized_method = str(cultivation_method or "").strip()
+        irrigated_code = -1 if irrigated is None else (1 if bool(irrigated) else 0)
+        with self._lock:
+            with self._connect() as conn:
+                cur = conn.execute(
+                    "DELETE FROM agriculture_cultivars "
+                    "WHERE category_id = ? AND cultivar = ? AND cultivation_method = ? AND irrigated = ?",
+                    (normalized_category, normalized_cultivar, normalized_method, irrigated_code),
+                )
+                return int(cur.rowcount or 0)
+
+    def upsert(
+        self,
+        *,
+        category_id: str,
+        cultivar: str,
+        expected_yield_q_ha: float | None,
+        cultivation_method: str | None,
+        irrigated: bool | None,
+    ) -> dict[str, object]:
+        normalized_category = str(category_id or "").strip()
+        if not normalized_category:
+            raise ValueError("Categoria non valida")
+        normalized_cultivar = str(cultivar or "").strip()
+        if not normalized_cultivar:
+            raise ValueError("Cultivar vuota non valida")
+        normalized_method = str(cultivation_method or "").strip()
+        irrigated_code = -1 if irrigated is None else (1 if bool(irrigated) else 0)
+        normalized_yield = None if expected_yield_q_ha is None else float(expected_yield_q_ha)
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    "INSERT INTO agriculture_cultivars "
+                    "(category_id, cultivar, expected_yield_q_ha, cultivation_method, irrigated, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(category_id, cultivar, cultivation_method, irrigated) DO UPDATE SET "
+                    "expected_yield_q_ha=excluded.expected_yield_q_ha, "
+                    "updated_at=excluded.updated_at",
+                    (normalized_category, normalized_cultivar, normalized_yield, normalized_method, irrigated_code, now),
+                )
+        return {
+            "category_id": normalized_category,
+            "cultivar": normalized_cultivar,
+            "expected_yield_q_ha": normalized_yield,
+            "cultivation_method": normalized_method or None,
+            "irrigated": self._decode_irrigated(irrigated_code),
+            "updated_at": now,
+        }
+
+
+_agriculture_cultivar_store = AgricultureCultivarStore(
+    _agriculture_cultivar_db_path,
+    seed_rows=_load_agriculture_cultivar_seed(),
+)
 
 
 class TileCache:
@@ -650,10 +917,11 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             or self.path.startswith("/export-geotiff") or self.path.startswith("/export-pgw")
             or self.path.startswith("/export-bundle") or self.path.startswith("/parcel-at-point")
             or self.path.startswith("/local-state-load") or self.path.startswith("/local-state-save")
-            or self.path.startswith("/local-history-load") or self.path.startswith("/local-history-save")):
+            or self.path.startswith("/local-history-load") or self.path.startswith("/local-history-save")
+            or self.path.startswith("/agriculture-cultivars")):
             self.send_response(HTTPStatus.NO_CONTENT)
             self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type")
             self.end_headers()
             return
@@ -688,6 +956,9 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         if parsed.path in {"/local-history-load", "/local-history-load/"}:
             self.handle_local_history_load()
             return
+        if parsed.path in {"/agriculture-cultivars", "/agriculture-cultivars/"}:
+            self.handle_agriculture_cultivars_list(parsed.query)
+            return
         super().do_GET()
 
     def do_POST(self) -> None:
@@ -706,6 +977,9 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path in {"/local-history-save", "/local-history-save/"}:
             self.handle_local_history_save()
+            return
+        if parsed.path in {"/agriculture-cultivars", "/agriculture-cultivars/"}:
+            self.handle_agriculture_cultivars_upsert()
             return
         if parsed.path in {"/export-geotiff", "/export-geotiff/"}:
             self.handle_export_geotiff()
@@ -731,6 +1005,14 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         if parsed.path in {"/parcel-geometry-m3-trace", "/parcel-geometry-m3-trace/"}:
             with self._rate_limited_scope():
                 self.handle_parcel_geometry_m3_trace()
+            return
+        self.send_response(HTTPStatus.METHOD_NOT_ALLOWED)
+        self.end_headers()
+
+    def do_DELETE(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path in {"/agriculture-cultivars", "/agriculture-cultivars/"}:
+            self.handle_agriculture_cultivars_delete()
             return
         self.send_response(HTTPStatus.METHOD_NOT_ALLOWED)
         self.end_headers()
@@ -3217,6 +3499,156 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             tmp_path.write_text(serialized, encoding="utf-8")
             tmp_path.replace(_local_history_store_path)
         self.send_json(HTTPStatus.OK, {"ok": True, "savedAt": store.get("savedAt")})
+
+    def handle_agriculture_cultivars_list(self, query_string: str = "") -> None:
+        try:
+            query = urllib.parse.parse_qs(query_string, keep_blank_values=True)
+            category_id = str((query.get("category_id") or [""])[0]).strip() or None
+            cultivation_method = str((query.get("cultivation_method") or [""])[0]).strip() or None
+            irrigated_raw = str((query.get("irrigated") or [""])[0]).strip().lower()
+            irrigated: int | None = None
+            if irrigated_raw in {"1", "true", "yes"}:
+                irrigated = 1
+            elif irrigated_raw in {"0", "false", "no"}:
+                irrigated = 0
+
+            fallback_raw = str((query.get("fallback") or ["1"])[0]).strip().lower()
+            fallback_to_category = fallback_raw not in {"0", "false", "no"}
+
+            items, fallback_applied = _agriculture_cultivar_store.list_items(
+                category_id=category_id,
+                cultivation_method=cultivation_method,
+                irrigated=irrigated,
+                fallback_to_category=fallback_to_category,
+            )
+            self.send_json(HTTPStatus.OK, {
+                "ok": True,
+                "items": items,
+                "fallbackApplied": fallback_applied,
+            })
+        except Exception as exc:
+            _log.error("agriculture-cultivars list failed: %s", exc)
+            self.send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {"ok": False, "message": "Impossibile leggere il catalogo cultivar."},
+            )
+
+    def handle_agriculture_cultivars_upsert(self) -> None:
+        payload = self._read_json_payload()
+        if payload is None:
+            return
+
+        cultivar = str(payload.get("cultivar") or "").strip()
+        if not cultivar:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "cultivar non valida."})
+            return
+
+        category_id = str(payload.get("category_id") or "").strip()
+        if not category_id:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "category_id non valido."})
+            return
+
+        expected_raw = payload.get("expected_yield_q_ha")
+        expected_yield_q_ha: float | None = None
+        if expected_raw not in (None, ""):
+            try:
+                expected_yield_q_ha = float(str(expected_raw))
+            except Exception:
+                self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "resa prevista non valida."})
+                return
+            if not math.isfinite(expected_yield_q_ha) or expected_yield_q_ha < 0:
+                self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "resa prevista non valida."})
+                return
+
+        cultivation_method = str(payload.get("cultivation_method") or "").strip() or None
+        irrigated_raw = payload.get("irrigated")
+        irrigated: bool | None = None
+        if isinstance(irrigated_raw, bool):
+            irrigated = irrigated_raw
+        elif irrigated_raw in (0, 1):
+            irrigated = bool(irrigated_raw)
+        elif irrigated_raw in (None, ""):
+            irrigated = None
+        elif isinstance(irrigated_raw, str):
+            raw = irrigated_raw.strip().lower()
+            if raw in {"1", "true", "yes"}:
+                irrigated = True
+            elif raw in {"0", "false", "no"}:
+                irrigated = False
+            else:
+                self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "irrigated non valido."})
+                return
+        else:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "irrigated non valido."})
+            return
+
+        try:
+            item = _agriculture_cultivar_store.upsert(
+                category_id=category_id,
+                cultivar=cultivar,
+                expected_yield_q_ha=expected_yield_q_ha,
+                cultivation_method=cultivation_method,
+                irrigated=irrigated,
+            )
+            self.send_json(HTTPStatus.OK, {"ok": True, "item": item})
+        except ValueError as exc:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": str(exc)})
+        except Exception as exc:
+            _log.error("agriculture-cultivars upsert failed: %s", exc)
+            self.send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {"ok": False, "message": "Impossibile salvare la cultivar."},
+            )
+
+    def handle_agriculture_cultivars_delete(self) -> None:
+        payload = self._read_json_payload()
+        if payload is None:
+            return
+
+        category_id = str(payload.get("category_id") or "").strip()
+        cultivar = str(payload.get("cultivar") or "").strip()
+        if not category_id or not cultivar:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "category_id/cultivar non validi."})
+            return
+
+        cultivation_method = str(payload.get("cultivation_method") or "").strip() or None
+        irrigated_raw = payload.get("irrigated")
+        irrigated: bool | None = None
+        if isinstance(irrigated_raw, bool):
+            irrigated = irrigated_raw
+        elif irrigated_raw in (0, 1):
+            irrigated = bool(irrigated_raw)
+        elif irrigated_raw in (None, ""):
+            irrigated = None
+        elif isinstance(irrigated_raw, str):
+            raw = irrigated_raw.strip().lower()
+            if raw in {"1", "true", "yes"}:
+                irrigated = True
+            elif raw in {"0", "false", "no"}:
+                irrigated = False
+            else:
+                self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "irrigated non valido."})
+                return
+        else:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "irrigated non valido."})
+            return
+
+        try:
+            deleted = _agriculture_cultivar_store.delete(
+                category_id=category_id,
+                cultivar=cultivar,
+                cultivation_method=cultivation_method,
+                irrigated=irrigated,
+            )
+            self.send_json(HTTPStatus.OK, {"ok": True, "deleted": deleted})
+        except ValueError as exc:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": str(exc)})
+        except Exception as exc:
+            _log.error("agriculture-cultivars delete failed: %s", exc)
+            self.send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {"ok": False, "message": "Impossibile eliminare la cultivar."},
+            )
 
     def _read_json_payload(self) -> dict[str, object] | None:
         length = int(self.headers.get("Content-Length", "0") or "0")

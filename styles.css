@@ -1726,6 +1726,21 @@ input[type="checkbox"] {
     gap: 8px;
 }
 
+.dsl-cultivar-catalog {
+    display: grid;
+    gap: 8px;
+}
+
+.dsl-cultivar-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+#dsl-cultivar-status {
+    margin: 0;
+}
+
 #btn-dsl-assign[disabled] {
     opacity: 0.55;
     cursor: not-allowed;

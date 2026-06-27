@@ -130,6 +130,8 @@ export default class Planimeter {
         this.mapTileLoadCount = 0;
         this.lastPointerPixel = null;
         this.pendingVertexDeleteAll = null;
+        this.agricultureCultivars = [];
+        this.agricultureCultivarByName = new Map();
 
         this.vectorSource = new VectorSource();
         this.pertenenzaSource = new VectorSource();
@@ -286,6 +288,10 @@ export default class Planimeter {
             this.updateDslAssignmentControls();
         }).catch((err) => {
             console.warn('[DSL] init failed:', err);
+        });
+
+        this.loadAgricultureCultivarCatalog().catch((err) => {
+            console.warn('[DSL] agriculture cultivar catalog load failed:', err);
         });
 
         // ── Belfiore (comune name) lookup — async, non-blocking ──────────────
@@ -579,6 +585,13 @@ export default class Planimeter {
             dslUnassignButton:         document.getElementById('btn-dsl-unassign'),
             dslAssignHint:             document.getElementById('dsl-assign-hint'),
             dslCadastralLinks:         document.getElementById('dsl-cadastral-links'),
+            dslCultivarCatalog:        document.getElementById('dsl-cultivar-catalog'),
+            dslCultivarName:           document.getElementById('dsl-cultivar-name'),
+            dslCultivarYield:          document.getElementById('dsl-cultivar-yield'),
+            dslCultivarMethod:         document.getElementById('dsl-cultivar-method'),
+            dslCultivarSaveButton:     document.getElementById('btn-dsl-cultivar-save'),
+            dslCultivarDeleteButton:   document.getElementById('btn-dsl-cultivar-delete'),
+            dslCultivarStatus:         document.getElementById('dsl-cultivar-status'),
         };
     }
 
@@ -1091,6 +1104,8 @@ export default class Planimeter {
         this.elements.dslAssignButton?.addEventListener('click',        () => this.applySelectedFeatureCategory());
         this.elements.dslUnassignButton?.addEventListener('click',      () => this.unassignSelectedFeatureCategory());
         this.elements.dslCategorySelect?.addEventListener('change',      () => this.updateDslAssignmentControls(false));
+        this.elements.dslCultivarSaveButton?.addEventListener('click',   () => this.saveAgricultureCultivarFromPanel());
+        this.elements.dslCultivarDeleteButton?.addEventListener('click', () => this.deleteAgricultureCultivarFromPanel());
         this.elements.importInput.addEventListener('change', (ev) => this.importFeatures(ev));
         this.elements.loadDomainButton?.addEventListener('click', () => this.elements.loadDomainInput?.click());
         this.elements.loadDomainInput?.addEventListener('change', (ev) => this.loadDomainFromFile(ev));
@@ -2288,6 +2303,7 @@ export default class Planimeter {
             section.hidden = false;
             this._renderDslPanelHeader(fallbackDomain);
             this._renderDslCategoryOptions(fallbackDomain, rebuildOptions);
+            this.renderAgricultureCultivarCatalogPanel(fallbackDomain, null);
             if (this.elements.dslAssignFeatureValue)
                 this.elements.dslAssignFeatureValue.textContent = t('dsl.assign.noFeature');
             this.renderSelectedFeatureCadastralLinks(null);
@@ -2306,6 +2322,7 @@ export default class Planimeter {
         if (!domain) {
             // Mixed-layer selection with no common applicable domain.
             this._renderDslPanelHeader(null);
+            this.renderAgricultureCultivarCatalogPanel(null, null);
             select.innerHTML = '';
             select.disabled = true;
             button.disabled = true;
@@ -2323,6 +2340,7 @@ export default class Planimeter {
         this._renderDslPanelHeader(domain);
 
         const feature = selectedPolygons.length === 1 ? selectedPolygons[0] : null;
+        this.renderAgricultureCultivarCatalogPanel(domain, feature);
         const featureIsPolygon = Boolean(feature);
         const multiSelection = selectedPolygons.length > 1;
         const currentDsl = featureIsPolygon ? feature.get('dsl') : null;
@@ -2614,6 +2632,9 @@ export default class Planimeter {
         const categoryLabel = categoryDef
             ? (categoryDef.labelKey ? t(categoryDef.labelKey) : (categoryDef.label ?? categoryId))
             : categoryId;
+        const hadPreviousAssignmentSingle = targets.length === 1
+            ? Boolean(String(targets[0]?.get?.('dsl')?.categoryId || '').trim())
+            : false;
 
         // Validate required fields
         const formContainer = this.elements.dslFieldsForm;
@@ -2629,6 +2650,7 @@ export default class Planimeter {
             }
         }
 
+        const formValues = targets.length === 1 ? this.collectDslFormValues() : null;
         for (const feature of targets) {
             const basePayload = buildDslPayload(domain.id, categoryId, domain.fields ?? []);
             const existing = feature.get('dsl');
@@ -2636,6 +2658,14 @@ export default class Planimeter {
                 for (const field of domain.fields ?? []) {
                     if (Object.prototype.hasOwnProperty.call(existing.values, field.id)) {
                         basePayload.values[field.id] = existing.values[field.id];
+                    }
+                }
+            }
+
+            if (formValues && typeof formValues === 'object') {
+                for (const field of domain.fields ?? []) {
+                    if (Object.prototype.hasOwnProperty.call(formValues, field.id)) {
+                        basePayload.values[field.id] = formValues[field.id];
                     }
                 }
             }
@@ -2651,7 +2681,7 @@ export default class Planimeter {
 
         if (targets.length === 1) {
             const feature = targets[0];
-            this.setToolbarMessage(t('msg.categoryAssigned', {
+            this.setToolbarMessage(t(hadPreviousAssignmentSingle ? 'msg.categoryChanged' : 'msg.categoryAssigned', {
                 category: categoryLabel,
                 name: feature.get('featureName') || feature.get('featureId') || '-',
             }));
@@ -2818,7 +2848,7 @@ export default class Planimeter {
         });
     }
 
-    buildFieldControl(field, currentValue = null, featureDsl = null) {
+    buildFieldControl(field, currentValue = null, featureDsl = null, domainId = null) {
         const fieldId = field.id;
         const label = field.labelKey ? t(field.labelKey) : (field.label ?? fieldId);
         const isRequired = field.required ?? false;
@@ -2931,6 +2961,49 @@ export default class Planimeter {
             input.dataset.fieldId = fieldId;
             if (isRequired) input.required = true;
             if (currentValue) input.value = String(currentValue);
+
+            if ((featureDsl?.domainId === 'agriculture' || domainId === 'agriculture') && fieldId === 'variety') {
+                const select = document.createElement('select');
+                select.id = `dsl-field-${fieldId}`;
+                select.className = 'dsl-field-input';
+                select.dataset.fieldId = fieldId;
+                if (isRequired) select.required = true;
+
+                const freeOpt = document.createElement('option');
+                freeOpt.value = '';
+                freeOpt.textContent = '— ' + t('dsl.cultivar.selectPlaceholder') + ' —';
+                select.appendChild(freeOpt);
+
+                const categoryId = String(featureDsl?.categoryId || this.elements.dslCategorySelect?.value || '').trim();
+                const candidates = this.getAgricultureCultivarCandidates(categoryId, featureDsl?.values ?? {});
+                const seen = new Set();
+                for (const item of candidates) {
+                    const cultivar = String(item?.cultivar ?? '').trim();
+                    if (!cultivar) continue;
+                    const key = cultivar.toLowerCase();
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    const opt = document.createElement('option');
+                    opt.value = cultivar;
+                    opt.textContent = cultivar;
+                    select.appendChild(opt);
+                }
+
+                const currentText = String(currentValue || '').trim();
+                if (currentText && !seen.has(currentText.toLowerCase())) {
+                    const customOpt = document.createElement('option');
+                    customOpt.value = currentText;
+                    customOpt.textContent = `${currentText} (${t('dsl.cultivar.customValue')})`;
+                    customOpt.dataset.custom = '1';
+                    select.appendChild(customOpt);
+                }
+                select.value = currentText;
+
+                select.addEventListener('change', (e) => this.updateFeatureDslFieldValue(fieldId, e.target.value));
+                container.appendChild(select);
+                return container;
+            }
+
             input.addEventListener('change', (e) => this.updateFeatureDslFieldValue(fieldId, e.target.value));
             container.appendChild(input);
             return container;
@@ -2952,7 +3025,7 @@ export default class Planimeter {
 
         for (const field of fields) {
             const currentValue = currentDsl?.values?.[field.id] ?? null;
-            const control = this.buildFieldControl(field, currentValue, currentDsl);
+            const control = this.buildFieldControl(field, currentValue, currentDsl, domain?.id ?? null);
             formContainer.appendChild(control);
         }
     }
@@ -2963,15 +3036,450 @@ export default class Planimeter {
 
         let dsl = feature.get('dsl');
         if (!dsl || typeof dsl !== 'object' || !dsl.values || typeof dsl.values !== 'object') {
-            return;
+            const categoryId = String(this.elements.dslCategorySelect?.value || '').trim();
+            const resolution = this.resolveDomainForSelection([feature]);
+            const domain = resolution.domain;
+            if (!domain || !categoryId) {
+                return;
+            }
+            dsl = buildDslPayload(domain.id, categoryId, domain.fields ?? []);
         }
 
         dsl.values[fieldId] = value;
+        this.applyAgricultureCultivarPresetIfNeeded(dsl, fieldId);
         feature.set('dsl', dsl);
         feature.set('version', (feature.get('version') ?? 1) + 1);
         feature.set('modifiedAt', new Date().toISOString());
 
+        this.persistAgricultureCultivarIfPossible(dsl);
+
         schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource);
+    }
+
+    collectDslFormValues() {
+        const formContainer = this.elements.dslFieldsForm;
+        if (!formContainer) return {};
+
+        const values = {};
+        const controls = formContainer.querySelectorAll('.dsl-field-input[data-field-id]');
+        for (const control of controls) {
+            const fieldId = String(control.dataset.fieldId || '').trim();
+            if (!fieldId) continue;
+
+            if (control.type === 'checkbox') {
+                values[fieldId] = Boolean(control.checked);
+                continue;
+            }
+
+            if (control.type === 'number') {
+                const raw = String(control.value || '').trim();
+                values[fieldId] = raw === '' ? null : Number(raw);
+                continue;
+            }
+
+            values[fieldId] = String(control.value || '');
+        }
+        return values;
+    }
+
+    normalizeCultivarKey(value) {
+        return String(value || '').trim().toLowerCase();
+    }
+
+    upsertLocalAgricultureCultivar(item) {
+        const cultivar = String(item?.cultivar ?? '').trim();
+        if (!cultivar) return;
+        const normalized = {
+            categoryId: String(item?.category_id ?? item?.categoryId ?? '').trim(),
+            cultivar,
+            expectedYieldQHa: item?.expected_yield_q_ha ?? item?.expectedYieldQHa ?? null,
+            cultivationMethod: String(item?.cultivation_method ?? item?.cultivationMethod ?? '').trim() || null,
+            irrigated: item?.irrigated === true ? true : (item?.irrigated === false ? false : null),
+        };
+        const key = [
+            normalized.categoryId,
+            this.normalizeCultivarKey(cultivar),
+            normalized.cultivationMethod ?? '',
+            normalized.irrigated === null ? 'any' : (normalized.irrigated ? '1' : '0'),
+        ].join('|');
+        this.agricultureCultivarByName.set(key, normalized);
+
+        const idx = this.agricultureCultivars.findIndex((row) => {
+            const rowKey = [
+                String(row?.categoryId ?? '').trim(),
+                this.normalizeCultivarKey(row?.cultivar),
+                String(row?.cultivationMethod ?? '').trim(),
+                row?.irrigated === null || row?.irrigated === undefined ? 'any' : (row.irrigated ? '1' : '0'),
+            ].join('|');
+            return rowKey === key;
+        });
+        if (idx >= 0) {
+            this.agricultureCultivars[idx] = normalized;
+        } else {
+            this.agricultureCultivars.push(normalized);
+            this.agricultureCultivars.sort((a, b) => {
+                const byCategory = String(a.categoryId).localeCompare(String(b.categoryId));
+                if (byCategory !== 0) return byCategory;
+                return String(a.cultivar).localeCompare(String(b.cultivar));
+            });
+        }
+    }
+
+    getAgricultureCultivarCandidates(categoryId, dslValues = {}) {
+        const normalizedCategory = String(categoryId || '').trim();
+        if (!normalizedCategory) return [];
+
+        const categoryRows = this.agricultureCultivars.filter(
+            (row) => String(row?.categoryId || '').trim() === normalizedCategory,
+        );
+        if (categoryRows.length === 0) return [];
+
+        const selectedMethod = String(dslValues?.fertilization || '').trim();
+        const rawIrrigated = dslValues?.irrigated;
+        const selectedIrrigated = rawIrrigated === true ? true : (rawIrrigated === false ? false : null);
+
+        const hasMethodFilter = selectedMethod !== '';
+        const hasIrrigatedFilter = selectedIrrigated !== null;
+        if (!hasMethodFilter && !hasIrrigatedFilter) {
+            return categoryRows;
+        }
+
+        const strictRows = categoryRows.filter((row) => {
+            if (hasMethodFilter && String(row?.cultivationMethod || '').trim() !== selectedMethod) {
+                return false;
+            }
+            if (hasIrrigatedFilter && row?.irrigated !== selectedIrrigated) {
+                return false;
+            }
+            return true;
+        });
+
+        // Fallback richiesto: se nessun match esatto, mostra cultivar pertinenti
+        // alla categoria selezionata.
+        return strictRows.length > 0 ? strictRows : categoryRows;
+    }
+
+    findBestAgricultureCultivarPreset(cultivar, dsl) {
+        const normalizedCultivar = this.normalizeCultivarKey(cultivar);
+        if (!normalizedCultivar || !dsl) return null;
+
+        const categoryId = String(dsl.categoryId || '').trim();
+        const candidates = this.getAgricultureCultivarCandidates(categoryId, dsl.values ?? {});
+        return candidates.find((row) => this.normalizeCultivarKey(row?.cultivar) === normalizedCultivar) ?? null;
+    }
+
+    removeLocalAgricultureCultivar(entry) {
+        const categoryId = String(entry?.category_id ?? entry?.categoryId ?? '').trim();
+        const cultivar = this.normalizeCultivarKey(entry?.cultivar);
+        const method = String(entry?.cultivation_method ?? entry?.cultivationMethod ?? '').trim();
+        const irrigated = entry?.irrigated === true ? true : (entry?.irrigated === false ? false : null);
+        const rowKey = [
+            categoryId,
+            cultivar,
+            method,
+            irrigated === null ? 'any' : (irrigated ? '1' : '0'),
+        ].join('|');
+
+        this.agricultureCultivarByName.delete(rowKey);
+        this.agricultureCultivars = this.agricultureCultivars.filter((row) => {
+            const key = [
+                String(row?.categoryId ?? '').trim(),
+                this.normalizeCultivarKey(row?.cultivar),
+                String(row?.cultivationMethod ?? '').trim(),
+                row?.irrigated === null || row?.irrigated === undefined ? 'any' : (row.irrigated ? '1' : '0'),
+            ].join('|');
+            return key !== rowKey;
+        });
+    }
+
+    async loadAgricultureCultivarCatalog() {
+        const response = await fetch('/agriculture-cultivars', {
+            method: 'GET',
+            cache: 'no-store',
+            headers: {
+                Accept: 'application/json',
+            },
+        });
+        if (!response.ok) return;
+        const payload = await response.json();
+        const items = Array.isArray(payload?.items) ? payload.items : [];
+        this.agricultureCultivars = [];
+        this.agricultureCultivarByName = new Map();
+        for (const item of items) {
+            this.upsertLocalAgricultureCultivar(item);
+        }
+        this.refreshAgricultureFormIfVisible();
+        this.updateDslAssignmentControls(false);
+    }
+
+    setAgricultureCultivarPanelStatus(message, tone = 'neutral') {
+        const statusEl = this.elements.dslCultivarStatus;
+        if (!statusEl) return;
+        statusEl.textContent = message;
+        statusEl.style.color = tone === 'error'
+            ? '#ff9f9f'
+            : (tone === 'success' ? '#9af0c8' : '');
+    }
+
+    renderAgricultureCultivarCatalogPanel(domain, feature) {
+        const panel = this.elements.dslCultivarCatalog;
+        const nameInput = this.elements.dslCultivarName;
+        const yieldInput = this.elements.dslCultivarYield;
+        const methodInput = this.elements.dslCultivarMethod;
+        if (!panel || !nameInput || !yieldInput || !methodInput) return;
+
+        const isAgriculture = domain?.id === 'agriculture';
+        panel.hidden = !isAgriculture;
+        if (!isAgriculture) return;
+
+        const dsl = feature?.get?.('dsl');
+        if (dsl?.domainId === 'agriculture') {
+            const cultivar = String(dsl.values?.variety || '').trim();
+            const expected = dsl.values?.expected_yield_q_ha;
+            const method = String(dsl.values?.fertilization || '').trim();
+            nameInput.value = cultivar;
+            yieldInput.value = expected === null || expected === undefined || expected === '' ? '' : String(expected);
+            methodInput.value = method;
+
+            const preset = this.findBestAgricultureCultivarPreset(cultivar, dsl);
+            if (preset) {
+                this.setAgricultureCultivarPanelStatus(t('dsl.cultivar.statusPresetFound'));
+            } else {
+                this.setAgricultureCultivarPanelStatus(t('dsl.cultivar.statusPresetMissing'));
+            }
+            return;
+        }
+
+        if (!nameInput.value && this.agricultureCultivars.length > 0) {
+            const first = this.agricultureCultivars[0];
+            nameInput.value = first.cultivar;
+            yieldInput.value = first.expectedYieldQHa === null || first.expectedYieldQHa === undefined
+                ? ''
+                : String(first.expectedYieldQHa);
+            methodInput.value = first.cultivationMethod ?? '';
+        }
+        this.setAgricultureCultivarPanelStatus(t('dsl.cultivar.hint'));
+    }
+
+    async saveAgricultureCultivarFromPanel() {
+        const nameInput = this.elements.dslCultivarName;
+        const yieldInput = this.elements.dslCultivarYield;
+        const methodInput = this.elements.dslCultivarMethod;
+        if (!nameInput || !yieldInput || !methodInput) return;
+
+        const cultivar = String(nameInput.value || '').trim();
+        if (!cultivar) {
+            this.setAgricultureCultivarPanelStatus(t('dsl.cultivar.errorNameRequired'), 'error');
+            return;
+        }
+
+        const rawYield = String(yieldInput.value || '').trim();
+        let expectedYieldQHa = null;
+        if (rawYield) {
+            const parsed = Number(rawYield);
+            if (!Number.isFinite(parsed) || parsed < 0) {
+                this.setAgricultureCultivarPanelStatus(t('dsl.cultivar.errorYieldInvalid'), 'error');
+                return;
+            }
+            expectedYieldQHa = parsed;
+        }
+
+        const cultivationMethod = String(methodInput.value || '').trim() || null;
+        const categoryId = String(this.elements.dslCategorySelect?.value || '').trim();
+        if (!categoryId) {
+            this.setAgricultureCultivarPanelStatus(t('dsl.cultivar.errorCategoryRequired'), 'error');
+            return;
+        }
+
+        const irrigatedInput = document.getElementById('dsl-field-irrigated');
+        const irrigated = irrigatedInput ? Boolean(irrigatedInput.checked) : null;
+
+        this.setAgricultureCultivarPanelStatus(t('dsl.cultivar.statusSaving'));
+        try {
+            const response = await fetch('/agriculture-cultivars', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                },
+                body: JSON.stringify({
+                    category_id: categoryId,
+                    cultivar,
+                    expected_yield_q_ha: expectedYieldQHa,
+                    cultivation_method: cultivationMethod,
+                    irrigated,
+                }),
+            });
+            if (!response.ok) {
+                this.setAgricultureCultivarPanelStatus(t('dsl.cultivar.errorSaveFailed'), 'error');
+                return;
+            }
+            const payload = await response.json();
+            if (!payload?.ok || !payload?.item) {
+                this.setAgricultureCultivarPanelStatus(t('dsl.cultivar.errorSaveFailed'), 'error');
+                return;
+            }
+            this.upsertLocalAgricultureCultivar(payload.item);
+            const selectedCategoryId = String(this.elements.dslCategorySelect?.value || '').trim();
+            const selectedFeature = this.state.selectedFeature;
+            const domain = getDomain('agriculture');
+            if (this.isPolygonFeature(selectedFeature) && domain && selectedCategoryId) {
+                this.renderDslFieldForm(selectedFeature, domain, selectedCategoryId);
+            } else {
+                this.refreshAgricultureFormIfVisible();
+            }
+            this.setAgricultureCultivarPanelStatus(t('dsl.cultivar.statusSaved'), 'success');
+        } catch {
+            this.setAgricultureCultivarPanelStatus(t('dsl.cultivar.errorSaveFailed'), 'error');
+        }
+    }
+
+    async deleteAgricultureCultivarFromPanel() {
+        const nameInput = this.elements.dslCultivarName;
+        const methodInput = this.elements.dslCultivarMethod;
+        if (!nameInput || !methodInput) return;
+
+        const cultivar = String(nameInput.value || '').trim();
+        if (!cultivar) {
+            this.setAgricultureCultivarPanelStatus(t('dsl.cultivar.errorNameRequired'), 'error');
+            return;
+        }
+
+        const categoryId = String(this.elements.dslCategorySelect?.value || '').trim();
+        if (!categoryId) {
+            this.setAgricultureCultivarPanelStatus(t('dsl.cultivar.errorCategoryRequired'), 'error');
+            return;
+        }
+
+        const cultivationMethod = String(methodInput.value || '').trim() || null;
+        const irrigatedInput = document.getElementById('dsl-field-irrigated');
+        const irrigated = irrigatedInput ? Boolean(irrigatedInput.checked) : null;
+
+        this.setAgricultureCultivarPanelStatus(t('dsl.cultivar.statusDeleting'));
+        try {
+            const response = await fetch('/agriculture-cultivars', {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                },
+                body: JSON.stringify({
+                    category_id: categoryId,
+                    cultivar,
+                    cultivation_method: cultivationMethod,
+                    irrigated,
+                }),
+            });
+
+            if (!response.ok) {
+                this.setAgricultureCultivarPanelStatus(t('dsl.cultivar.errorDeleteFailed'), 'error');
+                return;
+            }
+
+            const payload = await response.json();
+            const deleted = Number(payload?.deleted || 0);
+            if (deleted <= 0) {
+                this.setAgricultureCultivarPanelStatus(t('dsl.cultivar.errorDeleteMissing'), 'error');
+                return;
+            }
+
+            this.removeLocalAgricultureCultivar({
+                category_id: categoryId,
+                cultivar,
+                cultivation_method: cultivationMethod,
+                irrigated,
+            });
+
+            const selectedCategoryId = String(this.elements.dslCategorySelect?.value || '').trim();
+            const selectedFeature = this.state.selectedFeature;
+            const domain = getDomain('agriculture');
+            if (this.isPolygonFeature(selectedFeature) && domain && selectedCategoryId) {
+                this.renderDslFieldForm(selectedFeature, domain, selectedCategoryId);
+            }
+
+            this.setAgricultureCultivarPanelStatus(t('dsl.cultivar.statusDeleted'), 'success');
+        } catch {
+            this.setAgricultureCultivarPanelStatus(t('dsl.cultivar.errorDeleteFailed'), 'error');
+        }
+    }
+
+    refreshAgricultureFormIfVisible() {
+        const feature = this.state.selectedFeature;
+        if (!this.isPolygonFeature(feature)) return;
+        const dsl = feature.get('dsl');
+        const selectedCategoryId = String(this.elements.dslCategorySelect?.value || '').trim();
+        const categoryId = String(dsl?.categoryId || selectedCategoryId || '').trim();
+        const isAgriculture = dsl?.domainId === 'agriculture' || Boolean(categoryId);
+        if (!isAgriculture || !categoryId) return;
+        const domain = getDomain('agriculture');
+        if (!domain) return;
+        this.renderDslFieldForm(feature, domain, categoryId);
+    }
+
+    applyAgricultureCultivarPresetIfNeeded(dsl, changedFieldId) {
+        if (!dsl || dsl.domainId !== 'agriculture' || changedFieldId !== 'variety') return;
+        const cultivar = String(dsl.values?.variety || '').trim();
+        if (!cultivar) return;
+        const preset = this.findBestAgricultureCultivarPreset(cultivar, dsl);
+        if (!preset) return;
+
+        if (preset.expectedYieldQHa === null || preset.expectedYieldQHa === undefined) {
+            dsl.values.expected_yield_q_ha = null;
+        } else {
+            dsl.values.expected_yield_q_ha = Number(preset.expectedYieldQHa);
+        }
+        dsl.values.fertilization = preset.cultivationMethod ?? '';
+
+        const yieldInput = document.getElementById('dsl-field-expected_yield_q_ha');
+        if (yieldInput) {
+            yieldInput.value = dsl.values.expected_yield_q_ha ?? '';
+        }
+        const methodInput = document.getElementById('dsl-field-fertilization');
+        if (methodInput) {
+            methodInput.value = dsl.values.fertilization ?? '';
+        }
+    }
+
+    persistAgricultureCultivarIfPossible(dsl) {
+        if (!dsl || dsl.domainId !== 'agriculture') return;
+        const categoryId = String(dsl.categoryId || '').trim();
+        if (!categoryId) return;
+        const cultivar = String(dsl.values?.variety || '').trim();
+        if (!cultivar) return;
+
+        const expectedRaw = dsl.values?.expected_yield_q_ha;
+        let expectedYieldQHa = null;
+        if (expectedRaw !== null && expectedRaw !== undefined && expectedRaw !== '') {
+            const parsed = Number(expectedRaw);
+            if (Number.isFinite(parsed) && parsed >= 0) {
+                expectedYieldQHa = parsed;
+            }
+        }
+
+        const cultivationMethod = String(dsl.values?.fertilization || '').trim() || null;
+        const irrigatedRaw = dsl.values?.irrigated;
+        const irrigated = irrigatedRaw === true ? true : (irrigatedRaw === false ? false : null);
+
+        fetch('/agriculture-cultivars', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+            },
+            body: JSON.stringify({
+                category_id: categoryId,
+                cultivar,
+                expected_yield_q_ha: expectedYieldQHa,
+                cultivation_method: cultivationMethod,
+                irrigated,
+            }),
+        }).then(async (response) => {
+            if (!response.ok) return;
+            const payload = await response.json();
+            if (payload?.ok && payload?.item) {
+                this.upsertLocalAgricultureCultivar(payload.item);
+            }
+        }).catch(() => {});
     }
 
     // ── Feature actions ──────────────────────────────────────────────────────────

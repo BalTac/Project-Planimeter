@@ -26,6 +26,7 @@ def _load_server_module() -> types.ModuleType:
 _server = _load_server_module()
 Handler = _server.PlanimeterHandler  # type: ignore[attr-defined]
 TileCache = _server.TileCache  # type: ignore[attr-defined]
+AgricultureCultivarStore = _server.AgricultureCultivarStore  # type: ignore[attr-defined]
 _WMS_ALLOWED_PARAMS = _server._WMS_ALLOWED_PARAMS  # type: ignore[attr-defined]
 _RateLimiter = _server._RateLimiter  # type: ignore[attr-defined]
 
@@ -46,6 +47,9 @@ class TestModuleSmoke(unittest.TestCase):
 
     def test_tile_cache_class_exists(self):
         self.assertTrue(callable(TileCache))
+
+    def test_agriculture_cultivar_store_class_exists(self):
+        self.assertTrue(callable(AgricultureCultivarStore))
 
     def test_upstream_wms_constant(self):
         url = _server.UPSTREAM_WMS  # type: ignore[attr-defined]
@@ -179,6 +183,121 @@ class TestTileCacheBasics(unittest.TestCase):
         self.cache.clear_all()
         self.assertIsNone(self.cache.get("k3"))
         self.assertEqual(self.cache.stats()["count"], 0)
+
+
+class TestAgricultureCultivarStore(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self._tmpdir = tempfile.mkdtemp()
+        self.db_path = pathlib.Path(self._tmpdir) / "agriculture.db"
+
+    def test_seed_rows_loaded_on_empty_db(self):
+        store = AgricultureCultivarStore(
+            self.db_path,
+            seed_rows=[
+                {
+                    "category_id": "grano_duro",
+                    "cultivar": "Grano duro",
+                    "expected_yield_q_ha": 58.0,
+                    "cultivation_method": "integrata",
+                }
+            ],
+        )
+        items, fallback = store.list_items(category_id="grano_duro")
+        self.assertFalse(fallback)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["category_id"], "grano_duro")
+        self.assertEqual(items[0]["cultivar"], "Grano duro")
+        self.assertEqual(items[0]["expected_yield_q_ha"], 58.0)
+        self.assertEqual(items[0]["cultivation_method"], "integrata")
+
+    def test_upsert_updates_existing_cultivar(self):
+        store = AgricultureCultivarStore(self.db_path)
+        first = store.upsert(
+            category_id="vigna",
+            cultivar="Sangiovese",
+            expected_yield_q_ha=120.0,
+            cultivation_method="biologica",
+            irrigated=True,
+        )
+        second = store.upsert(
+            category_id="vigna",
+            cultivar="Sangiovese",
+            expected_yield_q_ha=135.5,
+            cultivation_method="integrata",
+            irrigated=True,
+        )
+        items, _fallback = store.list_items(category_id="vigna")
+        self.assertEqual(len(items), 2)
+        self.assertEqual(first["cultivar"], "Sangiovese")
+        self.assertEqual(second["expected_yield_q_ha"], 135.5)
+        self.assertTrue(any(item["cultivation_method"] == "integrata" for item in items))
+
+    def test_category_filter_fallback_when_no_exact_match(self):
+        store = AgricultureCultivarStore(self.db_path)
+        store.upsert(
+            category_id="grano_duro",
+            cultivar="Averngur",
+            expected_yield_q_ha=55.0,
+            cultivation_method="convenzionale",
+            irrigated=False,
+        )
+
+        items, fallback = store.list_items(
+            category_id="grano_duro",
+            cultivation_method="biologica",
+            irrigated=1,
+            fallback_to_category=True,
+        )
+        self.assertTrue(fallback)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["cultivar"], "Averngur")
+
+    def test_legacy_global_fallback_when_category_empty(self):
+        import sqlite3
+
+        store = AgricultureCultivarStore(self.db_path)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO agriculture_cultivars "
+                "(category_id, cultivar, expected_yield_q_ha, cultivation_method, irrigated, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+                ("", "Arabesk", 47.0, "convenzionale", 0),
+            )
+
+        items, fallback = store.list_items(category_id="sorgo")
+        self.assertTrue(fallback)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["cultivar"], "Arabesk")
+
+    def test_delete_removes_exact_context_row(self):
+        store = AgricultureCultivarStore(self.db_path)
+        store.upsert(
+            category_id="sorgo",
+            cultivar="Arabesk",
+            expected_yield_q_ha=50.0,
+            cultivation_method="convenzionale",
+            irrigated=False,
+        )
+        store.upsert(
+            category_id="sorgo",
+            cultivar="Arabesk",
+            expected_yield_q_ha=53.0,
+            cultivation_method="integrata",
+            irrigated=False,
+        )
+
+        deleted = store.delete(
+            category_id="sorgo",
+            cultivar="Arabesk",
+            cultivation_method="convenzionale",
+            irrigated=False,
+        )
+        self.assertEqual(deleted, 1)
+
+        items, _fallback = store.list_items(category_id="sorgo")
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["cultivation_method"], "integrata")
 
 
 if __name__ == "__main__":
