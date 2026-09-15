@@ -34,12 +34,15 @@ while [[ $# -gt 0 ]]; do
 done
 
 PYTHON_BIN=""
-if command -v python3 >/dev/null 2>&1; then
+if [ -x "$SCRIPT_DIR/.venv/bin/python" ]; then
+    PYTHON_BIN="$SCRIPT_DIR/.venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
     PYTHON_BIN="python3"
 elif command -v python >/dev/null 2>&1; then
     PYTHON_BIN="python"
 else
     echo "Python not found in PATH. Install Python and retry." >&2
+    echo "Alternatively run scripts/bootstrap.sh to create .venv." >&2
     exit 1
 fi
 

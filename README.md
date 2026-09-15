@@ -3,7 +3,7 @@
 > Web app standalone per misurare superfici e distanze su mappa, con GIS leggero, overlay catastale ufficiale e **autodetect particella** pixel-perfect tramite proxy WMS locale.
 
 <p align="center">
-  <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white">
+  <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white">
   <img alt="OpenLayers" src="https://img.shields.io/badge/OpenLayers-8.2.0-1f6feb?logo=openlayers">
   <img alt="No bundler" src="https://img.shields.io/badge/build-no%20bundler-success">
   <img alt="License" src="https://img.shields.io/badge/license-see%20LICENSE-lightgrey">
@@ -45,7 +45,7 @@
 |---|---|
 | Frontend | HTML + CSS + JavaScript ES modules (no bundler) |
 | Mappa | [OpenLayers 8.2.0](https://openlayers.org) via importmap su `esm.sh` |
-| Backend locale | Python 3.10+, `http.server`, `urllib`, `sqlite3` |
+| Backend locale | Python 3.11+, `http.server`, `urllib`, `sqlite3` |
 | Image stack | Pillow, OpenCV (`opencv-python`), numpy |
 | Cache tile WMS | SQLite con TTL e quota dimensione |
 | Persistenza utente | Ibrida: `localStorage` browser + mirror locale backend (`.planimeter_state_store.json`) |
@@ -62,6 +62,11 @@ python server.py
 # 3. Apri l'app
 # http://127.0.0.1:8000/planimeter.html
 ```
+
+Per ricreare l'ambiente in modo riproducibile (venv `.venv` + dipendenze pinnate), usa gli script di bootstrap; la versione Python supportata è dichiarata in [.python-version](.python-version):
+
+- Windows (PowerShell): [scripts/bootstrap.ps1](scripts/bootstrap.ps1)
+- Linux/macOS: [scripts/bootstrap.sh](scripts/bootstrap.sh)
 
 Launcher pronti all'uso:
 

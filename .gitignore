@@ -4,7 +4,7 @@ __pycache__/
 *.pyd
 .env
 .vscode/
-.venv/
+.venv*/
 wms-test.png
 _debug_*
 AGENTS.md
@@ -12,9 +12,9 @@ logs/
 _tile_cache/
 *.db
 .agents/
-.planimeter_history_store.json
-.planimeter_request_quota.json
-.planimeter_state_store.json
+.planimeter_history_store*.json
+.planimeter_request_quota*.json
+.planimeter_state_store*.json
 AUDIT_*.md
 SESSION_*.md
 TEST_RESULTS_*.md
@@ -23,4 +23,4 @@ app.js
 
 graphify-out/
 tests/output/
-raw/
+wiki/
