@@ -33,23 +33,23 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Prefer the portable interpreter installed per-machine by scripts/bootstrap.* and
-# override its location with the PLANIMETER_PYTHON environment variable.
+# Interpreter precedence: PLANIMETER_PYTHON, then a repo-local .venv you created, then the
+# portable interpreter recommended by scripts/bootstrap.sh, then python3/python from PATH.
 PORTABLE_CANDIDATES=()
 if [ -n "${PLANIMETER_PYTHON:-}" ]; then PORTABLE_CANDIDATES+=("$PLANIMETER_PYTHON"); fi
+PORTABLE_CANDIDATES+=("$SCRIPT_DIR/.venv")
 if [ -n "${LOCALAPPDATA:-}" ]; then PORTABLE_CANDIDATES+=("$LOCALAPPDATA/planimeter/python"); fi
 PORTABLE_CANDIDATES+=("${XDG_DATA_HOME:-$HOME/.local/share}/planimeter/python")
 
 PYTHON_BIN=""
 for candidate in "${PORTABLE_CANDIDATES[@]}"; do
-    if [ -x "$candidate/bin/python3" ]; then
-        PYTHON_BIN="$candidate/bin/python3"
-        break
-    fi
-    if [ -x "$candidate/python.exe" ]; then
-        PYTHON_BIN="$candidate/python.exe"
-        break
-    fi
+    # POSIX venv layout, Windows venv layout, then a bare interpreter directory.
+    for layout in bin/python3 bin/python Scripts/python.exe python.exe; do
+        if [ -x "$candidate/$layout" ]; then
+            PYTHON_BIN="$candidate/$layout"
+            break 2
+        fi
+    done
 done
 
 if [ -z "$PYTHON_BIN" ]; then
@@ -58,7 +58,7 @@ if [ -z "$PYTHON_BIN" ]; then
     elif command -v python >/dev/null 2>&1; then
         PYTHON_BIN="python"
     else
-        echo "Python not found. Run scripts/bootstrap.ps1 (Windows) or scripts/bootstrap.sh to install the portable interpreter." >&2
+        echo "Python not found. Run scripts/bootstrap.ps1 (Windows) or scripts/bootstrap.sh for the recommended portable interpreter, create a .venv, or install Python." >&2
         exit 1
     fi
 fi

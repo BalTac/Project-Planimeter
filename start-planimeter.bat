@@ -31,10 +31,13 @@ shift
 goto parse_args
 
 :args_done
-rem Prefer the portable interpreter installed per-machine by scripts\bootstrap.ps1.
-rem Override the location with the PLANIMETER_PYTHON environment variable.
+rem Interpreter precedence: PLANIMETER_PYTHON, then a repo-local .venv you created,
+rem then the portable interpreter recommended by scripts\bootstrap.ps1, then PATH.
 if defined PLANIMETER_PYTHON set "PYTHON_BIN=%PLANIMETER_PYTHON%\python.exe"
-if not defined PYTHON_BIN set "PYTHON_BIN=%LOCALAPPDATA%\planimeter\python\python.exe"
+if not defined PYTHON_BIN set "PYTHON_BIN=%~dp0.venv\Scripts\python.exe"
+if exist "%PYTHON_BIN%" goto python_ready
+
+set "PYTHON_BIN=%LOCALAPPDATA%\planimeter\python\python.exe"
 if exist "%PYTHON_BIN%" goto python_ready
 
 where python >nul 2>&1
@@ -44,7 +47,7 @@ goto python_ready
 
 :python_missing
 echo Python non trovato nel PATH.
-echo Esegui scripts\bootstrap.ps1 per installare l'interprete portable, oppure installa Python e riprova.
+echo Esegui scripts\bootstrap.ps1 per installare l'interprete portable (consigliato), crea una .venv, oppure installa Python.
 pause
 exit /b 1
 

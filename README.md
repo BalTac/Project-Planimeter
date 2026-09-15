@@ -65,6 +65,8 @@ python server.py
 
 L'ambiente non usa virtualenv: [scripts/bootstrap.ps1](scripts/bootstrap.ps1) e [scripts/bootstrap.sh](scripts/bootstrap.sh) scaricano un CPython **portable** (python-build-standalone, ricollocabile) in `%LOCALAPPDATA%\planimeter\python` — su Linux/macOS `~/.local/share/planimeter/python` — e installano lì le dipendenze pinnate di `requirements-dev.txt`. La versione supportata è dichiarata in [.python-version](.python-version); l'interprete è indipendente dal Python di sistema e la sua cartella può essere copiata su un'altra macchina senza modifiche. Percorso alternativo: variabile d'ambiente `PLANIMETER_PYTHON`. La user site-packages viene ignorata (`PYTHONNOUSERSITE=1`) per mantenere l'ambiente riproducibile.
 
+Questo setup è **consigliato, non obbligatorio**: le dipendenze sono pinnate, quindi va bene anche qualsiasi Python 3.11+ o una venv creata da te (`.venv` nella root, git-ignorata). I launcher scelgono l'interprete in quest'ordine: `PLANIMETER_PYTHON` → `.venv` locale → interprete portable → `python` nel PATH.
+
 - Windows (PowerShell): [scripts/bootstrap.ps1](scripts/bootstrap.ps1)
 - Linux/macOS: [scripts/bootstrap.sh](scripts/bootstrap.sh)
 

@@ -80,9 +80,17 @@ if graph_path.exists():
                 report("GRAPH_REPORT.md vs graph.json count mismatch",
                        [f"report={nodes}/{edges} json={actual_nodes}/{actual_edges}"])
 
-# 6. No virtual environment may live inside the working tree: the project uses a
-# portable interpreter installed by scripts/bootstrap.* outside the repository.
-report("virtualenvs inside the repository", sorted(p.name for p in ROOT.glob(".venv*") if p.is_dir()))
+# 6. Virtualenvs are not relocatable, so none may be tracked by git. A venv inside the
+# working tree is allowed only as a deliberate local choice, i.e. it must be git-ignored
+# (the recommended setup is the portable interpreter installed by scripts/bootstrap.*).
+report("virtualenvs tracked by git", sorted(p for p in tracked if "/.venv" in p.replace("\\", "/")))
+not_ignored_venvs = [
+    path.name
+    for path in ROOT.glob(".venv*")
+    if path.is_dir()
+    and subprocess.run(["git", "check-ignore", "-q", path.name], cwd=ROOT, capture_output=True).returncode != 0
+]
+report("virtualenvs inside the repository that are not git-ignored", not_ignored_venvs)
 
 print("\nFAIL: portability problems remain." if fail else "\nPASS: workspace is portable.")
 sys.exit(1 if fail else 0)
