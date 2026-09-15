@@ -3,14 +3,14 @@
 ## Regole operative
 - [ ] Mantenere [CHANGELOG.md](CHANGELOG.md) aggiornato a ogni milestone.
 - [ ] Flaggare come completate solo le voci realmente testate/validate.
-- [ ] Mantenere la wiki solo locale (cartelle [wiki/](wiki/) e [raw/](raw/)), finche il progetto non e piu maturo.
+- [ ] Mantenere la wiki solo locale (il corpus sorgente [raw/](raw/) e versionato e condiviso perche il grafo dipende da esso; la cartella `wiki/` resta solo locale e git-ignorata), finche il progetto non e piu maturo.
 - [x] Ripulire e riallineare [README.md](README.md) al codice reale (struttura unica, senza duplicazioni).
 - [x] Estendere [README.md](README.md) con template screenshot e matrice compatibilita browser; registrare modifica in [CHANGELOG.md](CHANGELOG.md).
 
 ## Priorita prossime task
 
 ### UX — Toolbar redesign (mode | action | view)
-- [x] Step A: audit information architecture della toolbar, classificazione `mode | action | view` (vedi [wiki/toolbar-redesign.md](wiki/toolbar-redesign.md)).
+- [x] Step A: audit information architecture della toolbar, classificazione `mode | action | view` (vedi `wiki/toolbar-redesign.md`).
 - [ ] Step B: cluster refactor — riorganizzare [planimeter.html](planimeter.html) + [styles.css](styles.css) in 3 zone (mode segmented top, action grid middle, view accordion bottom); ridurre `Strumenti` a 4 modi reali; promuovere snap a toggle esplicito; spostare matrice WMS sublayer da Settings a `view.catasto-wms` gated dal layer catasto attivo; spostare stats live in HUD bar separata; deduplicare lang switcher.
   - [x] B-1: matrice WMS sublayer spostata in `#section-catasto-wms` gated; lang switcher de-duplicato (rimosso `#settings-language`); azioni splittate in 3 sub-grid (Generale / Sulla selezione / Distruttive).
   - [x] B-2: modi `measure-straight` / `measure-polyline` spostati dal segmented-control nella sub-grid Generale (action-button + `data-mode` invariato).
