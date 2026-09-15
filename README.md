@@ -53,17 +53,17 @@
 ## Quick start
 
 ```bash
-# 1. Dipendenze backend
-python -m pip install -r requirements.txt
+# 1. Ambiente: interprete Python portable + dipendenze pinnate (una volta per macchina)
+#    Windows: .\scripts\bootstrap.ps1        Linux/macOS: ./scripts/bootstrap.sh
 
-# 2. Avvia il server locale
+# 2. Avvia il server locale (i launcher usano l'interprete portable)
 python server.py
 
 # 3. Apri l'app
 # http://127.0.0.1:8000/planimeter.html
 ```
 
-Per ricreare l'ambiente in modo riproducibile (venv `.venv` + dipendenze pinnate), usa gli script di bootstrap; la versione Python supportata è dichiarata in [.python-version](.python-version):
+L'ambiente non usa virtualenv: [scripts/bootstrap.ps1](scripts/bootstrap.ps1) e [scripts/bootstrap.sh](scripts/bootstrap.sh) scaricano un CPython **portable** (python-build-standalone, ricollocabile) in `%LOCALAPPDATA%\planimeter\python` — su Linux/macOS `~/.local/share/planimeter/python` — e installano lì le dipendenze pinnate di `requirements-dev.txt`. La versione supportata è dichiarata in [.python-version](.python-version); l'interprete è indipendente dal Python di sistema e la sua cartella può essere copiata su un'altra macchina senza modifiche. Percorso alternativo: variabile d'ambiente `PLANIMETER_PYTHON`. La user site-packages viene ignorata (`PYTHONNOUSERSITE=1`) per mantenere l'ambiente riproducibile.
 
 - Windows (PowerShell): [scripts/bootstrap.ps1](scripts/bootstrap.ps1)
 - Linux/macOS: [scripts/bootstrap.sh](scripts/bootstrap.sh)

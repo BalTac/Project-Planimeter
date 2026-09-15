@@ -80,14 +80,9 @@ if graph_path.exists():
                 report("GRAPH_REPORT.md vs graph.json count mismatch",
                        [f"report={nodes}/{edges} json={actual_nodes}/{actual_edges}"])
 
-# 6. No *stray* virtual environment may live inside the working tree. The single
-# per-machine `.venv` created by scripts/bootstrap.* (PORTABILITY_ROADMAP.md A2/A4)
-# is expected and git-ignored; leftovers such as `.venv_pc/` or `.venv_notebook/`
-# are not.
-report(
-    "stray virtualenvs inside the repository (.venv excluded)",
-    sorted(p.name for p in ROOT.glob(".venv*") if p.is_dir() and p.name != ".venv"),
-)
+# 6. No virtual environment may live inside the working tree: the project uses a
+# portable interpreter installed by scripts/bootstrap.* outside the repository.
+report("virtualenvs inside the repository", sorted(p.name for p in ROOT.glob(".venv*") if p.is_dir()))
 
 print("\nFAIL: portability problems remain." if fail else "\nPASS: workspace is portable.")
 sys.exit(1 if fail else 0)

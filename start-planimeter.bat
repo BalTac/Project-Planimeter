@@ -31,7 +31,10 @@ shift
 goto parse_args
 
 :args_done
-set "PYTHON_BIN=%~dp0.venv\Scripts\python.exe"
+rem Prefer the portable interpreter installed per-machine by scripts\bootstrap.ps1.
+rem Override the location with the PLANIMETER_PYTHON environment variable.
+if defined PLANIMETER_PYTHON set "PYTHON_BIN=%PLANIMETER_PYTHON%\python.exe"
+if not defined PYTHON_BIN set "PYTHON_BIN=%LOCALAPPDATA%\planimeter\python\python.exe"
 if exist "%PYTHON_BIN%" goto python_ready
 
 where python >nul 2>&1
@@ -41,12 +44,14 @@ goto python_ready
 
 :python_missing
 echo Python non trovato nel PATH.
-echo Installa Python e riprova (oppure esegui scripts\bootstrap.ps1 per creare .venv).
+echo Esegui scripts\bootstrap.ps1 per installare l'interprete portable, oppure installa Python e riprova.
 pause
 exit /b 1
 
 :python_ready
-start "Project Planimeter Server" cmd /k "cd /d ""%CD%"" && %PYTHON_BIN% server.py --host %HOST% --port %PORT%%EXTRA_ARGS%"
+rem Ignore the per-user site-packages so the portable environment stays reproducible.
+set "PYTHONNOUSERSITE=1"
+start "Project Planimeter Server" cmd /k "cd /d ""%CD%"" && ""%PYTHON_BIN%"" server.py --host %HOST% --port %PORT%%EXTRA_ARGS%"
 
 echo Avvio completato.
 echo Il browser verra aperto dal server dopo aver risolto la porta effettiva.
