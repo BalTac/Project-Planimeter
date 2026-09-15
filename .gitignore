@@ -18,9 +18,11 @@ _tile_cache/
 AUDIT_*.md
 SESSION_*.md
 TEST_RESULTS_*.md
+PORTABILITY_ROADMAP.md
 tests/preview_*.py
 app.js
 
 graphify-out/
 tests/output/
+exports/
 wiki/
