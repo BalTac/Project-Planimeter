@@ -81,6 +81,9 @@
                                 <option value="en">EN</option>
                             </select>
                         </div>
+                        <button type="button" id="btn-theme-toggle" class="toolbar-theme-toggle" data-i18n-title="theme.toggleHint" data-i18n-aria="theme.toggleAria" aria-label="Attiva modalità Campo / Pieno Sole" title="Modalità Campo / Daylight">
+                            <span class="theme-toggle__icon" aria-hidden="true">☀️</span>
+                        </button>
                         <button type="button" id="btn-toolbar-toggle-collapse" class="toolbar-collapse-btn" aria-label="Comprimi o espandi toolbar" title="Comprimi o espandi toolbar" aria-expanded="true">
                             <span class="toolbar-collapse-chevron" aria-hidden="true">▾</span>
                         </button>
@@ -538,6 +541,14 @@
                         <h2 id="settings-display-title" data-i18n="section.settings.display">Display</h2>
                     </div>
                     <div class="settings-grid">
+                        <label class="settings-field">
+                            <span data-i18n="theme.label">Tema / Visualizzazione</span>
+                            <select id="settings-theme" class="parameter-picker">
+                                <option value="dark" data-i18n="theme.dark">Notte / Smeraldo (Standard)</option>
+                                <option value="daylight" data-i18n="theme.daylight">Campo / Daylight (Pieno Sole)</option>
+                                <option value="auto" data-i18n="theme.auto">Automatico (Sistema)</option>
+                            </select>
+                        </label>
                         <label class="settings-field">
                             <span data-i18n="settings.units">Sistema di misura</span>
                             <select id="settings-unit-system" class="parameter-picker">

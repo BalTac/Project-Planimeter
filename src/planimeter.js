@@ -95,6 +95,8 @@ export default class Planimeter {
             this.state.dslHiddenCategoryKeys = new Set(this.state.dslHiddenCategoryKeys ?? []);
         }
         this.state.toolbarPanel = preferences.toolbarPanel;
+        this.state.theme = preferences.theme || 'dark';
+        this.applyTheme(this.state.theme);
         this.state.activeBaseLayer = this.sanitizeBaseLayerKey(preferences.activeBaseLayer);
         this.state.activeAdminLayer = this.sanitizeAdminLayerKey(preferences.activeAdminLayer);
         this.state.activeEditingLayer = preferences.activeEditingLayer === 'pertenenze' ? 'pertenenze' : 'user';
@@ -553,6 +555,8 @@ export default class Planimeter {
             snapToggle:                document.getElementById('snap-toggle'),
             contextMenu:               document.getElementById('map-context-menu'),
             langSwitcher:              document.getElementById('lang-switcher'),
+            themeToggle:               document.getElementById('btn-theme-toggle'),
+            settingsTheme:             document.getElementById('settings-theme'),
             settingsLanguage:          document.getElementById('settings-language'),
             settingsUnitSystem:        document.getElementById('settings-unit-system'),
             settingsExportQuality:     document.getElementById('settings-export-quality'),
@@ -1424,6 +1428,11 @@ export default class Planimeter {
             this.closeParcelInfoPopover();
         });
 
+        this.elements.themeToggle?.addEventListener('click', () => this.toggleTheme());
+        this.elements.settingsTheme?.addEventListener('change', (ev) => {
+            this.applyTheme(ev.target.value);
+            this.persistPreferences();
+        });
         this.elements.langSwitcher?.addEventListener('change', (ev) => {
             this.updateLocale(ev.target.value);
         });
@@ -5366,6 +5375,44 @@ export default class Planimeter {
         });
     }
 
+    /**
+     * Apply the visual theme (P2 Daylight/Dark).
+     * @param {'dark'|'daylight'|'auto'} [theme=null]
+     */
+    applyTheme(theme = null) {
+        if (theme) this.state.theme = theme;
+        const effective = this.state.theme === 'auto'
+            ? (window.matchMedia?.('(prefers-color-scheme: light)')?.matches ? 'daylight' : 'dark')
+            : this.state.theme;
+
+        document.documentElement.setAttribute('data-theme', effective);
+        document.body.setAttribute('data-theme', effective);
+
+        const toggleBtn = this.elements?.themeToggle || document.getElementById('btn-theme-toggle');
+        if (toggleBtn) {
+            const isDaylight = effective === 'daylight';
+            const icon = toggleBtn.querySelector('.theme-toggle__icon');
+            if (icon) icon.textContent = isDaylight ? '🌙' : '☀️';
+            toggleBtn.setAttribute('title', isDaylight ? t('theme.switchToDark') : t('theme.switchToDaylight'));
+            toggleBtn.setAttribute('aria-label', isDaylight ? t('theme.switchToDark') : t('theme.switchToDaylight'));
+        }
+
+        if (this.elements?.settingsTheme) {
+            this.elements.settingsTheme.value = this.state.theme;
+        }
+    }
+
+    /**
+     * Quick-toggle between Daylight and Dark mode.
+     */
+    toggleTheme() {
+        const next = this.state.theme === 'daylight' ? 'dark' : 'daylight';
+        this.applyTheme(next);
+        this.persistPreferences();
+        const label = next === 'daylight' ? t('theme.daylight') : t('theme.dark');
+        this.showToast(t('theme.toast', { theme: label }), 'info', 2000);
+    }
+
     applyLayerGroupSelection() {
         this.state.activeBaseLayer = this.sanitizeBaseLayerKey(this.state.activeBaseLayer);
         this.state.activeAdminLayer = this.sanitizeAdminLayerKey(this.state.activeAdminLayer);
@@ -5951,6 +5998,9 @@ export default class Planimeter {
         if (this.elements.langSwitcher) {
             this.elements.langSwitcher.value = this.state.locale;
         }
+        if (this.elements.settingsTheme) {
+            this.elements.settingsTheme.value = this.state.theme;
+        }
         if (this.elements.settingsLanguage) {
             this.elements.settingsLanguage.value = this.state.locale;
         }
@@ -6018,6 +6068,7 @@ export default class Planimeter {
 
     persistPreferences() {
         savePreferences({
+            theme: this.state.theme,
             locale: this.state.locale,
             unitSystem: this.state.unitSystem,
             toolbarPanel: this.state.toolbarPanel,

@@ -5,6 +5,7 @@ import {
 } from '../core/constants.js';
 
 export const DEFAULT_PREFERENCES = {
+    theme: 'dark',
     locale: null,
     unitSystem: null,
     toolbarPanel: 'operate',

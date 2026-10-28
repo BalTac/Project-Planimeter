@@ -328,3 +328,27 @@ class TestSelectionButtonsAndToasts:
         expect(page.locator("#pac-chip-bcaa7")).to_have_count(1)
         expect(page.locator("#pac-chip-eco4")).to_have_count(1)
         expect(page.locator("#pac-chip-exempt")).to_have_count(1)
+
+    def test_daylight_theme_toggle(self, page: Page, planimeter_base_url: str):
+        page.goto(app_url(planimeter_base_url))
+        theme_btn = page.locator("#btn-theme-toggle")
+        expect(theme_btn).to_be_visible()
+
+        # Initial theme is dark
+        body = page.locator("body")
+        expect(body).to_have_attribute("data-theme", "dark")
+        expect(theme_btn.locator(".theme-toggle__icon")).to_have_text("☀️")
+
+        # Click to switch to daylight / field mode
+        theme_btn.click()
+        expect(body).to_have_attribute("data-theme", "daylight")
+        expect(theme_btn.locator(".theme-toggle__icon")).to_have_text("🌙")
+
+        # Toast notification appears
+        toast = page.locator(".planimeter-toast")
+        expect(toast).to_be_visible()
+
+        # Click again to switch back to dark mode
+        theme_btn.click()
+        expect(body).to_have_attribute("data-theme", "dark")
+        expect(theme_btn.locator(".theme-toggle__icon")).to_have_text("☀️")
