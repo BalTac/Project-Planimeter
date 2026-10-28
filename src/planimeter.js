@@ -1571,6 +1571,7 @@ export default class Planimeter {
                 editMode: this.state.mode === 'edit',
                 selectedVertex: this.state.selectedEditVertex,
                 compareOverlayActive: Boolean(this.state.compareOverlayVisible && this.state.compareCampaignId),
+                hideLabels: Boolean(this.state.suppressFeatureLabels),
             },
         );
     }

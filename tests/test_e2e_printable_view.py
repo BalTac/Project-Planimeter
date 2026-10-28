@@ -7,6 +7,7 @@ Covers:
 - Spinner hides cleanly after rendering without blocking preview.
 - Interactive controls (paper format switcher, oriented labels, merge contiguous, title editing).
 - Canvas composition and high-res rendering.
+- Suppression of web labels during printable composition so only printable labels appear.
 - Triggering PNG download and Print sheet population.
 - Modal closure via Cancel and Close button.
 """
@@ -129,6 +130,35 @@ class TestPrintableView:
 
         # Verify no runtime JavaScript exceptions occurred
         assert js_errors == [], f"JavaScript errors during canvas composition: {js_errors}"
+
+    def test_web_labels_suppressed_for_clean_print_composite(self, page: Page, planimeter_base_url: str):
+        page.goto(app_url(planimeter_base_url))
+        res = page.evaluate("""
+            async () => {
+                const app = window.planimeterApp;
+                const { default: Feature } = await import('ol/Feature.js');
+                const { default: Polygon } = await import('ol/geom/Polygon.js');
+
+                const f = new Feature({
+                    geometry: new Polygon([[[0, 0], [100, 0], [100, 100], [0, 100], [0, 0]]]),
+                });
+                f.set('featureName', 'TestField');
+                f.set('overlayLayer', 'user');
+                app.vectorSource.addFeature(f);
+
+                const normalStyles = app.featureStyle(f);
+                const hasLabelNormal = normalStyles.some(s => Boolean(s.getText?.()?.getText?.()));
+
+                app.state.suppressFeatureLabels = true;
+                const suppressedStyles = app.featureStyle(f);
+                const hasLabelSuppressed = suppressedStyles.some(s => Boolean(s.getText?.()?.getText?.()));
+                app.state.suppressFeatureLabels = false;
+
+                return { hasLabelNormal, hasLabelSuppressed };
+            }
+        """)
+        assert res["hasLabelNormal"] is True, "Normal vector style should render text label"
+        assert res["hasLabelSuppressed"] is False, "Suppressed vector style must not render text label"
 
     def test_download_png_trigger(self, page: Page, planimeter_base_url: str):
         page.goto(app_url(planimeter_base_url))

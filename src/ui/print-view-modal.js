@@ -231,11 +231,23 @@ export class PrintViewModalController {
                 targetHeight = Math.round(mapSize[1] * 1.5);
             }
 
+            // Temporarily suppress web labels so the vector layer renders only clean fills & borders
+            this.planimeter.state.suppressFeatureLabels = true;
+            this.planimeter.layers.vector.changed();
+            this.planimeter.layers.pertenenza?.changed?.();
+            this.planimeter.map.renderSync();
+
             // Capture the viewport composite canvas
             const composite = this.planimeter.buildViewportCompositeCanvas(1.5, {
                 attenuateSatellite: doSatFade,
                 highContrastCadastral: doHighContrastCatasto,
             });
+
+            // Restore web labels immediately
+            this.planimeter.state.suppressFeatureLabels = false;
+            this.planimeter.layers.vector.changed();
+            this.planimeter.layers.pertenenza?.changed?.();
+            this.planimeter.map.renderSync();
 
             if (!composite || !composite.canvas) {
                 this.hideSpinner();

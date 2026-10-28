@@ -194,7 +194,7 @@ export function buildFeatureStyle(feature, selectedFeature, projection, unitSyst
         }),
     ];
 
-    if (labelGeom) {
+    if (labelGeom && !options.hideLabels) {
         styles.push(new OLStyle({
             geometry: labelGeom,
             text: new OLText({
@@ -263,7 +263,7 @@ export function buildCompareFeatureStyle(feature, projection, unitSystem, option
         }),
     ];
 
-    if (labelGeom) {
+    if (labelGeom && !options.hideLabels) {
         styles.push(new OLStyle({
             geometry: labelGeom,
             text: new OLText({
