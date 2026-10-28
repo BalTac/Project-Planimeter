@@ -208,6 +208,14 @@
                         <h2 id="catasto-wms-title" data-i18n="section.catastoWms">Mosaico catastale</h2>
                     </div>
                     <p class="section-help" data-i18n="settings.catastoWmsLayersHint">Scegli visibilita e trasparenza per ogni sottolayer catastale WMS. Almeno un layer deve restare attivo.</p>
+                    <div class="wms-presets">
+                        <span class="wms-presets__label" data-i18n="settings.wms.presetsLabel">Preset rapidi:</span>
+                        <div class="wms-presets__group" role="group" aria-label="Preset catastali">
+                            <button type="button" class="wms-preset-btn is-active" data-wms-preset="default" data-i18n="settings.wms.presetDefault">Predefinito</button>
+                            <button type="button" class="wms-preset-btn" data-wms-preset="orthophoto" data-i18n="settings.wms.presetOrthophoto">Contrasto Ortofoto</button>
+                            <button type="button" class="wms-preset-btn" data-wms-preset="boundaries" data-i18n="settings.wms.presetBoundaries">Solo Confini</button>
+                        </div>
+                    </div>
                     <div class="wms-global-control">
                         <label class="settings-field settings-field-slider wms-layer-opacity wms-layer-opacity--global">
                             <span data-i18n="settings.wms.opacityGlobal">Trasparenza globale</span>
@@ -768,30 +776,11 @@
         </button>
 
         <div id="pointer-coordinates" class="pointer-coordinates" hidden aria-live="polite">
-            <span class="pointer-coordinates__label" data-i18n="coords.label">Coordinate</span>
+            <div class="pointer-coordinates__header">
+                <span class="pointer-coordinates__label" data-i18n="coords.label">Coordinate</span>
+                <span id="pointer-coordinates-zoom-pill" class="pointer-coordinates__zoom-pill">Zoom <strong id="pointer-coordinates-zoom">--</strong></span>
+            </div>
             <span id="pointer-coordinates-value" class="pointer-coordinates__value">--, --</span>
-            <div class="pointer-coordinates__gauges" aria-hidden="true">
-                <div class="pointer-gauge">
-                    <span class="pointer-gauge__label" data-i18n="coords.viewportX">Viewport X</span>
-                    <span id="pointer-coordinates-vx" class="pointer-gauge__value">--%</span>
-                    <span class="pointer-gauge__track"><span id="pointer-coordinates-vx-bar" class="pointer-gauge__fill"></span></span>
-                </div>
-                <div class="pointer-gauge">
-                    <span class="pointer-gauge__label" data-i18n="coords.viewportY">Viewport Y</span>
-                    <span id="pointer-coordinates-vy" class="pointer-gauge__value">--%</span>
-                    <span class="pointer-gauge__track"><span id="pointer-coordinates-vy-bar" class="pointer-gauge__fill"></span></span>
-                </div>
-                <div class="pointer-gauge">
-                    <span class="pointer-gauge__label" data-i18n="coords.zoom">Zoom</span>
-                    <span id="pointer-coordinates-zoom" class="pointer-gauge__value">--</span>
-                    <span class="pointer-gauge__track"><span id="pointer-coordinates-zoom-bar" class="pointer-gauge__fill"></span></span>
-                </div>
-            </div>
-            <div class="pointer-coordinates__legend" aria-hidden="true">
-                <span class="pointer-legend__item"><span class="pointer-legend__dot pointer-legend__dot--low"></span><span data-i18n="coords.legend.low">Low</span></span>
-                <span class="pointer-legend__item"><span class="pointer-legend__dot pointer-legend__dot--mid"></span><span data-i18n="coords.legend.mid">Mid</span></span>
-                <span class="pointer-legend__item"><span class="pointer-legend__dot pointer-legend__dot--high"></span><span data-i18n="coords.legend.high">High</span></span>
-            </div>
         </div>
 
         <nav id="map-context-menu" class="map-context-menu" hidden aria-label="Menu contestuale mappa">

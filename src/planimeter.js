@@ -1518,6 +1518,7 @@ export default class Planimeter {
             });
         });
         this.bindWmsGlobalOpacity();
+        this.bindWmsPresets();
     }
 
     // ── Feature style ────────────────────────────────────────────────────────────
@@ -5621,31 +5622,29 @@ export default class Planimeter {
 
     updatePointerCoordinatesFromPixel(pixel, coordinate) {
         const valueEl = this.elements.pointerCoordinatesValue;
+        if (!valueEl || !Array.isArray(pixel) || !Array.isArray(coordinate)) {
+            this.resetPointerCoordinatesValues();
+            return;
+        }
+
+        const lonLat = toLonLat(coordinate);
+        valueEl.textContent = `${lonLat[0].toFixed(6)}°, ${lonLat[1].toFixed(6)}°`;
+
         const vxEl = this.elements.pointerCoordinatesViewportX;
         const vyEl = this.elements.pointerCoordinatesViewportY;
-        if (!valueEl || !vxEl || !vyEl || !Array.isArray(pixel) || !Array.isArray(coordinate)) {
-            this.resetPointerCoordinatesValues();
-            return;
+        if (vxEl && vyEl) {
+            const size = this.map.getSize() ?? [0, 0];
+            const width = Number(size[0]) || 0;
+            const height = Number(size[1]) || 0;
+            if (width > 0 && height > 0) {
+                const xPct = Math.max(0, Math.min(100, (pixel[0] / width) * 100));
+                const yPct = Math.max(0, Math.min(100, (pixel[1] / height) * 100));
+                vxEl.textContent = `${xPct.toFixed(1)}%`;
+                vyEl.textContent = `${yPct.toFixed(1)}%`;
+                this.setPointerGaugeState(vxEl, this.elements.pointerCoordinatesViewportXBar, xPct);
+                this.setPointerGaugeState(vyEl, this.elements.pointerCoordinatesViewportYBar, yPct);
+            }
         }
-
-        const size = this.map.getSize() ?? [0, 0];
-        const width = Number(size[0]) || 0;
-        const height = Number(size[1]) || 0;
-        if (width <= 0 || height <= 0) {
-            this.resetPointerCoordinatesValues();
-            return;
-        }
-
-        const xPct = Math.max(0, Math.min(100, (pixel[0] / width) * 100));
-        const yPct = Math.max(0, Math.min(100, (pixel[1] / height) * 100));
-        const lonLat = toLonLat(coordinate);
-
-        valueEl.textContent = `${lonLat[0].toFixed(6)}, ${lonLat[1].toFixed(6)}`;
-        vxEl.textContent = `${xPct.toFixed(1)}%`;
-        vyEl.textContent = `${yPct.toFixed(1)}%`;
-
-        this.setPointerGaugeState(vxEl, this.elements.pointerCoordinatesViewportXBar, xPct);
-        this.setPointerGaugeState(vyEl, this.elements.pointerCoordinatesViewportYBar, yPct);
         this.updatePointerCoordinatesZoomGauge();
     }
 
@@ -5656,16 +5655,20 @@ export default class Planimeter {
         const zoom = Number(this.view?.getZoom?.());
         if (!Number.isFinite(zoom)) {
             zoomEl.textContent = '--';
-            this.setPointerGaugeState(zoomEl, this.elements.pointerCoordinatesZoomBar, null);
+            if (this.elements.pointerCoordinatesZoomBar) {
+                this.setPointerGaugeState(zoomEl, this.elements.pointerCoordinatesZoomBar, null);
+            }
             return;
         }
 
-        const minZoom = Number.isFinite(Number(this.view?.getMinZoom?.())) ? Number(this.view.getMinZoom()) : 1;
-        const maxZoom = Number.isFinite(Number(this.view?.getMaxZoom?.())) ? Number(this.view.getMaxZoom()) : 24;
-        const span = Math.max(1e-6, maxZoom - minZoom);
-        const zoomPct = Math.max(0, Math.min(100, ((zoom - minZoom) / span) * 100));
         zoomEl.textContent = zoom.toFixed(1);
-        this.setPointerGaugeState(zoomEl, this.elements.pointerCoordinatesZoomBar, zoomPct);
+        if (this.elements.pointerCoordinatesZoomBar) {
+            const minZoom = Number.isFinite(Number(this.view?.getMinZoom?.())) ? Number(this.view.getMinZoom()) : 1;
+            const maxZoom = Number.isFinite(Number(this.view?.getMaxZoom?.())) ? Number(this.view.getMaxZoom()) : 24;
+            const span = Math.max(1e-6, maxZoom - minZoom);
+            const zoomPct = Math.max(0, Math.min(100, ((zoom - minZoom) / span) * 100));
+            this.setPointerGaugeState(zoomEl, this.elements.pointerCoordinatesZoomBar, zoomPct);
+        }
     }
 
     setPointerGaugeState(valueEl, barEl, pct) {
@@ -5701,7 +5704,9 @@ export default class Planimeter {
         }
         if (this.elements.pointerCoordinatesZoom) {
             this.elements.pointerCoordinatesZoom.textContent = '--';
-            this.setPointerGaugeState(this.elements.pointerCoordinatesZoom, this.elements.pointerCoordinatesZoomBar, null);
+            if (this.elements.pointerCoordinatesZoomBar) {
+                this.setPointerGaugeState(this.elements.pointerCoordinatesZoom, this.elements.pointerCoordinatesZoomBar, null);
+            }
         }
     }
 
@@ -5862,6 +5867,7 @@ export default class Planimeter {
             });
         }
         this.syncWmsGlobalOpacityFromIndividual?.();
+        this.updateActiveWmsPresetButton?.();
 
         // Keep layer checkboxes synchronized with persisted group selections.
         this.applyLayerGroupSelection();
@@ -6046,6 +6052,80 @@ export default class Planimeter {
         this.applyCatastoWmsLayerSettings();
         this.syncPreferenceControls();
         this.persistPreferences();
+    }
+
+    bindWmsPresets() {
+        const buttons = document.querySelectorAll('.wms-preset-btn');
+        buttons.forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const presetKey = btn.dataset.wmsPreset;
+                if (presetKey) {
+                    this.applyCatastoWmsPreset(presetKey);
+                }
+            });
+        });
+    }
+
+    applyCatastoWmsPreset(presetKey) {
+        const next = { ...this.state.catastoWmsLayerSettings };
+        let presetName = '';
+
+        if (presetKey === 'orthophoto') {
+            presetName = t('settings.wms.presetOrthophoto');
+            Object.keys(next).forEach((k) => {
+                const isKeyLayer = k === 'parcels' || k === 'numbers' || k === 'vestizioni';
+                const isBuilding = k === 'buildings';
+                next[k] = {
+                    visible: isKeyLayer || isBuilding,
+                    opacity: isKeyLayer ? 1.0 : (isBuilding ? 0.85 : 0.9),
+                };
+            });
+        } else if (presetKey === 'boundaries') {
+            presetName = t('settings.wms.presetBoundaries');
+            Object.keys(next).forEach((k) => {
+                next[k] = {
+                    visible: k === 'parcels',
+                    opacity: 0.8,
+                };
+            });
+        } else {
+            // default
+            presetName = t('settings.wms.presetDefault');
+            CATASTO_WMS_LAYER_DEFS.forEach((def) => {
+                next[def.key] = {
+                    visible: def.defaultVisible,
+                    opacity: def.defaultOpacity,
+                };
+            });
+        }
+
+        this.state.catastoWmsLayerSettings = this.sanitizeCatastoWmsLayerSettings(next);
+        this.applyCatastoWmsLayerSettings();
+        this.syncPreferenceControls();
+        this.persistPreferences();
+        this.syncWmsGlobalOpacityFromIndividual();
+
+        this.updateActiveWmsPresetButton(presetKey);
+        this.showToast(t('settings.wms.presetApplied', { preset: presetName }), 'info', 2500);
+    }
+
+    updateActiveWmsPresetButton(activeKey = null) {
+        let key = activeKey;
+        if (!key) {
+            // Detect from settings
+            const s = this.state.catastoWmsLayerSettings;
+            if (s.parcels?.visible && s.numbers?.visible && s.buildings?.visible) {
+                key = 'orthophoto';
+            } else if (s.parcels?.visible && !s.numbers?.visible && !s.buildings?.visible && !s.roads?.visible && !s.waters?.visible) {
+                key = 'boundaries';
+            } else if (s.parcels?.visible && !s.numbers?.visible) {
+                key = 'default';
+            }
+        }
+
+        document.querySelectorAll('.wms-preset-btn').forEach((btn) => {
+            btn.classList.toggle('is-active', btn.dataset.wmsPreset === key);
+        });
     }
 
     bindWmsGlobalOpacity() {

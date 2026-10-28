@@ -12,6 +12,7 @@ Covers:
 """
 
 import json
+import re
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -283,3 +284,33 @@ class TestSelectionButtonsAndToasts:
         assert len(dialog_triggered) == 0, f"Native dialog was triggered: {dialog_triggered}"
         toast = page.locator(".planimeter-toast--warning")
         expect(toast).to_be_visible()
+
+
+    def test_wms_presets_toggle_layers_and_toast(self, page: Page, planimeter_base_url: str):
+        page.goto(app_url(planimeter_base_url))
+        # Turn on catasto layer
+        page.check("#layer-catasto")
+        page.wait_for_selector("#section-catasto-wms:not([hidden])", timeout=4000)
+
+        # Click orthophoto preset
+        ortho_btn = page.locator('[data-wms-preset="orthophoto"]')
+        ortho_btn.click()
+        expect(ortho_btn).to_have_class(re.compile(r"is-active"))
+
+        # Verify toast appeared
+        toast = page.locator(".planimeter-toast--info")
+        expect(toast).to_be_visible()
+
+        # Numbers layer should now be checked
+        numbers_check = page.locator("#settings-wms-part-numbers")
+        expect(numbers_check).to_be_checked()
+
+    def test_pointer_coordinates_clean_telemetry(self, page: Page, planimeter_base_url: str):
+        page.goto(app_url(planimeter_base_url))
+        # Obsolete developer gauges must not be present
+        expect(page.locator("#pointer-coordinates-vx")).to_have_count(0)
+        expect(page.locator("#pointer-coordinates-vy")).to_have_count(0)
+        expect(page.locator(".pointer-coordinates__legend")).to_have_count(0)
+        # Useful zoom and coords must exist
+        expect(page.locator("#pointer-coordinates-zoom")).to_have_count(1)
+        expect(page.locator("#pointer-coordinates-value")).to_have_count(1)

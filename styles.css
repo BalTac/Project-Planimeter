@@ -724,8 +724,8 @@ input[type="checkbox"] {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    min-width: 216px;
-    padding: 8px 10px;
+    min-width: 170px;
+    padding: 7px 10px;
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 10px 0 0 0;
     border-right: none;
@@ -736,10 +736,32 @@ input[type="checkbox"] {
     backdrop-filter: blur(10px);
 }
 
+.pointer-coordinates__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.pointer-coordinates__zoom-pill {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    padding: 1px 6px;
+}
+
+.pointer-coordinates__zoom-pill strong {
+    color: #72f0bf;
+    font-weight: 600;
+}
+
 .floating-locate {
     position: absolute;
     right: 12px;
-    bottom: 220px;
+    bottom: 140px;
     z-index: 1065;
     width: 48px;
     height: 48px;
@@ -3385,4 +3407,52 @@ input[type="checkbox"] {
 .planimeter-toast.toast-hiding {
     opacity: 0;
     transform: translateY(8px) scale(0.95);
+}
+
+
+.wms-presets {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.wms-presets__label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+}
+
+.wms-presets__group {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.wms-preset-btn {
+    flex: 1 1 auto;
+    min-height: 32px;
+    padding: 4px 10px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-main);
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.wms-preset-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(115, 240, 191, 0.4);
+}
+
+.wms-preset-btn.is-active {
+    background: rgba(115, 240, 191, 0.18);
+    border-color: rgba(115, 240, 191, 0.6);
+    color: #72f0bf;
+    font-weight: 600;
 }
