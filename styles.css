@@ -535,6 +535,15 @@ input[type="checkbox"] {
     transition: transform 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
 }
 
+.tool-button:disabled,
+.action-button:disabled {
+    opacity: 0.42;
+    cursor: not-allowed;
+    pointer-events: none;
+    transform: none !important;
+    border-color: rgba(255, 255, 255, 0.08);
+}
+
 .tool-button:hover,
 .tool-button:focus-visible,
 .action-button:hover,
@@ -590,14 +599,15 @@ input[type="checkbox"] {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    padding: 8px 10px 10px;
-    border-radius: 12px;
-    border: 1px solid var(--stroke);
-    background: rgba(255, 255, 255, 0.02);
+    padding: 6px 0 2px;
+    border: none;
+    background: transparent;
 }
 
 .action-subgroup + .action-subgroup {
-    margin-top: 8px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--stroke);
 }
 
 .action-subgroup-label {
@@ -608,13 +618,8 @@ input[type="checkbox"] {
     font-weight: 600;
 }
 
-.action-subgroup--destructive {
-    border-color: rgba(255, 114, 98, 0.22);
-    background: rgba(255, 114, 98, 0.06);
-}
-
 .action-subgroup--destructive .action-subgroup-label {
-    color: #ffb8b0;
+    color: #ff9898;
 }
 
 .action-subgroup--selection .action-subgroup-label {
@@ -3095,10 +3100,10 @@ input[type="checkbox"] {
     display: flex;
     align-items: center;
     gap: 6px;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid var(--stroke);
-    border-radius: var(--radius-sm);
-    padding: 6px 8px;
+    padding-top: 10px;
+    margin-top: 10px;
+    border-top: 1px solid var(--stroke);
+    background: transparent;
 }
 .campaign-compare-toggle {
     display: inline-flex;
@@ -3284,4 +3289,100 @@ input[type="checkbox"] {
         transition-duration: 0.01ms !important;
         scroll-behavior: auto !important;
     }
+}
+
+
+.section-help, .toolbar-copy, .toolbar-status, p {
+    text-wrap: pretty;
+}
+
+.planimeter-toast-container {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    pointer-events: none;
+    max-width: 90vw;
+    width: max-content;
+}
+
+.planimeter-toast {
+    pointer-events: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 18px;
+    border-radius: 12px;
+    font-size: 0.88rem;
+    font-weight: 500;
+    line-height: 1.4;
+    color: var(--text-main);
+    background: rgba(18, 28, 22, 0.95);
+    border: 1px solid var(--stroke);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    animation: toast-slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.planimeter-toast--info {
+    border-color: rgba(115, 240, 191, 0.3);
+}
+
+.planimeter-toast--success {
+    border-color: rgba(115, 240, 191, 0.5);
+    background: rgba(12, 38, 24, 0.96);
+    color: #a7f3d0;
+}
+
+.planimeter-toast--warning {
+    border-color: rgba(255, 190, 80, 0.45);
+    background: rgba(45, 34, 12, 0.96);
+    color: #ffe082;
+}
+
+.planimeter-toast--error {
+    border-color: rgba(255, 114, 98, 0.45);
+    background: rgba(45, 16, 16, 0.96);
+    color: #ffb8b0;
+}
+
+.planimeter-toast__dismiss {
+    background: transparent;
+    border: none;
+    color: inherit;
+    opacity: 0.6;
+    cursor: pointer;
+    font-size: 1.1rem;
+    padding: 0 0 0 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+
+.planimeter-toast__dismiss:hover {
+    opacity: 1;
+}
+
+@keyframes toast-slide-up {
+    from {
+        opacity: 0;
+        transform: translateY(14px) scale(0.97);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.planimeter-toast.toast-hiding {
+    opacity: 0;
+    transform: translateY(8px) scale(0.95);
 }

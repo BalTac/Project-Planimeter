@@ -2420,6 +2420,14 @@ export default class Planimeter {
         this.elements.statSelectedArea.textContent   = selectedMeasure;
         this.elements.statZoom.textContent           = (this.view?.getZoom() ?? 0).toFixed(1);
 
+        const hasSelection = Boolean(this.state.selectedFeature);
+        if (this.elements.duplicateSelectedButton) {
+            this.elements.duplicateSelectedButton.disabled = !hasSelection;
+        }
+        if (this.elements.deleteSelectedButton) {
+            this.elements.deleteSelectedButton.disabled = !hasSelection;
+        }
+
         this.renderDslSummary(this.vectorSource.getFeatures().filter((f) => {
             const type = f.getGeometry()?.getType();
             return type === 'Polygon' || type === 'MultiPolygon';
@@ -2999,7 +3007,7 @@ export default class Planimeter {
     applySelectedFeatureCategory() {
         const targets = this.getSelectedAssignablePolygonFeatures();
         if (!targets.length) {
-            alert(t('alert.noSelection'));
+            this.showToast(t('alert.noSelection'), 'warning');
             return;
         }
 
@@ -4023,12 +4031,12 @@ export default class Planimeter {
 
     duplicateSelectedArea() {
         if (!this.state.selectedFeature) {
-            alert(t('alert.noDuplicate'));
+            this.showToast(t('alert.noDuplicate'), 'warning');
             return;
         }
         const type = this.state.selectedFeature.getGeometry()?.getType();
         if (type !== 'Polygon' && type !== 'MultiPolygon') {
-            alert(t('alert.duplicatePolygonOnly'));
+            this.showToast(t('alert.duplicatePolygonOnly'), 'warning');
             return;
         }
 
@@ -4055,7 +4063,7 @@ export default class Planimeter {
 
     deleteSelectedFeature() {
         if (!this.state.selectedFeature) {
-            alert(t('alert.noSelection'));
+            this.showToast(t('alert.noSelection'), 'warning');
             return;
         }
         this.getSourceForFeature(this.state.selectedFeature).removeFeature(this.state.selectedFeature);
@@ -4157,7 +4165,7 @@ export default class Planimeter {
     async exportFeatures() {
         const features = this.vectorSource.getFeatures();
         if (!features.length) {
-            alert(t('alert.noExport'));
+            this.showToast(t('alert.noExport'), 'warning');
             return;
         }
         const fmt    = this.elements.exportFormat.value;
@@ -5063,7 +5071,7 @@ export default class Planimeter {
                 this.recordHistoryAuto('history.entry.auto.import');
             } catch (err) {
                 console.error('Import failed:', err);
-                alert(t('alert.importFail'));
+                this.showToast(t('alert.importFail'), 'error');
             } finally {
                 event.target.value = '';
                 this.updateSummary();
@@ -5083,7 +5091,7 @@ export default class Planimeter {
                 const parsed  = JSON.parse(content);
                 const { success, errors } = registerDomain(parsed);
                 if (!success) {
-                    alert(t('alert.loadDomain.invalid', { errors: errors.join('; ') }));
+                    this.showToast(t('alert.loadDomain.invalid', { errors: errors.join('; ') }), 'error');
                     return;
                 }
                 this.normalizeUserAreaNames();
@@ -5094,7 +5102,7 @@ export default class Planimeter {
                 this.setToolbarMessage(t('alert.loadDomain.success', { id: parsed.id }));
             } catch (err) {
                 console.error('[DSL] load-domain failed:', err);
-                alert(t('alert.loadDomain.parseError', { message: err.message }));
+                this.showToast(t('alert.loadDomain.parseError', { message: err.message }), 'error');
             } finally {
                 event.target.value = '';
             }
@@ -5126,7 +5134,7 @@ export default class Planimeter {
 
     geolocate() {
         if (!navigator.geolocation) {
-            alert(t('alert.noGeolocation'));
+            this.showToast(t('alert.noGeolocation'), 'warning');
             return;
         }
         this.setLocateButtonBusy(true);
@@ -5143,7 +5151,7 @@ export default class Planimeter {
             },
             (err) => {
                 console.error('Geolocation error:', err);
-                alert(t('alert.locationFail'));
+                this.showToast(t('alert.locationFail'), 'error');
                 this.setLocateButtonBusy(false);
             },
             { enableHighAccuracy: true, timeout: 10_000, maximumAge: 0 },
@@ -5304,6 +5312,67 @@ export default class Planimeter {
     }
 
     // ── Misc ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * Show a non-blocking in-canvas toast notification.
+     * @param {string} message
+     * @param {'info'|'success'|'warning'|'error'} [type='info']
+     * @param {number} [duration=3500]
+     */
+    showToast(message, type = 'info', duration = 3500) {
+        this.setToolbarMessage(message);
+        let container = document.getElementById('planimeter-toast-container');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'planimeter-toast-container';
+            container.className = 'planimeter-toast-container';
+            container.setAttribute('aria-live', 'polite');
+            container.setAttribute('role', 'status');
+            document.body.appendChild(container);
+        }
+
+        const toast = document.createElement('div');
+        toast.className = `planimeter-toast planimeter-toast--${type}`;
+
+        const iconMap = {
+            info: 'ℹ️',
+            success: '✅',
+            warning: '⚠️',
+            error: '⛔',
+        };
+        const iconSpan = document.createElement('span');
+        iconSpan.className = 'planimeter-toast__icon';
+        iconSpan.textContent = iconMap[type] || 'ℹ️';
+
+        const textSpan = document.createElement('span');
+        textSpan.className = 'planimeter-toast__text';
+        textSpan.textContent = message;
+
+        const dismissBtn = document.createElement('button');
+        dismissBtn.type = 'button';
+        dismissBtn.className = 'planimeter-toast__dismiss';
+        dismissBtn.setAttribute('aria-label', 'Chiudi avviso');
+        dismissBtn.innerHTML = '&times;';
+
+        const dismiss = () => {
+            if (toast.classList.contains('toast-hiding')) return;
+            toast.classList.add('toast-hiding');
+            setTimeout(() => {
+                toast.remove();
+                if (container && container.children.length === 0) {
+                    container.remove();
+                }
+            }, 250);
+        };
+
+        dismissBtn.addEventListener('click', dismiss);
+        toast.append(iconSpan, textSpan, dismissBtn);
+        container.appendChild(toast);
+
+        if (duration > 0) {
+            setTimeout(dismiss, duration);
+        }
+    }
 
     setToolbarMessage(message) {
         this.elements.status.textContent = message;

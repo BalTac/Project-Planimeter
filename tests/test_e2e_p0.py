@@ -259,3 +259,27 @@ class TestDrawAndExport:
         geom_types = {f["geometry"]["type"] for f in features}
         assert "Polygon" in geom_types or "MultiPolygon" in geom_types, \
             f"No polygon geometry found, got: {geom_types}"
+
+
+# ---------------------------------------------------------------------------
+# P0/P1 Polish: Disabled button states and non-blocking toast notifications
+# ---------------------------------------------------------------------------
+
+class TestSelectionButtonsAndToasts:
+    def test_selection_buttons_disabled_initially(self, page: Page, planimeter_base_url: str):
+        page.goto(app_url(planimeter_base_url))
+        dup_btn = page.locator("#btn-duplicate-selected")
+        del_btn = page.locator("#btn-delete-selected")
+        expect(dup_btn).to_be_disabled()
+        expect(del_btn).to_be_disabled()
+
+    def test_export_empty_triggers_toast_not_alert(self, page: Page, planimeter_base_url: str):
+        page.goto(app_url(planimeter_base_url))
+        dialog_triggered = []
+        page.on("dialog", lambda d: dialog_triggered.append(d.message))
+
+        page.click("#btn-export")
+        page.wait_for_selector(".planimeter-toast--warning", timeout=3000)
+        assert len(dialog_triggered) == 0, f"Native dialog was triggered: {dialog_triggered}"
+        toast = page.locator(".planimeter-toast--warning")
+        expect(toast).to_be_visible()
