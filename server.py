@@ -36,6 +36,16 @@ from typing import Any, cast
 
 from PIL import Image
 
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+try:
+    import numpy as np
+except ImportError:
+    np = None
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -299,11 +309,14 @@ class DailyRequestQuotaCounter:
 
 
 _daily_quota_counter = DailyRequestQuotaCounter(pathlib.Path(".planimeter_request_quota.json"))
-_local_state_store_path = pathlib.Path(".planimeter_state_store.json")
+_local_state_store_path = pathlib.Path(os.environ.get("PLANIMETER_STATE_STORE_FILE", ".planimeter_state_store.json"))
 _local_state_store_lock = threading.Lock()
-_local_history_store_path = pathlib.Path(".planimeter_history_store.json")
+_local_history_store_path = pathlib.Path(os.environ.get("PLANIMETER_HISTORY_STORE_FILE", ".planimeter_history_store.json"))
 _local_history_store_lock = threading.Lock()
-_agriculture_cultivar_db_path = pathlib.Path(".planimeter_agriculture.db")
+_agriculture_cultivar_db_path = pathlib.Path(
+    os.environ.get("PLANIMETER_AGRICULTURE_DB")
+    or os.environ.get("PLANIMETER_CULTIVAR_STORE_FILE", ".planimeter_agriculture.db")
+)
 
 
 TILE_CACHE_TTL_DAYS_DEFAULT = 30
@@ -572,6 +585,200 @@ class AgricultureCultivarStore:
             "irrigated": self._decode_irrigated(irrigated_code),
             "updated_at": now,
         }
+
+
+    def autocomplete_varieties(
+        self,
+        *,
+        category_id: str,
+        genus: str = "",
+        query: str = "",
+        limit: int = 40,
+    ) -> list[dict[str, object]]:
+        normalized_cat = str(category_id or "").strip()
+        normalized_genus = str(genus or "").strip()
+        q = str(query or "").strip()
+        results: list[dict[str, object]] = []
+        seen_names: set[str] = set()
+
+        with self._lock:
+            with self._connect() as conn:
+                # 1. First, search user presets for this category
+                if normalized_cat:
+                    if q:
+                        rows = conn.execute(
+                            "SELECT cultivar, expected_yield_q_ha, cultivation_method, irrigated "
+                            "FROM agriculture_cultivars "
+                            "WHERE category_id = ? AND cultivar LIKE ? "
+                            "ORDER BY cultivar ASC LIMIT 20",
+                            (normalized_cat, f"%{q}%"),
+                        ).fetchall()
+                    else:
+                        rows = conn.execute(
+                            "SELECT cultivar, expected_yield_q_ha, cultivation_method, irrigated "
+                            "FROM agriculture_cultivars "
+                            "WHERE category_id = ? "
+                            "ORDER BY cultivar ASC LIMIT 20",
+                            (normalized_cat,),
+                        ).fetchall()
+
+                    for r in rows:
+                        name = str(r[0]).strip()
+                        if name and name.lower() not in seen_names:
+                            seen_names.add(name.lower())
+                            results.append({
+                                "variety": name,
+                                "isPreset": True,
+                                "expectedYieldQHa": r[1],
+                                "cultivationMethod": r[2] or None,
+                                "irrigated": self._decode_irrigated(r[3]),
+                            })
+
+                # 2. Next, search official EU varieties for this genus or query
+                has_official = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='official_varieties'"
+                ).fetchone()
+                if has_official:
+                    sql = ""
+                    params: list[object] = []
+                    if normalized_genus:
+                        if q:
+                            sql = (
+                                "SELECT variety FROM official_varieties "
+                                "WHERE genus = ? AND variety LIKE ? "
+                                "ORDER BY variety ASC LIMIT ?"
+                            )
+                            params = [normalized_genus, f"%{q}%", limit]
+                        else:
+                            sql = (
+                                "SELECT variety FROM official_varieties "
+                                "WHERE genus = ? "
+                                "ORDER BY variety ASC LIMIT ?"
+                            )
+                            params = [normalized_genus, limit]
+                    elif q:
+                        sql = (
+                            "SELECT variety FROM official_varieties "
+                            "WHERE variety LIKE ? "
+                            "ORDER BY variety ASC LIMIT ?"
+                        )
+                        params = [f"%{q}%", limit]
+
+                    if sql:
+                        for row in conn.execute(sql, params).fetchall():
+                            v = str(row[0]).strip()
+                            if v and v.lower() not in seen_names:
+                                seen_names.add(v.lower())
+                                results.append({
+                                    "variety": v,
+                                    "isPreset": False,
+                                    "expectedYieldQHa": None,
+                                    "cultivationMethod": None,
+                                    "irrigated": None,
+                                })
+                                if len(results) >= limit:
+                                    break
+
+        return results
+
+    def list_custom_categories(self) -> list[dict[str, object]]:
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS agriculture_custom_categories ("
+                    "id TEXT PRIMARY KEY, "
+                    "label TEXT NOT NULL, "
+                    "color TEXT, "
+                    "stroke TEXT, "
+                    "botanical_genus TEXT, "
+                    "pac_group TEXT, "
+                    "cycle_type TEXT, "
+                    "eco4_role TEXT, "
+                    "updated_at TEXT NOT NULL"
+                    ")"
+                )
+                rows = conn.execute(
+                    "SELECT id, label, color, stroke, botanical_genus, pac_group, cycle_type, eco4_role, updated_at "
+                    "FROM agriculture_custom_categories ORDER BY label ASC"
+                ).fetchall()
+                return [
+                    {
+                        "id": str(r[0]),
+                        "label": str(r[1]),
+                        "color": str(r[2] or "#4caf50"),
+                        "stroke": str(r[3] or "#1b5e20"),
+                        "botanicalGenus": str(r[4] or ""),
+                        "pacGroup": str(r[5] or "other"),
+                        "cycleType": str(r[6] or "annual"),
+                        "eco4Role": str(r[7] or "exempt"),
+                        "updatedAt": str(r[8]),
+                    }
+                    for r in rows
+                ]
+
+    def upsert_custom_category(self, cat: dict[str, object]) -> dict[str, object]:
+        cat_id = str(cat.get("id") or "").strip()
+        label = str(cat.get("label") or "").strip()
+        if not cat_id or not label:
+            raise ValueError("ID e nome coltura sono obbligatori")
+
+        color = str(cat.get("color") or "#4caf50").strip()
+        stroke = str(cat.get("stroke") or "#1b5e20").strip()
+        genus = str(cat.get("botanicalGenus") or cat.get("genus") or "").strip()
+        pac_group = str(cat.get("pacGroup") or "other").strip()
+        cycle_type = str(cat.get("cycleType") or "annual").strip()
+        eco4_role = str(cat.get("eco4Role") or "exempt").strip()
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS agriculture_custom_categories ("
+                    "id TEXT PRIMARY KEY, "
+                    "label TEXT NOT NULL, "
+                    "color TEXT, "
+                    "stroke TEXT, "
+                    "botanical_genus TEXT, "
+                    "pac_group TEXT, "
+                    "cycle_type TEXT, "
+                    "eco4_role TEXT, "
+                    "updated_at TEXT NOT NULL"
+                    ")"
+                )
+                conn.execute(
+                    "INSERT INTO agriculture_custom_categories "
+                    "(id, label, color, stroke, botanical_genus, pac_group, cycle_type, eco4_role, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(id) DO UPDATE SET "
+                    "label=excluded.label, color=excluded.color, stroke=excluded.stroke, "
+                    "botanical_genus=excluded.botanical_genus, pac_group=excluded.pac_group, "
+                    "cycle_type=excluded.cycle_type, eco4_role=excluded.eco4_role, updated_at=excluded.updated_at",
+                    (cat_id, label, color, stroke, genus, pac_group, cycle_type, eco4_role, now),
+                )
+
+        return {
+            "id": cat_id,
+            "label": label,
+            "color": color,
+            "stroke": stroke,
+            "botanicalGenus": genus,
+            "pacGroup": pac_group,
+            "cycleType": cycle_type,
+            "eco4Role": eco4_role,
+            "updatedAt": now,
+        }
+
+    def delete_custom_category(self, cat_id: str) -> bool:
+        normalized = str(cat_id or "").strip()
+        if not normalized:
+            raise ValueError("ID categoria non valido")
+        with self._lock:
+            with self._connect() as conn:
+                cur = conn.execute(
+                    "DELETE FROM agriculture_custom_categories WHERE id = ?",
+                    (normalized,),
+                )
+                return bool(cur.rowcount)
 
 
 _agriculture_cultivar_store = AgricultureCultivarStore(
@@ -959,6 +1166,12 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         if parsed.path in {"/agriculture-cultivars", "/agriculture-cultivars/"}:
             self.handle_agriculture_cultivars_list(parsed.query)
             return
+        if parsed.path in {"/agriculture-varieties-autocomplete", "/agriculture-varieties-autocomplete/"}:
+            self.handle_agriculture_varieties_autocomplete(parsed.query)
+            return
+        if parsed.path in {"/agriculture-custom-categories", "/agriculture-custom-categories/"}:
+            self.handle_agriculture_custom_categories_list()
+            return
         super().do_GET()
 
     def do_POST(self) -> None:
@@ -980,6 +1193,12 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path in {"/agriculture-cultivars", "/agriculture-cultivars/"}:
             self.handle_agriculture_cultivars_upsert()
+            return
+        if parsed.path in {"/agriculture-custom-categories", "/agriculture-custom-categories/"}:
+            self.handle_agriculture_custom_categories_upsert()
+            return
+        if parsed.path in {"/agriculture-catalog-sync", "/agriculture-catalog-sync/"}:
+            self.handle_agriculture_catalog_sync()
             return
         if parsed.path in {"/export-geotiff", "/export-geotiff/"}:
             self.handle_export_geotiff()
@@ -1013,6 +1232,9 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path in {"/agriculture-cultivars", "/agriculture-cultivars/"}:
             self.handle_agriculture_cultivars_delete()
+            return
+        if parsed.path in {"/agriculture-custom-categories", "/agriculture-custom-categories/"}:
+            self.handle_agriculture_custom_categories_delete()
             return
         self.send_response(HTTPStatus.METHOD_NOT_ALLOWED)
         self.end_headers()
@@ -3648,6 +3870,90 @@ class PlanimeterHandler(SimpleHTTPRequestHandler):
             self.send_json(
                 HTTPStatus.INTERNAL_SERVER_ERROR,
                 {"ok": False, "message": "Impossibile eliminare la cultivar."},
+            )
+
+    def handle_agriculture_varieties_autocomplete(self, query_string: str = "") -> None:
+        try:
+            query = urllib.parse.parse_qs(query_string, keep_blank_values=True)
+            category_id = str((query.get("category_id") or [""])[0]).strip()
+            genus = str((query.get("genus") or [""])[0]).strip()
+            q = str((query.get("q") or [""])[0]).strip()
+            limit_raw = str((query.get("limit") or ["40"])[0]).strip()
+            limit = int(limit_raw) if limit_raw.isdigit() else 40
+
+            items = _agriculture_cultivar_store.autocomplete_varieties(
+                category_id=category_id,
+                genus=genus,
+                query=q,
+                limit=limit,
+            )
+            self.send_json(HTTPStatus.OK, {"ok": True, "items": items, "varieties": items})
+        except Exception as exc:
+            _log.error("agriculture-varieties-autocomplete failed: %s", exc)
+            self.send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {"ok": False, "message": "Errore ricerca varieta."},
+            )
+
+    def handle_agriculture_custom_categories_list(self) -> None:
+        try:
+            categories = _agriculture_cultivar_store.list_custom_categories()
+            self.send_json(HTTPStatus.OK, {"ok": True, "categories": categories})
+        except Exception as exc:
+            _log.error("agriculture-custom-categories list failed: %s", exc)
+            self.send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {"ok": False, "message": "Errore lettura categorie."},
+            )
+
+    def handle_agriculture_custom_categories_upsert(self) -> None:
+        payload = self._read_json_payload()
+        if payload is None:
+            return
+        try:
+            cat = _agriculture_cultivar_store.upsert_custom_category(payload)
+            self.send_json(HTTPStatus.OK, {"ok": True, "category": cat})
+        except ValueError as exc:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": str(exc)})
+        except Exception as exc:
+            _log.error("agriculture-custom-categories upsert failed: %s", exc)
+            self.send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {"ok": False, "message": "Errore salvataggio categoria."},
+            )
+
+    def handle_agriculture_custom_categories_delete(self) -> None:
+        payload = self._read_json_payload()
+        if payload is None:
+            return
+        cat_id = str(payload.get("id") or "").strip()
+        if not cat_id:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": "ID categoria mancante."})
+            return
+        try:
+            deleted = _agriculture_cultivar_store.delete_custom_category(cat_id)
+            self.send_json(HTTPStatus.OK, {"ok": True, "deleted": deleted})
+        except Exception as exc:
+            _log.error("agriculture-custom-categories delete failed: %s", exc)
+            self.send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {"ok": False, "message": "Errore eliminazione categoria."},
+            )
+
+    def handle_agriculture_catalog_sync(self) -> None:
+        try:
+            from scripts.build_official_catalog import build_catalog
+            sp_cnt, var_cnt = build_catalog(_agriculture_cultivar_db_path)
+            self.send_json(HTTPStatus.OK, {
+                "ok": True,
+                "speciesCount": sp_cnt,
+                "varietiesCount": var_cnt,
+            })
+        except Exception as exc:
+            _log.error("agriculture-catalog-sync failed: %s", exc)
+            self.send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {"ok": False, "message": f"Errore sincronizzazione catalogo: {exc}"},
             )
 
     def _read_json_payload(self) -> dict[str, object] | None:

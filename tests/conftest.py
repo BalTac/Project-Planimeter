@@ -1,9 +1,12 @@
 """Pytest fixtures for E2E tests: spin up the local Planimeter server."""
 
+import os
 import pathlib
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 
 import pytest
@@ -21,20 +24,21 @@ def _free_port() -> int:
 @pytest.fixture(scope="session")
 def planimeter_base_url():
     port = _free_port()
-    # Reset the backend mirror so the restore-prompt modal does not appear and
-    # intercept clicks during E2E. The modal only fires when local is empty AND
-    # mirror is non-empty; tests always start with empty localStorage, so a
-    # stale mirror from prior runs would block every interaction.
-    mirror_path = ROOT / ".planimeter_state_store.json"
-    if mirror_path.exists():
-        try:
-            mirror_path.unlink()
-        except OSError:
-            pass
+    # Isolate backend mirror in a temporary directory so the user's real
+    # .planimeter_state_store.json is never touched and the restore-prompt modal
+    # does not appear during clean-slate E2E tests.
+    tmp_dir = tempfile.mkdtemp(prefix="planimeter_e2e_session_")
+    env = {
+        **os.environ,
+        "PLANIMETER_STATE_STORE_FILE": str(pathlib.Path(tmp_dir) / "state_store.json"),
+        "PLANIMETER_CULTIVAR_STORE_FILE": str(pathlib.Path(tmp_dir) / "cultivars.json"),
+        "PLANIMETER_HISTORY_STORE_FILE": str(pathlib.Path(tmp_dir) / "history.json"),
+    }
 
     proc = subprocess.Popen(
-        [sys.executable, str(SERVER_SCRIPT), "--port", str(port), "--instance-policy", "replace"],
+        [sys.executable, str(SERVER_SCRIPT), "--port", str(port), "--no-browser", "--instance-policy", "replace"],
         cwd=str(ROOT),
+        env=env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -49,9 +53,14 @@ def planimeter_base_url():
             time.sleep(0.2)
     else:
         proc.terminate()
+        shutil.rmtree(tmp_dir, ignore_errors=True)
         pytest.fail("Planimeter server did not start in time")
 
     yield f"http://127.0.0.1:{port}"
 
     proc.terminate()
-    proc.wait(timeout=5)
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    shutil.rmtree(tmp_dir, ignore_errors=True)

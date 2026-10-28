@@ -117,6 +117,97 @@ export function clearUserOverrides(domainId) {
     _registry.delete(domainId);
 }
 
+/**
+ * Upsert a custom category to a domain (in-memory, localStorage, and backend sync).
+ * @param {string} domainId
+ * @param {object} category
+ * @returns {Promise<object|null>}
+ */
+export async function upsertCategoryToDomain(domainId, category) {
+    if (!domainId || !category || !category.id) return null;
+    const domain = _registry.get(domainId);
+    if (!domain) return null;
+
+    if (!Array.isArray(domain.categories)) domain.categories = [];
+    const idx = domain.categories.findIndex((c) => c.id === category.id);
+    if (idx >= 0) {
+        domain.categories[idx] = { ...domain.categories[idx], ...category };
+    } else {
+        domain.categories.push(category);
+    }
+
+    // Save to localStorage overrides
+    let overrides = {};
+    try {
+        const raw = localStorage.getItem(LS_OVERRIDE_PREFIX + domainId);
+        if (raw) overrides = JSON.parse(raw);
+    } catch {}
+    if (!Array.isArray(overrides.categories)) overrides.categories = [];
+    const oIdx = overrides.categories.findIndex((c) => c.id === category.id);
+    if (oIdx >= 0) {
+        overrides.categories[oIdx] = { ...overrides.categories[oIdx], ...category };
+    } else {
+        overrides.categories.push(category);
+    }
+    saveUserOverrides(domainId, overrides);
+
+    // If agriculture, also persist to backend SQLite
+    if (domainId === 'agriculture') {
+        try {
+            await fetch('/agriculture-custom-categories', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(category),
+            });
+        } catch (e) {
+            console.warn('[DSL] failed to sync custom category to backend:', e);
+        }
+    }
+
+    return category;
+}
+
+/**
+ * Delete a custom category from a domain.
+ * @param {string} domainId
+ * @param {string} categoryId
+ * @returns {Promise<boolean>}
+ */
+export async function deleteCategoryFromDomain(domainId, categoryId) {
+    if (!domainId || !categoryId) return false;
+    const domain = _registry.get(domainId);
+    if (!domain || !Array.isArray(domain.categories)) return false;
+
+    const idx = domain.categories.findIndex((c) => c.id === categoryId);
+    if (idx >= 0) {
+        domain.categories.splice(idx, 1);
+    }
+
+    let overrides = {};
+    try {
+        const raw = localStorage.getItem(LS_OVERRIDE_PREFIX + domainId);
+        if (raw) overrides = JSON.parse(raw);
+    } catch {}
+    if (Array.isArray(overrides.categories)) {
+        overrides.categories = overrides.categories.filter((c) => c.id !== categoryId);
+        saveUserOverrides(domainId, overrides);
+    }
+
+    if (domainId === 'agriculture') {
+        try {
+            await fetch('/agriculture-custom-categories', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: categoryId }),
+            });
+        } catch (e) {
+            console.warn('[DSL] failed to delete custom category from backend:', e);
+        }
+    }
+
+    return true;
+}
+
 // ─── Load a domain into the registry ─────────────────────────────────────────
 /**
  * Load a domain by id: fetch builtin, apply overrides, validate, register.
@@ -228,6 +319,26 @@ export async function initDsl() {
     const results = await Promise.all(
         BUILTIN_DOMAIN_IDS.map(id => loadDomain(id))
     );
+        // Merge any custom categories stored in SQLite backend
+    try {
+        const catRes = await fetch('/agriculture-custom-categories');
+        if (catRes.ok) {
+            const catPayload = await catRes.json();
+            const agri = _registry.get('agriculture');
+            if (agri && Array.isArray(catPayload.categories)) {
+                for (const cat of catPayload.categories) {
+                    if (!cat.id) continue;
+                    const existing = agri.categories.find((c) => c.id === cat.id);
+                    if (existing) {
+                        Object.assign(existing, cat);
+                    } else {
+                        agri.categories.push(cat);
+                    }
+                }
+            }
+        }
+    } catch {}
+
     results.forEach(({ domain, errors }) => {
         if (!domain && errors.length) {
             console.error('[DSL] failed to load builtin domain:', errors);

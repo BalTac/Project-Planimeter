@@ -195,9 +195,7 @@ class TestSettingsTab:
         page.wait_for_load_state("networkidle")
         page.click("#tab-settings")
         page.wait_for_timeout(300)
-        panel = page.locator("#panel-settings")
-        cls = panel.get_attribute("class") or ""
-        assert "is-active" in cls, f"Settings panel not active after click, class='{cls}'"
+        expect(page.locator("#panel-settings.is-active")).to_be_visible()
 
     def test_settings_panel_visible_after_click(self, page: Page, planimeter_base_url: str):
         page.goto(app_url(planimeter_base_url))

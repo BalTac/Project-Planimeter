@@ -7,20 +7,6 @@ import { getComuneName } from '../io/belfiore.js';
 // Column registry
 // ────────────────────────────────────────────────────────────────────────────
 
-/**
- * Each column descriptor:
- *  - id:        stable identifier persisted in preferences.summaryColumns
- *  - group:     'base' | 'cadastral' | 'geometry' | 'possession'
- *  - labelKey:  i18n key for the column header
- *  - helpKey?:  optional i18n key for the header title attribute
- *  - render(row): cell HTML (escaped) for a single intersection row
- *  - emptyValue: cell value for the "uncovered" pseudo-row (defaults to '—')
- *
- * Rows passed to render() have shape:
- *  { targetFeature, targetLabel, intersectionAreaStr, percentSubject,
- *    percentTarget, cropLabel, cadastral, possession, sharedCount,
- *    perimeterStr, verticesCount }
- */
 const COLUMN_DEFS = [
     {
         id: 'feature',
@@ -53,6 +39,13 @@ const COLUMN_DEFS = [
         group: 'base',
         labelKey: 'summary.col.crop',
         render: (row) => escapeHtml(row.cropLabel || '—'),
+    },
+    {
+        id: 'prevCrop',
+        group: 'base',
+        labelKey: 'summary.col.prevCrop',
+        helpKey: 'summary.col.prevCrop.help',
+        render: (row) => escapeHtml(row.prevCropLabel || '—'),
     },
     {
         id: 'comune',
@@ -140,7 +133,7 @@ const COLUMN_DEFS = [
     },
 ];
 
-const DEFAULT_VISIBLE_COLUMNS = ['feature', 'area', 'percentSubject', 'crop'];
+const DEFAULT_VISIBLE_COLUMNS = ['feature', 'area', 'percentSubject', 'crop', 'prevCrop'];
 
 export function getDefaultSummaryColumns() {
     return [...DEFAULT_VISIBLE_COLUMNS];
@@ -155,31 +148,18 @@ function resolveColumns(visibleColumns) {
         ? visibleColumns
         : DEFAULT_VISIBLE_COLUMNS;
     const set = new Set(ids);
-    // Preserve registry order, not user toggle order, so headers stay stable.
     const resolved = COLUMN_DEFS.filter((c) => set.has(c.id));
-    // Always keep at least the "feature" column so the table is never empty.
     if (!resolved.some((c) => c.id === 'feature')) {
         resolved.unshift(COLUMN_DEFS.find((c) => c.id === 'feature'));
     }
     return resolved;
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// INSPIRE local_id parser (Italian cadastral format, best-effort)
-// ────────────────────────────────────────────────────────────────────────────
-
-/**
- * Parses INSPIRE-style cadastral local_id strings.
- * Italian format observed: `IT.AGE.PLA.<comune[_sez]>.<foglio>.<particella>[.<sub>]`
- * Falls back gracefully when the string does not match.
- */
 export function parseInspireLocalId(localId) {
     if (!localId || typeof localId !== 'string') return null;
     const parts = localId.split('.').map((p) => p.trim()).filter(Boolean);
     if (parts.length < 3) return null;
-    // Strip leading namespace (IT.AGE.PLA) if present.
     const tail = parts.length >= 5 ? parts.slice(parts.length - (parts.length >= 6 ? 4 : 3)) : parts;
-    // Heuristic: last segments are particella (+ optional sub), preceded by foglio, preceded by comune_sez.
     let particella = null;
     let subalterno = null;
     let foglio = null;
@@ -189,7 +169,6 @@ export function parseInspireLocalId(localId) {
     if (tail.length >= 3) {
         const last = tail[tail.length - 1];
         const prev = tail[tail.length - 2];
-        // If last token is purely numeric and previous is also numeric → last = sub.
         if (/^\d+$/.test(last) && /^\d+$/.test(prev) && tail.length >= 4) {
             subalterno = stripLeadingZeros(last);
             particella = stripLeadingZeros(prev);
@@ -207,29 +186,11 @@ export function parseInspireLocalId(localId) {
     return { comune, sezione, foglio, particella, subalterno };
 }
 
-/**
- * Parses Italian NationalCadastralReference strings as returned by Agenzia
- * Entrate WMS FeatureInfo (and stored as `parcel_id` on features).
- *
- * Observed format: `<COMUNE>[_<SEZIONE>]_<FOGLIO6>.<PARTICELLA>[.<SUB>]`
- *   - COMUNE: 4-char Belfiore code (e.g. "B609", "A382")
- *   - SEZIONE: optional alphanumeric section code
- *   - FOGLIO6: 6-digit zero-padded sheet number (e.g. "000200" → foglio 2)
- *   - PARTICELLA: parcel number (numeric or alphanumeric)
- *   - SUB: optional subaltern number
- *
- * Returns null when the string does not match the expected shape.
- *
- * @param {string} reference
- * @returns {{ comune: string|null, sezione: string|null, foglio: string|null,
- *             particella: string|null, subalterno: string|null } | null}
- */
 export function parseNationalCadastralReference(reference) {
     if (!reference || typeof reference !== 'string') return null;
     const trimmed = reference.trim();
     if (!trimmed) return null;
 
-    // Split on '.' → [comuneFoglio, particella, sub?]
     const dotParts = trimmed.split('.').map((p) => p.trim()).filter(Boolean);
     if (dotParts.length < 2) return null;
 
@@ -237,7 +198,6 @@ export function parseNationalCadastralReference(reference) {
     const particellaRaw = dotParts[1];
     const subRaw = dotParts[2] ?? null;
 
-    // Split head on '_' → [comune, (sezione)?, foglio6]
     const headParts = head.split('_').map((p) => p.trim()).filter(Boolean);
     if (headParts.length < 2) return null;
 
@@ -271,8 +231,6 @@ function extractCadastralData(feature, unitSystem) {
     if (!feature?.get) return null;
     const inspireId = feature.get('inspire_local_id') || feature.get('inspireLocalId') || null;
     const parcelId = feature.get('parcel_id') || null;
-    // Primary: parse INSPIRE local_id. Fallback: NationalCadastralReference
-    // (Agenzia Entrate WMS) stored as `parcel_id` (e.g. "B609_000200.406").
     let parsed = parseInspireLocalId(inspireId);
     if (!parsed || (!parsed.comune && !parsed.foglio && !parsed.particella)) {
         const fromParcelId = parseNationalCadastralReference(parcelId);
@@ -319,12 +277,6 @@ function countVertices(feature) {
     }
 }
 
-/**
- * Pull possession-domain (tenure) data from a feature's DSL payload.
- * Returns null when the feature is not assigned to the `possession` domain.
- * @param {import('ol').Feature} feature
- * @param {(id:string,f:import('ol').Feature)=>string} [getCategoryLabel]
- */
 function extractPossessionData(feature, getCategoryLabel) {
     const dsl = feature?.get?.('dsl');
     if (!dsl || dsl.domainId !== 'possession') return null;
@@ -357,23 +309,6 @@ function renderSharedBadge(row) {
 // Public API
 // ────────────────────────────────────────────────────────────────────────────
 
-/**
- * Open or update a non-modal, draggable cross-layer summary panel.
- *
- * @param {object} options
- * @param {HTMLElement} options.container
- * @param {import('ol').Feature[]} options.selectedFeatures
- * @param {import('ol').Feature[]} options.allDrawnAreas
- * @param {import('ol').Feature[]} options.allPropertyScopes
- * @param {{formatArea:(n:number)=>string, formatPerimeter?:(n:number)=>string}} options.unitSystem
- * @param {(f:import('ol').Feature)=>string} options.getPropertyScopeLabel
- * @param {(id:string,f:import('ol').Feature)=>string} [options.getCategoryLabel]
- * @param {(f:import('ol').Feature)=>string} [options.getAreaLabel]
- * @param {import('ol/proj').ProjectionLike} [options.projection]
- * @param {{layerLabel?:string,featureLabel?:string}} [options.summaryMeta]
- * @param {string[]} [options.visibleColumns]
- * @param {(ids:string[])=>void} [options.onColumnsChange]
- */
 export function openSummaryPanel(options) {
     const {
         container,
@@ -383,6 +318,7 @@ export function openSummaryPanel(options) {
         unitSystem,
         getPropertyScopeLabel,
         getCategoryLabel = (categoryId) => categoryId || t('dsl.category.unassigned'),
+        getPrevCropLabel = () => '—',
         getAreaLabel = (feature) => feature?.get?.('featureName') || feature?.get?.('featureId') || t('feature.area'),
         projection,
         summaryMeta = null,
@@ -395,8 +331,6 @@ export function openSummaryPanel(options) {
     const selectedAreas = selectedFeatures.filter((f) => f.get('overlayLayer') === 'user');
     const selectedParcels = selectedFeatures.filter((f) => f.get('overlayLayer') === 'pertenenze');
 
-    // Pre-compute, for each property scope, how many drawn areas it intersects.
-    // Used to render a "shared with N areas" badge on parcel rows.
     const parcelSharedCounts = computeSharedCountMap(allPropertyScopes, allDrawnAreas, projection);
 
     const sections = [];
@@ -411,6 +345,7 @@ export function openSummaryPanel(options) {
             subjectLabel: (f) => getAreaLabel(f),
             targetLabel: getPropertyScopeLabel,
             targetCropLabel: () => '—',
+            targetPrevCropLabel: (_target, subject) => getPrevCropLabel(subject) || '—',
             sharedCountFor: (target) => parcelSharedCounts.get(target) ?? 0,
             projection,
             unitSystem,
@@ -431,6 +366,7 @@ export function openSummaryPanel(options) {
                 const dsl = f.get('dsl');
                 return dsl?.categoryId ? getCategoryLabel(dsl.categoryId, f) : t('dsl.category.unassigned');
             },
+            targetPrevCropLabel: (target) => getPrevCropLabel(target) || '—',
             sharedCountFor: () => 0,
             projection,
             unitSystem,
@@ -448,6 +384,7 @@ export function openSummaryPanel(options) {
                 const dsl = f.get('dsl');
                 return dsl?.categoryId ? getCategoryLabel(dsl.categoryId, f) : t('dsl.category.unassigned');
             },
+            prevCropLabel: (f) => getPrevCropLabel(f) || '—',
             projection,
             unitSystem,
         }));
@@ -458,6 +395,7 @@ export function openSummaryPanel(options) {
             features: selectedParcels,
             label: getPropertyScopeLabel,
             cropLabel: () => '—',
+            prevCropLabel: () => '—',
             projection,
             unitSystem,
         }));
@@ -471,10 +409,6 @@ export function openSummaryPanel(options) {
         onColumnsChange,
     });
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// Building blocks
-// ────────────────────────────────────────────────────────────────────────────
 
 function computeSharedCountMap(propertyScopes, drawnAreas, projection) {
     const map = new Map();
@@ -497,7 +431,7 @@ function computeSharedCountMap(propertyScopes, drawnAreas, projection) {
     return map;
 }
 
-function buildAggregateBlock({ titleKey, features, label, cropLabel, projection, unitSystem }) {
+function buildAggregateBlock({ titleKey, features, label, cropLabel, prevCropLabel = () => '—', projection, unitSystem }) {
     const items = features.map((feature) => {
         const area = calculateArea(feature, projection);
         const perimeter = calculatePerimeter(feature, projection);
@@ -505,6 +439,7 @@ function buildAggregateBlock({ titleKey, features, label, cropLabel, projection,
             feature,
             label: label(feature),
             cropLabel: cropLabel(feature),
+            prevCropLabel: prevCropLabel(feature),
             area,
             perimeter,
             areaStr: unitSystem.formatArea(area),
@@ -535,6 +470,7 @@ function buildSection({
     subjectLabel,
     targetLabel,
     targetCropLabel,
+    targetPrevCropLabel = () => '—',
     sharedCountFor,
     projection,
     unitSystem,
@@ -569,6 +505,7 @@ function buildSection({
                     targetFeature: target,
                     targetLabel: targetLabel(target),
                     cropLabel: targetCropLabel(target),
+                    prevCropLabel: targetPrevCropLabel(target, subject),
                     metrics,
                     intersectionAreaStr: unitSystem.formatArea(metrics.intersectionArea),
                     percentSubject: subjectArea > 0 ? (metrics.intersectionArea / subjectArea) * 100 : 0,
@@ -613,10 +550,6 @@ function bboxesOverlap(a, b) {
     if (!Array.isArray(a) || !Array.isArray(b) || a.length < 4 || b.length < 4) return true;
     return !(a[2] < b[0] || a[0] > b[2] || a[3] < b[1] || a[1] > b[3]);
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// Rendering
-// ────────────────────────────────────────────────────────────────────────────
 
 function renderSummaryPanel(container, { aggregateBlocks, sections, summaryMeta = null, visibleColumns, onColumnsChange }) {
     let panel = container.querySelector('#summary-panel');
@@ -696,7 +629,6 @@ function renderSummaryPanel(container, { aggregateBlocks, sections, summaryMeta 
 
     panel.hidden = false;
 
-    // Store latest state on the element so popover re-renders use fresh data.
     panel._summaryState = {
         aggregateBlocks,
         sections,
@@ -826,7 +758,7 @@ function renderAggregateBlocks(host, blocks) {
         `;
         wrap.appendChild(header);
 
-        if (block.items.length > 1) {
+        if (block.items.length >= 1) {
             const table = document.createElement('table');
             table.className = 'summary-table summary-table--breakdown';
             table.innerHTML = `
@@ -836,6 +768,7 @@ function renderAggregateBlocks(host, blocks) {
                         <th>${escapeHtml(t('summary.col.area'))}</th>
                         <th>${escapeHtml(t('summary.col.perimeter'))}</th>
                         <th>${escapeHtml(t('summary.col.crop'))}</th>
+                        <th>${escapeHtml(t('summary.col.prevCrop'))}</th>
                     </tr>
                 </thead>
                 <tbody></tbody>
@@ -848,6 +781,7 @@ function renderAggregateBlocks(host, blocks) {
                     <td>${escapeHtml(item.areaStr)}</td>
                     <td>${escapeHtml(item.perimeterStr)}</td>
                     <td>${escapeHtml(item.cropLabel || '—')}</td>
+                    <td>${escapeHtml(item.prevCropLabel || '—')}</td>
                 `;
                 tbody.appendChild(tr);
             }

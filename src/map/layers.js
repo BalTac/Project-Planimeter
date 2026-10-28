@@ -18,7 +18,7 @@ const BANNER_ATTRIBUTION =
  * @param {function} featureStyleFn — style function forwarded to VectorLayer
  * @returns {{ sat, openTopoMap, esriTopo, esriRelief, osm, catastoOfficial: Record<string, TileLayer>, catastoFallback, vector, pertenenza }}
  */
-export function buildLayers(vectorSource, pertenenzaSource, featureStyleFn) {
+export function buildLayers(vectorSource, pertenenzaSource, featureStyleFn, compareSource = null, compareStyleFn = null) {
     const sat = new TileLayer({
         source: new XYZ({
             url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
@@ -121,5 +121,12 @@ export function buildLayers(vectorSource, pertenenzaSource, featureStyleFn) {
         zIndex: 5,
     });
 
-    return { sat, openTopoMap, esriTopo, esriRelief, osm, catastoOfficial, catastoFallback, vector, pertenenza };
+    const compare = compareSource ? new VectorLayer({
+        source: compareSource,
+        style:  compareStyleFn || featureStyleFn,
+        visible: false,
+        zIndex: 8,
+    }) : null;
+
+    return { sat, openTopoMap, esriTopo, esriRelief, osm, catastoOfficial, catastoFallback, vector, pertenenza, compare };
 }

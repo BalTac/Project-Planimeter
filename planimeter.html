@@ -73,12 +73,17 @@
             <header class="toolbar-header">
                 <div class="toolbar-header-top">
                     <p class="eyebrow" data-i18n="app.eyebrow">Geo Tools</p>
-                    <div class="switcher-row">
-                        <label class="sr-only" for="lang-switcher">Language / Lingua</label>
-                        <select id="lang-switcher" class="parameter-picker parameter-picker--compact" aria-label="Language / Lingua">
-                            <option value="it">IT</option>
-                            <option value="en">EN</option>
-                        </select>
+                    <div class="toolbar-top-actions">
+                        <div class="switcher-row">
+                            <label class="sr-only" for="lang-switcher">Language / Lingua</label>
+                            <select id="lang-switcher" class="parameter-picker parameter-picker--compact" aria-label="Language / Lingua">
+                                <option value="it">IT</option>
+                                <option value="en">EN</option>
+                            </select>
+                        </div>
+                        <button type="button" id="btn-toolbar-toggle-collapse" class="toolbar-collapse-btn" aria-label="Comprimi o espandi toolbar" title="Comprimi o espandi toolbar" aria-expanded="true">
+                            <span class="toolbar-collapse-chevron" aria-hidden="true">▾</span>
+                        </button>
                     </div>
                 </div>
                 <h1 data-i18n="app.title">Planimeter Overlay</h1>
@@ -91,15 +96,36 @@
             </header>
 
             <div class="toolbar-tabs" role="tablist" aria-label="Toolbar panels">
-                <button type="button" id="tab-operate" class="toolbar-tab is-active" data-panel="operate" data-i18n="tab.operate" aria-selected="true">Operativo</button>
-                <button type="button" id="tab-settings" class="toolbar-tab" data-panel="settings" data-i18n="tab.settings" aria-selected="false">Settings</button>
+                <button type="button" id="tab-operate" class="toolbar-tab is-active" data-panel="operate" role="tab" aria-controls="panel-operate" data-i18n="tab.operate" aria-selected="true">Operativo</button>
+                <button type="button" id="tab-settings" class="toolbar-tab" data-panel="settings" role="tab" aria-controls="panel-settings" data-i18n="tab.settings" aria-selected="false">Settings</button>
             </div>
 
-            <div id="panel-operate" class="toolbar-panel is-active" data-panel="operate">
+            <div id="panel-operate" class="toolbar-panel is-active" data-panel="operate" role="tabpanel" aria-labelledby="tab-operate">
+
+                <section class="toolbar-section" aria-labelledby="campaign-title">
+                    <div class="section-heading">
+                        <h2 id="campaign-title" data-i18n="campaign.sectionTitle">Stagione agricola</h2>
+                    </div>
+                    <div class="campaign-bar-grid">
+                        <div class="campaign-field">
+                            <label for="campaign-active-select" data-i18n="campaign.activeLabel">Stagione attiva</label>
+                            <select id="campaign-active-select" class="parameter-picker" aria-label="Seleziona stagione attiva"></select>
+                        </div>
+                        <button type="button" id="btn-campaign-new-season" class="action-button icon-button" data-i18n="campaign.newSeasonBtn" data-icon="🌱">+ Nuova stagione</button>
+                    </div>
+                    <div class="campaign-compare-bar">
+                        <label class="settings-check campaign-compare-toggle">
+                            <input type="checkbox" id="campaign-compare-toggle">
+                            <span data-i18n="campaign.compareToggle">Sovrapponi anno prec.</span>
+                        </label>
+                        <select id="campaign-compare-select" class="parameter-picker parameter-picker--compact" aria-label="Seleziona stagione da confrontare" disabled></select>
+                        <button type="button" id="btn-campaign-peek" class="action-button icon-button" data-i18n="campaign.peekBtn" data-i18n-title="campaign.peekBtnHint" data-icon="👁">Vista esclusiva</button>
+                    </div>
+                </section>
+
                 <section class="toolbar-section" aria-labelledby="layers-title">
                     <div class="section-heading">
                         <h2 id="layers-title" data-i18n="section.layers">Layer</h2>
-                        <span class="section-kicker" data-i18n="section.layers.kicker">Overlay</span>
                     </div>
                     <p class="section-help" data-i18n="layer.groupBaseHint">Gruppo A (Base): selezione mutuamente esclusiva, sempre un layer attivo.</p>
                     <div class="toggle-grid">
@@ -180,7 +206,6 @@
                 <section id="section-catasto-wms" class="toolbar-section toolbar-section--gated" aria-labelledby="catasto-wms-title" hidden>
                     <div class="section-heading">
                         <h2 id="catasto-wms-title" data-i18n="section.catastoWms">Mosaico catastale</h2>
-                        <span class="section-kicker" data-i18n="section.catastoWms.kicker">WMS ufficiale</span>
                     </div>
                     <p class="section-help" data-i18n="settings.catastoWmsLayersHint">Scegli visibilita e trasparenza per ogni sottolayer catastale WMS. Almeno un layer deve restare attivo.</p>
                     <div class="wms-global-control">
@@ -290,7 +315,6 @@
                 <section class="toolbar-section" aria-labelledby="tools-title">
                     <div class="section-heading">
                         <h2 id="tools-title" data-i18n="section.tools">Strumenti</h2>
-                        <span class="section-kicker" data-i18n="section.tools.kicker">Workflow</span>
                     </div>
                     <div class="segmented-control" role="toolbar" aria-label="Modalita di lavoro">
                         <button type="button" class="tool-button icon-button is-active" data-mode="navigate" aria-pressed="true" data-i18n="tool.navigate" data-i18n-title="hint.tool.navigate" data-icon="🧭">Naviga</button>
@@ -316,7 +340,6 @@
                 <section class="toolbar-section" aria-labelledby="actions-title">
                     <div class="section-heading">
                         <h2 id="actions-title" data-i18n="section.actions">Azioni</h2>
-                        <span class="section-kicker" data-i18n="section.actions.kicker">Dati</span>
                     </div>
                     <div class="action-subgroup action-subgroup--global">
                         <span class="action-subgroup-label" data-i18n="action.group.global">Generale</span>
@@ -360,7 +383,6 @@
                 <section id="section-dsl-assignment" class="toolbar-section" aria-labelledby="dsl-assignment-title" hidden>
                     <div class="section-heading">
                         <h2 id="dsl-assignment-title" data-i18n="section.dsl.assignment">Assegnazione categoria</h2>
-                        <span class="section-kicker" data-i18n="section.dsl.assignment.kicker">Feature</span>
                     </div>
                     <div class="dsl-assignment-grid">
                         <div class="dsl-assignment-meta">
@@ -371,15 +393,23 @@
                             <strong data-i18n="dsl.assign.feature">Feature selezionata</strong>
                             <span id="dsl-assign-feature-value" data-i18n="dsl.assign.noFeature">Nessuna feature poligonale selezionata</span>
                         </div>
-                        <label class="settings-field" for="dsl-category-select">
-                            <span data-i18n="dsl.category.label">Categoria</span>
-                            <select id="dsl-category-select" class="parameter-picker" aria-label="Categoria DSL">
-                                <option value="" data-i18n="dsl.assign.selectCategory">Seleziona categoria...</option>
-                            </select>
-                        </label>
+                        <div class="settings-field">
+                            <label for="dsl-category-select" data-i18n="dsl.category.label">Categoria</label>
+                            <div class="dsl-category-select-row">
+                                <select id="dsl-category-select" class="parameter-picker" aria-label="Categoria DSL">
+                                    <option value="" data-i18n="dsl.assign.selectCategory">Seleziona categoria...</option>
+                                </select>
+                                <button type="button" id="btn-dsl-add-category" class="action-button icon-button" data-i18n="dsl.category.newBtn" data-i18n-title="dsl.category.newBtnHint" title="Aggiungi una nuova coltura da catalogo ufficiale UE/SIAN o personalizzata" data-icon="🌱">+ Nuova coltura</button>
+                            </div>
+                        </div>
                         <div class="dsl-assignment-meta dsl-links-box">
                             <strong data-i18n="dsl.links.title">Pertinenze catastali</strong>
                             <div id="dsl-cadastral-links" class="dsl-cadastral-links"></div>
+                        </div>
+                        <div id="dsl-pac-box" class="dsl-assignment-meta dsl-pac-box" hidden>
+                            <strong data-i18n="pac.advisory.title">Storico colturale & PAC (5 anni)</strong>
+                            <div id="dsl-pac-history-chain" class="dsl-pac-history-chain"></div>
+                            <div id="dsl-pac-advisory" class="dsl-pac-advisory"></div>
                         </div>
                         <div id="dsl-fields-form" class="dsl-fields-form" role="group" aria-labelledby="dsl-fields-title"></div>
                         <div id="dsl-cultivar-catalog" class="dsl-assignment-meta dsl-cultivar-catalog" hidden>
@@ -387,7 +417,8 @@
                             <div class="dsl-cultivar-grid">
                                 <label class="settings-field" for="dsl-cultivar-name">
                                     <span data-i18n="dsl.cultivar.name">Cultivar</span>
-                                    <input id="dsl-cultivar-name" type="text" class="parameter-picker" autocomplete="off">
+                                    <input id="dsl-cultivar-name" type="text" list="dsl-variety-autocomplete-list" class="parameter-picker" autocomplete="off">
+                                    <datalist id="dsl-variety-autocomplete-list"></datalist>
                                 </label>
                                 <label class="settings-field" for="dsl-cultivar-yield">
                                     <span data-i18n="dsl.cultivar.expectedYield">Resa prevista (q/ha)</span>
@@ -418,7 +449,6 @@
                 <section id="section-dsl-categories" class="toolbar-section" aria-labelledby="dsl-categories-title" hidden>
                     <div class="section-heading">
                         <h2 id="dsl-categories-title" data-i18n="section.dsl.categories">Colture</h2>
-                        <span class="section-kicker" data-i18n="section.dsl.categories.kicker">Piano</span>
                     </div>
                     <div class="dsl-category-filters-wrap">
                         <strong data-i18n="dsl.filters.title">Filtra visibilita categorie</strong>
@@ -441,7 +471,6 @@
                 <section class="toolbar-section" aria-labelledby="cadastral-info-title" hidden>
                     <div class="section-heading">
                         <h2 id="cadastral-info-title" data-i18n="section.parcelInfo">Info catastali</h2>
-                        <span class="section-kicker" data-i18n="section.parcelInfo.kicker">Query</span>
                     </div>
                     <div id="parcel-info-card" class="info-card">
                         <p id="parcel-info-status" class="section-help info-card-status" data-i18n="parcelInfo.disabled">Abilita l'interrogazione particelle in Settings.</p>
@@ -449,24 +478,24 @@
                 </section>
 
                 <section class="toolbar-section" aria-labelledby="instructions-title">
-                    <div class="section-heading">
-                        <h2 id="instructions-title" data-i18n="section.instructions">Istruzioni</h2>
-                        <span class="section-kicker" data-i18n="section.instructions.kicker">UX</span>
-                    </div>
-                    <ul class="instruction-list">
-                        <li data-i18n="instruction.1">Clic sulla mappa per aggiungere vertici.</li>
-                        <li data-i18n="instruction.2">Doppio clic per chiudere poligono o misura polyline.</li>
-                        <li data-i18n="instruction.3">Usa export e import per scambiare GeoJSON o KML.</li>
-                        <li data-i18n="instruction.4">Attiva modifica o elimina per operare su singole aree.</li>
-                    </ul>
+                    <details class="instructions-details">
+                        <summary class="section-heading">
+                            <h2 id="instructions-title" data-i18n="section.instructions">Istruzioni</h2>
+                        </summary>
+                        <ul class="instruction-list">
+                            <li data-i18n="instruction.1">Clic sulla mappa per aggiungere vertici.</li>
+                            <li data-i18n="instruction.2">Doppio clic per chiudere poligono o misura polyline.</li>
+                            <li data-i18n="instruction.3">Usa export e import per scambiare GeoJSON o KML.</li>
+                            <li data-i18n="instruction.4">Attiva modifica o elimina per operare su singole aree.</li>
+                        </ul>
+                    </details>
                 </section>
             </div>
 
-            <div id="panel-settings" class="toolbar-panel" data-panel="settings" hidden>
+            <div id="panel-settings" class="toolbar-panel" data-panel="settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
                 <section class="toolbar-section" aria-labelledby="settings-display-title">
                     <div class="section-heading">
                         <h2 id="settings-display-title" data-i18n="section.settings.display">Display</h2>
-                        <span class="section-kicker" data-i18n="section.settings.display.kicker">Locale</span>
                     </div>
                     <div class="settings-grid">
                         <label class="settings-field">
@@ -494,7 +523,6 @@
                 <section class="toolbar-section" aria-labelledby="settings-detection-title">
                     <div class="section-heading">
                         <h2 id="settings-detection-title" data-i18n="section.settings.detection">Detection</h2>
-                        <span class="section-kicker" data-i18n="section.settings.detection.kicker">Catasto & M3</span>
                     </div>
                     <div class="settings-grid">
                         <label class="settings-check">
@@ -532,7 +560,6 @@
                 <section class="toolbar-section" aria-labelledby="settings-cache-title">
                     <div class="section-heading">
                         <h2 id="settings-cache-title" data-i18n="section.settings.cache">Cache Tile WMS</h2>
-                        <span class="section-kicker" data-i18n="section.settings.cache.kicker">SQLite</span>
                     </div>
                     <div class="settings-grid">
                         <label class="settings-field">
@@ -593,6 +620,76 @@
                     <button type="submit" class="action-button" value="close" data-i18n="common.close">Chiudi</button>
                 </footer>
             </form>
+        </dialog>
+
+        <dialog id="dsl-category-creator" class="dsl-crop-dialog modal-dialog" hidden>
+            <div class="dsl-crop-dialog__form">
+                <header class="dsl-crop-dialog__header">
+                    <strong data-i18n="dsl.cropCreator.title">🌱 Nuova coltura</strong>
+                    <button type="button" id="btn-dsl-close-creator" class="icon-button close-button" aria-label="Chiudi">×</button>
+                </header>
+                <div class="dsl-crop-dialog__body">
+                    <p class="section-help" data-i18n="dsl.cropCreator.help">Seleziona dal catalogo ufficiale UE / SIAN oppure inserisci una coltura personalizzata.</p>
+                    
+                    <label class="settings-field" for="dsl-creator-search">
+                        <span data-i18n="dsl.cropCreator.searchLabel">Cerca nel catalogo ufficiale UE / SIAN</span>
+                        <input id="dsl-creator-search" type="text" list="dsl-official-species-list" class="parameter-picker" placeholder="Es. Mais, Soia, Erba medica, Cece, Avena..." autocomplete="off">
+                        <datalist id="dsl-official-species-list"></datalist>
+                    </label>
+
+                    <div class="dsl-creator-fields-grid">
+                        <label class="settings-field" for="dsl-creator-label">
+                            <span data-i18n="dsl.cropCreator.name">Nome coltura</span>
+                            <input id="dsl-creator-label" type="text" class="parameter-picker" required>
+                        </label>
+                        <label class="settings-field" for="dsl-creator-genus">
+                            <span data-i18n="dsl.cropCreator.genus">Genere botanico (BCAA 7)</span>
+                            <input id="dsl-creator-genus" type="text" class="parameter-picker" placeholder="Es. Zea, Glycine, Brassica">
+                        </label>
+                        <label class="settings-field" for="dsl-creator-pac-group">
+                            <span data-i18n="dsl.cropCreator.pacGroup">Gruppo PAC</span>
+                            <select id="dsl-creator-pac-group" class="parameter-picker">
+                                <option value="cereal_straw">Cereale a paglia</option>
+                                <option value="cereal_renewal">Cereale da rinnovo</option>
+                                <option value="legume">Leguminosa / Proteaginosa</option>
+                                <option value="oilseed">Oleaginosa</option>
+                                <option value="forage">Foraggera / Prato</option>
+                                <option value="vegetable">Orticola / Da tubero</option>
+                                <option value="permanent">Arborea / Permanente</option>
+                                <option value="other">Altro</option>
+                            </select>
+                        </label>
+                        <label class="settings-field" for="dsl-creator-eco4-role">
+                            <span data-i18n="dsl.cropCreator.eco4Role">Ruolo Eco-schema 4</span>
+                            <select id="dsl-creator-eco4-role" class="parameter-picker">
+                                <option value="renewal">Rinnovo (Ammesso dopo paglia)</option>
+                                <option value="improver">Miglioratrice (Azotofissatrice / Leguminosa)</option>
+                                <option value="depauperating">Depauperante (Cereale a paglia)</option>
+                                <option value="forage">Foraggera</option>
+                                <option value="exempt">Esente / Permanente</option>
+                            </select>
+                        </label>
+                        <label class="settings-field" for="dsl-creator-cycle">
+                            <span data-i18n="dsl.cropCreator.cycle">Ciclo</span>
+                            <select id="dsl-creator-cycle" class="parameter-picker">
+                                <option value="annual">Annuale</option>
+                                <option value="multiannual">Pluriennale</option>
+                                <option value="permanent">Permanente</option>
+                            </select>
+                        </label>
+                        <label class="settings-field dsl-color-field" for="dsl-creator-color">
+                            <span data-i18n="dsl.cropCreator.color">Colore</span>
+                            <input id="dsl-creator-color" type="color" value="#4caf50" class="parameter-color">
+                        </label>
+                    </div>
+
+                    <p id="dsl-creator-status" class="section-help" hidden></p>
+                </div>
+                <footer class="dsl-crop-dialog__footer">
+                    <button type="button" id="btn-dsl-save-category" class="action-button icon-button" data-i18n="dsl.cropCreator.save" data-icon="💾">Salva coltura</button>
+                    <button type="button" id="btn-dsl-cancel-category" class="action-button action-button-subtle icon-button" data-i18n="dsl.cropCreator.cancel" data-icon="✕">Annulla</button>
+                </footer>
+            </div>
         </dialog>
 
         <section id="m3-refine-report" class="m3-refine-report" hidden aria-live="polite">

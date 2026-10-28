@@ -75,6 +75,11 @@ function resolveColors(feature, isSelected, isArea, isLine, options = {}) {
                 }
             }
         }
+        // When comparison overlay is active underneath, keep bare unassigned areas extra translucent
+        // so the previous season's crop color shows through clearly.
+        if (options.compareOverlayActive) {
+            return { fill: 'rgba(19,74,55,0.08)', stroke: '#73f0bf' };
+        }
         return { fill: 'rgba(19,74,55,0.28)', stroke: '#73f0bf' };
     }
 
@@ -201,6 +206,74 @@ export function buildFeatureStyle(feature, selectedFeature, projection, unitSyst
                     : '700 14px Aptos, "Segoe UI Variable", sans-serif',
                 fill: new Fill({ color: '#ffffff' }),
                 stroke: new Stroke({ color: 'rgba(4,12,10,0.95)', width: 4 }),
+            }),
+        }));
+    }
+
+    return styles;
+}
+
+/**
+ * Build OpenLayers style for a historical comparison (ghost) feature.
+ *
+ * @param {import('ol').Feature} feature
+ * @param {import('ol/proj').ProjectionLike} projection
+ * @param {import('../units/units.js').UnitSystem} unitSystem
+ * @param {{ isExclusive?: boolean, campaignLabel?: string }} options
+ * @returns {OLStyle[]}
+ */
+export function buildCompareFeatureStyle(feature, projection, unitSystem, options = {}) {
+    const isExclusive = Boolean(options.isExclusive);
+    const campaignLabel = options.campaignLabel || '';
+    const dsl = feature.get('dsl');
+    let cropLabel = '';
+    let fillColor = 'rgba(150, 160, 175, 0.20)';
+    let strokeColor = '#8fa3b8';
+
+    if (dsl?.categoryId && dsl?.domainId) {
+        const domain = getDomain(dsl.domainId);
+        if (domain) {
+            const cat = getCategoryById(domain, dsl.categoryId);
+            if (cat) {
+                cropLabel = cat.labelKey ? t(cat.labelKey) : (cat.label || cat.id);
+                if (cat.color) {
+                    fillColor = hexToRgba(cat.color, isExclusive ? 0.38 : 0.22) || fillColor;
+                    strokeColor = cat.stroke || cat.color || strokeColor;
+                }
+            }
+        }
+    }
+
+    const variety = dsl?.values?.variety ? ` (${dsl.values.variety})` : '';
+    const labelGeom = getFeatureLabelGeometry(feature);
+
+    const prefix = campaignLabel ? `↺ [${campaignLabel}] ` : '↺ ';
+    const displayText = cropLabel
+        ? `${prefix}${cropLabel}${variety}`
+        : `${prefix}${feature.get('featureName') || feature.get('featureId') || 'Area'}`;
+
+    const styles = [
+        new OLStyle({
+            fill: new Fill({ color: fillColor }),
+            stroke: new Stroke({
+                color: strokeColor,
+                width: 2.2,
+                lineDash: isExclusive ? undefined : [6, 6],
+            }),
+        }),
+    ];
+
+    if (labelGeom) {
+        styles.push(new OLStyle({
+            geometry: labelGeom,
+            text: new OLText({
+                text: displayText,
+                textAlign: 'center',
+                justify: 'center',
+                offsetY: isExclusive ? 0 : 22,
+                font: '600 12px Aptos, "Segoe UI Variable", sans-serif',
+                fill: new Fill({ color: isExclusive ? '#ffffff' : '#d2e4ff' }),
+                stroke: new Stroke({ color: 'rgba(10, 20, 30, 0.90)', width: 3.5 }),
             }),
         }));
     }

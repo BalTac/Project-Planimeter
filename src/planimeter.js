@@ -19,7 +19,8 @@ import { buildLayers }                   from './map/layers.js';
 import { buildInteractions }             from './map/interactions.js';
 import { calculateArea, calculatePerimeter, calculateLength } from './geometry/calculations.js';
 import { calculateIntersectionMetricsWithCache } from './geometry/intersection.js';
-import { buildFeatureStyle, getFeatureLabelGeometry } from './geometry/style.js';
+import { buildFeatureStyle, buildCompareFeatureStyle, getFeatureLabelGeometry } from './geometry/style.js';
+import { resolveFeatureHistoryChain, evaluatePacRotation, evaluateAllCategoriesForFeature } from './dsl/pac-rotation.js';
 import { decorateFeature }               from './geometry/decorate.js';
 import { t, setLocale, detectLocale }    from './i18n/i18n.js';
 import { UnitSystem }                    from './units/units.js';
@@ -33,6 +34,11 @@ import {
     restorePersistedFeatures,
     setLocalMirrorStatusListener,
     syncPersistenceFromLocalMirror,
+    listCampaigns,
+    getCampaignById,
+    switchActiveCampaign,
+    createNextSeasonCampaign,
+    formatAgriculturalYearLabel,
 } from './io/persistence.js';
 import { HistoryEngine } from './io/history.js';
 import { initHistoryBackendSync, pullMirrorIfLocalBaselineOnly } from './io/history-sync.js';
@@ -42,7 +48,7 @@ import { detectImportFormat, readImportedFeatures } from './io/import.js';
 import { loadPreferences, savePreferences } from './io/preferences.js';
 import { loadBelfioreCodes } from './io/belfiore.js';
 import { CATASTO_WMS_LAYER_DEFS, DEFAULT_CATASTO_WMS_LAYER_SETTINGS } from './core/constants.js';
-import { initDsl, getDomain, getDomainsForLayer, registerDomain } from './dsl/loader.js';
+import { initDsl, getDomain, getDomainsForLayer, registerDomain, upsertCategoryToDomain, deleteCategoryFromDomain } from './dsl/loader.js';
 import { initCommandPalette, initShortcutsOverlay } from './ui/command-palette.js';
 import { aggregateByCategory, totalAggArea } from './dsl/aggregation.js';
 import { buildDslPayload } from './dsl/schema.js';
@@ -132,9 +138,11 @@ export default class Planimeter {
         this.pendingVertexDeleteAll = null;
         this.agricultureCultivars = [];
         this.agricultureCultivarByName = new Map();
+        this.officialSpecies = [];
 
         this.vectorSource = new VectorSource();
         this.pertenenzaSource = new VectorSource();
+        this.compareSource = new VectorSource();
         this.editVertexSource = new VectorSource();
         this.geoJsonFormat = new GeoJSON();
 
@@ -144,7 +152,13 @@ export default class Planimeter {
         this.updateLocalMirrorSyncStatus('checking');
 
         // ── Layers & map ──────────────────────────────────────────────────────
-        this.layers = buildLayers(this.vectorSource, this.pertenenzaSource, this.featureStyle.bind(this));
+        this.layers = buildLayers(
+            this.vectorSource,
+            this.pertenenzaSource,
+            this.featureStyle.bind(this),
+            this.compareSource,
+            this.compareFeatureStyle.bind(this),
+        );
         this.editVertexLayer = new VectorLayer({
             source: this.editVertexSource,
             zIndex: 40,
@@ -190,6 +204,8 @@ export default class Planimeter {
         // ── UI bindings ───────────────────────────────────────────────────────
         this.bindUI();
         this.bindPointerCoordinatesOverlay();
+        this.bindCampaignEvents();
+        this.syncCampaignControls();
         initCommandPalette(this);
         initShortcutsOverlay();
         initContextMenu({
@@ -237,25 +253,42 @@ export default class Planimeter {
             this.pertenenzaSource,
             this.view,
             (count) => {
+                this.syncCampaignControls();
                 this.setToolbarMessage(t('msg.featuresRestored', { count }));
                 this.fitToFeatures();
             },
         );
+        this.syncCampaignControls();
         syncPersistenceFromLocalMirror(
             this.state,
             this.vectorSource,
             this.pertenenzaSource,
             (count) => {
+                this.syncCampaignControls();
                 this.setToolbarMessage(t('msg.featuresRestored', { count }));
                 this.fitToFeatures();
                 this.updateSummary();
             },
             {
                 onPromptEmptyLocal: ({ apply, incomingStore, incomingCount }) => {
-                    this.showRestorePrompt({ apply, incomingStore, incomingCount });
+                    this.showRestorePrompt({
+                        apply: () => {
+                            apply();
+                            this.syncCampaignControls();
+                        },
+                        incomingStore,
+                        incomingCount,
+                    });
                 },
                 onBannerMirrorNewer: ({ apply, incomingStore, incomingCount }) => {
-                    this.showRestoreBanner({ apply, incomingStore, incomingCount });
+                    this.showRestoreBanner({
+                        apply: () => {
+                            apply();
+                            this.syncCampaignControls();
+                        },
+                        incomingStore,
+                        incomingCount,
+                    });
                 },
             },
         );
@@ -284,12 +317,17 @@ export default class Planimeter {
             this.normalizeUserAreaNames();
             this.layers.vector.changed();
             this.layers.pertenenza.changed();
+            this.layers.compare?.changed?.();
+            this.syncCampaignControls();
             this.updateSummary();
-            this.updateDslAssignmentControls();
+            this.updateDslAssignmentControls(false);
         }).catch((err) => {
             console.warn('[DSL] init failed:', err);
         });
 
+        this.loadOfficialSpeciesCatalog().catch((err) => {
+            console.warn('[DSL] official species catalog load failed:', err);
+        });
         this.loadAgricultureCultivarCatalog().catch((err) => {
             console.warn('[DSL] agriculture cultivar catalog load failed:', err);
         });
@@ -389,19 +427,25 @@ export default class Planimeter {
 
         const seen = new Set();
         const candidates = [];
-        this.map.forEachFeatureAtPixel(pixel, (feature) => {
-            if (!feature) return undefined;
+        this.map.forEachFeatureAtPixel(
+            pixel,
+            (feature) => {
+                if (!feature) return undefined;
 
-            const overlayLayer = this.getFeatureOverlayLayer(feature);
-            if (!this.isOverlayLayerVisible(overlayLayer)) return undefined;
+                const overlayLayer = this.getFeatureOverlayLayer(feature);
+                if (!this.isOverlayLayerVisible(overlayLayer)) return undefined;
 
-            const featureId = feature.getId?.() ?? feature.ol_uid;
-            if (seen.has(featureId)) return undefined;
+                const featureId = feature.getId?.() ?? feature.ol_uid;
+                if (seen.has(featureId)) return undefined;
 
-            seen.add(featureId);
-            candidates.push(feature);
-            return undefined;
-        });
+                seen.add(featureId);
+                candidates.push(feature);
+                return undefined;
+            },
+            {
+                layerFilter: (layer) => layer === this.layers.vector || layer === this.layers.pertenenza,
+            },
+        );
 
         return candidates;
     }
@@ -592,6 +636,29 @@ export default class Planimeter {
             dslCultivarSaveButton:     document.getElementById('btn-dsl-cultivar-save'),
             dslCultivarDeleteButton:   document.getElementById('btn-dsl-cultivar-delete'),
             dslCultivarStatus:         document.getElementById('dsl-cultivar-status'),
+            campaignActiveSelect:      document.getElementById('campaign-active-select'),
+            campaignNewSeasonBtn:      document.getElementById('btn-campaign-new-season'),
+            campaignCompareToggle:     document.getElementById('campaign-compare-toggle'),
+            campaignCompareSelect:     document.getElementById('campaign-compare-select'),
+            campaignPeekBtn:           document.getElementById('btn-campaign-peek'),
+            dslPacBox:                 document.getElementById('dsl-pac-box'),
+            dslPacHistoryChain:        document.getElementById('dsl-pac-history-chain'),
+            dslPacAdvisory:            document.getElementById('dsl-pac-advisory'),
+            btnDslAddCategory:         document.getElementById('btn-dsl-add-category'),
+            dslCategoryCreator:        document.getElementById('dsl-category-creator'),
+            btnDslCloseCreator:        document.getElementById('btn-dsl-close-creator'),
+            dslCreatorSearch:          document.getElementById('dsl-creator-search'),
+            dslOfficialSpeciesList:    document.getElementById('dsl-official-species-list'),
+            dslCreatorLabel:           document.getElementById('dsl-creator-label'),
+            dslCreatorGenus:           document.getElementById('dsl-creator-genus'),
+            dslCreatorPacGroup:        document.getElementById('dsl-creator-pac-group'),
+            dslCreatorEco4Role:        document.getElementById('dsl-creator-eco4-role'),
+            dslCreatorCycle:           document.getElementById('dsl-creator-cycle'),
+            dslCreatorColor:           document.getElementById('dsl-creator-color'),
+            btnDslSaveCategory:        document.getElementById('btn-dsl-save-category'),
+            btnDslCancelCategory:      document.getElementById('btn-dsl-cancel-category'),
+            dslCreatorStatus:          document.getElementById('dsl-creator-status'),
+            dslVarietyAutocompleteList: document.getElementById('dsl-variety-autocomplete-list'),
         };
     }
 
@@ -616,6 +683,7 @@ export default class Planimeter {
                 ...Object.values(this.layers.catastoOfficial),
                 this.layers.catastoFallback,
                 this.layers.pertenenza,
+                this.layers.compare,
                 this.layers.vector,
                 this.editVertexLayer,
             ],
@@ -958,11 +1026,22 @@ export default class Planimeter {
                     ev.preventDefault();
                 }
             }
+
+            if (!inEditable && !ev.ctrlKey && !ev.metaKey && !ev.altKey && (ev.key === 'v' || ev.key === 'V') && !ev.repeat) {
+                if (this.state.compareCampaignId) {
+                    this._hotkeyPeekActive = true;
+                    this.setCompareExclusivePeek(true);
+                }
+            }
         });
         document.addEventListener('keyup', (ev) => {
             if (!ev.ctrlKey && this.state.isCtrlPressed) {
                 this.state.isCtrlPressed = false;
                 this.refreshSnapState();
+            }
+            if ((ev.key === 'v' || ev.key === 'V') && this._hotkeyPeekActive) {
+                this._hotkeyPeekActive = false;
+                this.setCompareExclusivePeek(false);
             }
         });
         window.addEventListener('blur', () => {
@@ -1072,8 +1151,195 @@ export default class Planimeter {
 
     // ── UI bindings ──────────────────────────────────────────────────────────────
 
+    // ── Campaign & Comparison Management ────────────────────────────────────
+
+    syncCampaignControls() {
+        const activeSelect = this.elements.campaignActiveSelect;
+        const compareSelect = this.elements.campaignCompareSelect;
+        const compareToggle = this.elements.campaignCompareToggle;
+        if (!activeSelect || !compareSelect) return;
+
+        const campaigns = listCampaigns();
+        const activeId = this.state.activeCampaignId;
+
+        activeSelect.innerHTML = '';
+        for (const c of campaigns) {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = c.label || formatAgriculturalYearLabel(c.year);
+            if (c.id === activeId) opt.selected = true;
+            activeSelect.appendChild(opt);
+        }
+
+        if (activeSelect.options.length > 0 && !activeSelect.value) {
+            activeSelect.value = activeId || activeSelect.options[0].value;
+        }
+
+        compareSelect.innerHTML = '';
+        const otherCampaigns = campaigns.filter((c) => c.id !== activeSelect.value);
+        for (const c of otherCampaigns) {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = c.label || formatAgriculturalYearLabel(c.year);
+            if (c.id === this.state.compareCampaignId) opt.selected = true;
+            compareSelect.appendChild(opt);
+        }
+
+        if (otherCampaigns.length > 0 && (!this.state.compareCampaignId || !otherCampaigns.some((c) => c.id === this.state.compareCampaignId))) {
+            this.state.compareCampaignId = otherCampaigns.at(-1)?.id || null;
+            if (this.state.compareCampaignId) compareSelect.value = this.state.compareCampaignId;
+        } else if (otherCampaigns.length === 0) {
+            this.state.compareCampaignId = null;
+        }
+
+        const canCompare = otherCampaigns.length > 0;
+        if (compareToggle) compareToggle.disabled = !canCompare;
+        if (compareSelect) compareSelect.disabled = !canCompare || !this.state.compareOverlayVisible;
+        if (compareToggle) compareToggle.checked = Boolean(this.state.compareOverlayVisible && canCompare);
+        if (this.elements.campaignPeekBtn) {
+            this.elements.campaignPeekBtn.disabled = !canCompare;
+            this.elements.campaignPeekBtn.classList.toggle('is-active', Boolean(this.state.compareExclusivePeek && canCompare));
+        }
+
+        this.refreshCompareOverlay();
+    }
+
+    refreshCompareOverlay() {
+        if (!this.compareSource || !this.layers.compare) return;
+
+        const isVisible = Boolean(this.state.compareOverlayVisible && this.state.compareCampaignId);
+        this.layers.compare.setVisible(isVisible);
+
+        if (!isVisible) {
+            this.compareSource.clear();
+            return;
+        }
+
+        const comp = getCampaignById(this.state.compareCampaignId);
+        if (!comp || !comp.features) {
+            this.compareSource.clear();
+            return;
+        }
+
+        const features = this.geoJsonFormat.readFeatures(comp.features, {
+            dataProjection: 'EPSG:4326',
+            featureProjection: 'EPSG:3857',
+        }).filter((f) => (f.get('overlayLayer') ?? 'user') === 'user');
+
+        this.compareSource.clear();
+        this.compareSource.addFeatures(features);
+        this.layers.compare.changed();
+    }
+
+    setCompareOverlayVisible(visible) {
+        this.state.compareOverlayVisible = Boolean(visible);
+        if (!this.state.compareOverlayVisible && this.state.compareExclusivePeek) {
+            this.state.compareExclusivePeek = false;
+            this.elements.campaignPeekBtn?.classList.remove('is-active');
+            if (this.layers.vector) {
+                this.layers.vector.setVisible(Boolean(this.state.userAreasVisible));
+            }
+        }
+        if (this.elements.campaignCompareSelect) {
+            this.elements.campaignCompareSelect.disabled = !this.state.compareOverlayVisible;
+        }
+        this.refreshCompareOverlay();
+        this.layers.vector?.changed?.();
+    }
+
+    setCompareExclusivePeek(active) {
+        const nextActive = Boolean(active && this.state.compareCampaignId);
+        this.state.compareExclusivePeek = nextActive;
+        if (nextActive && !this.state.compareOverlayVisible) {
+            this.state.compareOverlayVisible = true;
+            if (this.elements.campaignCompareToggle) {
+                this.elements.campaignCompareToggle.checked = true;
+            }
+            if (this.elements.campaignCompareSelect) {
+                this.elements.campaignCompareSelect.disabled = false;
+            }
+            this.refreshCompareOverlay();
+        }
+        this.elements.campaignPeekBtn?.classList.toggle('is-active', nextActive);
+        if (this.layers.vector) {
+            this.layers.vector.setVisible(!nextActive && Boolean(this.state.userAreasVisible));
+            this.layers.vector.changed();
+        }
+        if (this.layers.compare) {
+            this.layers.compare.changed();
+        }
+    }
+
+    bindCampaignEvents() {
+        this.elements.campaignActiveSelect?.addEventListener('change', (ev) => {
+            const nextId = ev.target.value;
+            if (!nextId || nextId === this.state.activeCampaignId) return;
+            switchActiveCampaign(nextId, this.state, this.vectorSource, this.pertenenzaSource, () => {
+                this.clearSelection();
+                this.syncCampaignControls();
+                this.updateSummary();
+                this.layers.vector.changed();
+                this.layers.pertenenza.changed();
+                this.setToolbarMessage(t('campaign.switchedToast', {
+                    season: this.elements.campaignActiveSelect.options[this.elements.campaignActiveSelect.selectedIndex]?.text || nextId,
+                }));
+            });
+        });
+
+        this.elements.campaignCompareToggle?.addEventListener('change', (ev) => {
+            this.setCompareOverlayVisible(ev.target.checked);
+        });
+
+        this.elements.campaignCompareSelect?.addEventListener('change', (ev) => {
+            this.state.compareCampaignId = ev.target.value;
+            this.refreshCompareOverlay();
+        });
+
+        const peekBtn = this.elements.campaignPeekBtn;
+        if (peekBtn) {
+            peekBtn.addEventListener('click', () => {
+                this.setCompareExclusivePeek(!this.state.compareExclusivePeek);
+            });
+        }
+
+        this.elements.campaignNewSeasonBtn?.addEventListener('click', () => {
+            const currentYear = Number(this.state.activeCampaignYear) || new Date().getFullYear();
+            const previousCampaignId = this.state.activeCampaignId || `${currentYear}-annual`;
+            const nextYear = currentYear + 1;
+            const nextSeasonLabel = formatAgriculturalYearLabel(nextYear);
+            const currentSeasonLabel = formatAgriculturalYearLabel(currentYear);
+
+            const confirmMsg = t('campaign.newConfirm', { nextSeason: nextSeasonLabel, currentSeason: currentSeasonLabel });
+            if (!window.confirm(confirmMsg)) return;
+
+            const res = createNextSeasonCampaign(this.state, this.vectorSource, this.pertenenzaSource, {
+                keepMultiannual: true,
+                nextYear,
+                nextLabel: nextSeasonLabel,
+            });
+
+            if (res.ok) {
+                this.clearSelection();
+                this.state.compareCampaignId = previousCampaignId;
+                this.state.compareOverlayVisible = true;
+                this.syncCampaignControls();
+                this.layers.vector.changed();
+                this.layers.pertenenza.changed();
+                this.updateSummary();
+                this.setToolbarMessage(t('campaign.createdToast', { season: res.label }));
+            }
+        });
+    }
+
     bindUI() {
         this.bindLayerGroupToggles();
+
+        const toolbarCollapseBtn = document.getElementById('btn-toolbar-toggle-collapse');
+        const toolbarEl = document.getElementById('app-toolbar');
+        toolbarCollapseBtn?.addEventListener('click', () => {
+            const isCollapsed = toolbarEl?.classList.toggle('is-collapsed');
+            toolbarCollapseBtn.setAttribute('aria-expanded', String(!isCollapsed));
+        });
 
         this.elements.tabButtons.forEach((button) => {
             button.addEventListener('click', () => this.setToolbarPanel(button.dataset.panel));
@@ -1106,6 +1372,19 @@ export default class Planimeter {
         this.elements.dslCategorySelect?.addEventListener('change',      () => this.updateDslAssignmentControls(false));
         this.elements.dslCultivarSaveButton?.addEventListener('click',   () => this.saveAgricultureCultivarFromPanel());
         this.elements.dslCultivarDeleteButton?.addEventListener('click', () => this.deleteAgricultureCultivarFromPanel());
+        this.elements.btnDslAddCategory?.addEventListener('click', () => this.openCategoryCreator());
+        this.elements.btnDslCloseCreator?.addEventListener('click', () => this.closeCategoryCreator());
+        this.elements.btnDslCancelCategory?.addEventListener('click', () => this.closeCategoryCreator());
+        this.elements.btnDslSaveCategory?.addEventListener('click', () => this.saveNewCategoryFromCreator());
+        this.elements.dslCreatorSearch?.addEventListener('input', (e) => this.handleCreatorSpeciesSearch(e.target.value));
+        this.elements.dslCultivarName?.addEventListener('focus', () => {
+            const catId = this.elements.dslCategorySelect?.value || '';
+            this.updateVarietyAutocomplete(catId, this.elements.dslCultivarName?.value || '');
+        });
+        this.elements.dslCultivarName?.addEventListener('input', (e) => {
+            const catId = this.elements.dslCategorySelect?.value || '';
+            this.updateVarietyAutocomplete(catId, e.target.value);
+        });
         this.elements.importInput.addEventListener('change', (ev) => this.importFeatures(ev));
         this.elements.loadDomainButton?.addEventListener('click', () => this.elements.loadDomainInput?.click());
         this.elements.loadDomainInput?.addEventListener('change', (ev) => this.loadDomainFromFile(ev));
@@ -1243,6 +1522,25 @@ export default class Planimeter {
 
     // ── Feature style ────────────────────────────────────────────────────────────
 
+    compareFeatureStyle(feature) {
+        return buildCompareFeatureStyle(
+            feature,
+            this.view?.getProjection?.(),
+            this.unitSystem,
+            {
+                isExclusive: this.state.compareExclusivePeek,
+                campaignLabel: this.getCompareCampaignLabel(),
+            },
+        );
+    }
+
+    getCompareCampaignLabel() {
+        const targetId = this.state.compareCampaignId;
+        if (!targetId) return '';
+        const c = getCampaignById(targetId);
+        return c?.label || '';
+    }
+
     featureStyle(feature) {
         if (this.isPolygonFeature(feature)) {
             const categoryId = this.getFeatureDslCategoryId(feature);
@@ -1259,6 +1557,7 @@ export default class Planimeter {
                 pertenenzeColor: this.state.pertenenzeColor,
                 editMode: this.state.mode === 'edit',
                 selectedVertex: this.state.selectedEditVertex,
+                compareOverlayActive: Boolean(this.state.compareOverlayVisible && this.state.compareCampaignId),
             },
         );
     }
@@ -2125,7 +2424,7 @@ export default class Planimeter {
             const type = f.getGeometry()?.getType();
             return type === 'Polygon' || type === 'MultiPolygon';
         }));
-        this.updateDslAssignmentControls();
+        this.updateDslAssignmentControls(true);
     }
 
     /**
@@ -2277,7 +2576,7 @@ export default class Planimeter {
      *
      * @param {boolean} [rebuildOptions=true]
      */
-    updateDslAssignmentControls(rebuildOptions = true) {
+    updateDslAssignmentControls(rebuildOptions = true, preferredCategoryId = null) {
         const section = this.elements.dslAssignSection;
         const select = this.elements.dslCategorySelect;
         const button = this.elements.dslAssignButton;
@@ -2302,7 +2601,11 @@ export default class Planimeter {
             }
             section.hidden = false;
             this._renderDslPanelHeader(fallbackDomain);
-            this._renderDslCategoryOptions(fallbackDomain, rebuildOptions);
+            const targetVal = preferredCategoryId !== null ? preferredCategoryId : (select.value || '');
+            this._renderDslCategoryOptions(fallbackDomain, rebuildOptions, null, targetVal);
+            if (targetVal) {
+                select.value = targetVal;
+            }
             this.renderAgricultureCultivarCatalogPanel(fallbackDomain, null);
             if (this.elements.dslAssignFeatureValue)
                 this.elements.dslAssignFeatureValue.textContent = t('dsl.assign.noFeature');
@@ -2349,13 +2652,21 @@ export default class Planimeter {
             return Boolean(String(dsl?.categoryId || '').trim());
         });
 
-        this._renderDslCategoryOptions(domain, rebuildOptions);
-
         const selectedCategoryId = (featureIsPolygon && currentDsl?.domainId === domain.id)
             ? String(currentDsl?.categoryId ?? '')
             : '';
 
-        if (rebuildOptions || !select.value) {
+        const targetCategoryValue = preferredCategoryId !== null
+            ? preferredCategoryId
+            : (select.value || selectedCategoryId);
+
+        this._renderDslCategoryOptions(domain, rebuildOptions, feature, targetCategoryValue);
+
+        if (preferredCategoryId !== null) {
+            select.value = preferredCategoryId;
+        } else if (targetCategoryValue) {
+            select.value = targetCategoryValue;
+        } else {
             select.value = selectedCategoryId;
         }
 
@@ -2408,9 +2719,27 @@ export default class Planimeter {
         this.elements.dslAssignDomainValue.textContent = label;
     }
 
-    _renderDslCategoryOptions(domain, rebuildOptions) {
+    _renderDslCategoryOptions(domain, rebuildOptions, feature = null, activeCategoryValue = '') {
         const select = this.elements.dslCategorySelect;
-        if (!select || !rebuildOptions) return;
+        if (!select) return;
+
+        let pacEvaluations = null;
+        let hasHistory = false;
+        const effectiveCatId = activeCategoryValue || select.value || '';
+        if (domain?.id === 'agriculture' && feature) {
+            const campaigns = listCampaigns();
+            const currYear = Number(this.state.activeCampaignYear) || new Date().getFullYear();
+            const fertilization = feature.get('dsl')?.values?.fertilization || '';
+            const res = evaluateAllCategoriesForFeature(feature, fertilization, currYear, campaigns, domain);
+            pacEvaluations = res.evaluations;
+            hasHistory = Array.isArray(res.historyChain) && res.historyChain.length > 0;
+            this.renderPacAdvisoryBox(feature, res.historyChain, pacEvaluations[effectiveCatId] || null);
+        } else {
+            this.renderPacAdvisoryBox(null, [], null);
+        }
+
+        if (!rebuildOptions && select.options.length > 1) return;
+
         select.innerHTML = '';
         const placeholder = document.createElement('option');
         placeholder.value = '';
@@ -2420,8 +2749,66 @@ export default class Planimeter {
         for (const cat of domain.categories ?? []) {
             const opt = document.createElement('option');
             opt.value = cat.id;
-            opt.textContent = cat.labelKey ? t(cat.labelKey) : (cat.label ?? cat.id);
+            const baseLabel = cat.labelKey ? t(cat.labelKey) : (cat.label ?? cat.id);
+            const pacEval = (pacEvaluations && hasHistory) ? pacEvaluations[cat.id] : null;
+            if (pacEval) {
+                opt.textContent = `${pacEval.badge} ${baseLabel} (${pacEval.shortReason})`;
+            } else {
+                opt.textContent = baseLabel;
+            }
+            if (cat.id === effectiveCatId) {
+                opt.selected = true;
+            }
             select.appendChild(opt);
+        }
+    }
+
+    renderPacAdvisoryBox(feature, historyChain = [], currentEval = null) {
+        const box = this.elements.dslPacBox;
+        const chainEl = this.elements.dslPacHistoryChain;
+        const advEl = this.elements.dslPacAdvisory;
+        if (!box || !chainEl || !advEl) return;
+
+        if (!feature || !historyChain || historyChain.length === 0) {
+            box.hidden = true;
+            chainEl.innerHTML = '';
+            advEl.innerHTML = '';
+            return;
+        }
+
+        box.hidden = false;
+        chainEl.innerHTML = '';
+        advEl.innerHTML = '';
+
+        const ul = document.createElement('ul');
+        ul.className = 'pac-history-list';
+        for (const h of historyChain) {
+            const li = document.createElement('li');
+            const summary = (h.matches || []).map((m) => {
+                const varStr = m.variety ? ` - ${this.escapeHtml(m.variety)}` : '';
+                const pctStr = m.coverageRatio < 0.95 ? ` (${Math.round(m.coverageRatio * 100)}%)` : '';
+                return `<strong>${this.escapeHtml(m.categoryLabel)}</strong>${varStr}${pctStr}`;
+            }).join(', ');
+            li.innerHTML = `<span class="pac-history-year">${this.escapeHtml(h.label)}:</span> ${summary || '—'}`;
+            ul.appendChild(li);
+        }
+        chainEl.appendChild(ul);
+
+        if (currentEval) {
+            const advDiv = document.createElement('div');
+            advDiv.className = `pac-status-card pac-status-${currentEval.status}`;
+            advDiv.innerHTML = `<strong>${this.escapeHtml(currentEval.badge)} ${this.escapeHtml(currentEval.shortReason)}</strong>`;
+            if (currentEval.details?.length) {
+                const dList = document.createElement('ul');
+                dList.className = 'pac-status-details';
+                for (const d of currentEval.details) {
+                    const dItem = document.createElement('li');
+                    dItem.textContent = d;
+                    dList.appendChild(dItem);
+                }
+                advDiv.appendChild(dList);
+            }
+            advEl.appendChild(advDiv);
         }
     }
 
@@ -2439,6 +2826,10 @@ export default class Planimeter {
      *      • else first domain returned by getDomainsForLayer(L)
      *  - mixed layers → { domain: null, layerKey: null } (caller shows hint)
      */
+    getDomain(domainId = 'agriculture') {
+        return getDomain(domainId);
+    }
+
     resolveDomainForSelection(features) {
         if (!Array.isArray(features) || features.length === 0) {
             return { domain: null, layerKey: null };
@@ -2598,7 +2989,7 @@ export default class Planimeter {
         this.setToolbarPanel('operate');
         this.getLayerForFeature(target).changed();
         this.updateSummary();
-        this.updateDslAssignmentControls();
+        this.updateDslAssignmentControls(false);
         this.elements.dslCategorySelect?.focus();
         this.setToolbarMessage(t('msg.categoryPanelReady', {
             name: target.get('featureName') || target.get('featureId') || '-',
@@ -2825,6 +3216,19 @@ export default class Planimeter {
             }
         }
 
+        const getPrevCropLabel = (feature) => {
+            if (!feature) return '—';
+            const domain = getDomain('agriculture');
+            if (!domain) return '—';
+            const campaigns = listCampaigns();
+            const currYear = Number(this.state.activeCampaignYear) || new Date().getFullYear();
+            const chain = resolveFeatureHistoryChain(feature, currYear, campaigns, domain);
+            if (!chain.length || !chain[0].matches?.length) return '—';
+            const top = chain[0].matches[0];
+            const varStr = top.variety ? ` - ${top.variety}` : '';
+            return `${top.categoryLabel}${varStr} (${chain[0].label})`;
+        };
+
         openSummaryPanel({
             container: mapContainer,
             selectedFeatures,
@@ -2833,6 +3237,7 @@ export default class Planimeter {
             unitSystem: this.unitSystem,
             getPropertyScopeLabel,
             getCategoryLabel,
+            getPrevCropLabel,
             projection,
             summaryMeta: {
                 layerLabel: measurementLayerLabel,
@@ -2963,44 +3368,21 @@ export default class Planimeter {
             if (currentValue) input.value = String(currentValue);
 
             if ((featureDsl?.domainId === 'agriculture' || domainId === 'agriculture') && fieldId === 'variety') {
-                const select = document.createElement('select');
-                select.id = `dsl-field-${fieldId}`;
-                select.className = 'dsl-field-input';
-                select.dataset.fieldId = fieldId;
-                if (isRequired) select.required = true;
-
-                const freeOpt = document.createElement('option');
-                freeOpt.value = '';
-                freeOpt.textContent = '— ' + t('dsl.cultivar.selectPlaceholder') + ' —';
-                select.appendChild(freeOpt);
+                input.setAttribute('list', 'dsl-variety-autocomplete-list');
+                input.setAttribute('autocomplete', 'off');
+                input.setAttribute('placeholder', 'Es. Averngur, Ketos...');
 
                 const categoryId = String(featureDsl?.categoryId || this.elements.dslCategorySelect?.value || '').trim();
-                const candidates = this.getAgricultureCultivarCandidates(categoryId, featureDsl?.values ?? {});
-                const seen = new Set();
-                for (const item of candidates) {
-                    const cultivar = String(item?.cultivar ?? '').trim();
-                    if (!cultivar) continue;
-                    const key = cultivar.toLowerCase();
-                    if (seen.has(key)) continue;
-                    seen.add(key);
-                    const opt = document.createElement('option');
-                    opt.value = cultivar;
-                    opt.textContent = cultivar;
-                    select.appendChild(opt);
-                }
-
-                const currentText = String(currentValue || '').trim();
-                if (currentText && !seen.has(currentText.toLowerCase())) {
-                    const customOpt = document.createElement('option');
-                    customOpt.value = currentText;
-                    customOpt.textContent = `${currentText} (${t('dsl.cultivar.customValue')})`;
-                    customOpt.dataset.custom = '1';
-                    select.appendChild(customOpt);
-                }
-                select.value = currentText;
-
-                select.addEventListener('change', (e) => this.updateFeatureDslFieldValue(fieldId, e.target.value));
-                container.appendChild(select);
+                input.addEventListener('focus', () => {
+                    this.updateVarietyAutocomplete(categoryId, input.value);
+                });
+                input.addEventListener('input', (e) => {
+                    this.updateVarietyAutocomplete(categoryId, e.target.value);
+                });
+                input.addEventListener('change', (e) => {
+                    this.updateFeatureDslFieldValue(fieldId, e.target.value);
+                });
+                container.appendChild(input);
                 return container;
             }
 
@@ -3052,6 +3434,17 @@ export default class Planimeter {
         feature.set('modifiedAt', new Date().toISOString());
 
         this.persistAgricultureCultivarIfPossible(dsl);
+
+        if (fieldId === 'fertilization' || fieldId === 'variety') {
+            const currentVal = this.elements.dslCategorySelect?.value || '';
+            const resolution = this.resolveDomainForSelection([feature]);
+            if (resolution.domain?.id === 'agriculture') {
+                this._renderDslCategoryOptions(resolution.domain, true, feature, currentVal);
+                if (this.elements.dslCategorySelect) {
+                    this.elements.dslCategorySelect.value = currentVal;
+                }
+            }
+        }
 
         schedulePersistenceSync(this.state, this.vectorSource, this.pertenenzaSource);
     }
@@ -3190,6 +3583,150 @@ export default class Planimeter {
             ].join('|');
             return key !== rowKey;
         });
+    }
+
+    async loadOfficialSpeciesCatalog() {
+        try {
+            const res = await fetch('/domains/official-species.json');
+            if (!res.ok) return;
+            this.officialSpecies = await res.json();
+            const datalist = this.elements.dslOfficialSpeciesList;
+            if (datalist && Array.isArray(this.officialSpecies)) {
+                datalist.innerHTML = '';
+                for (const sp of this.officialSpecies) {
+                    const opt = document.createElement('option');
+                    const latin = sp.scientificName ? ` (${sp.scientificName})` : '';
+                    opt.value = `${sp.label}${latin}`;
+                    opt.dataset.speciesId = sp.id;
+                    datalist.appendChild(opt);
+                }
+            }
+        } catch (e) {
+            console.warn('[Planimeter] official species load error:', e);
+        }
+    }
+
+    openCategoryCreator() {
+        const creator = this.elements.dslCategoryCreator;
+        if (!creator) return;
+        creator.hidden = false;
+        if (typeof creator.showModal === 'function' && !creator.open) {
+            creator.showModal();
+        }
+        if (this.elements.dslCreatorSearch) {
+            this.elements.dslCreatorSearch.value = '';
+            this.elements.dslCreatorSearch.focus();
+        }
+    }
+
+    closeCategoryCreator() {
+        const creator = this.elements.dslCategoryCreator;
+        if (!creator) return;
+        creator.hidden = true;
+        if (typeof creator.close === 'function' && creator.open) {
+            creator.close();
+        }
+    }
+
+    handleCreatorSpeciesSearch(value) {
+        if (!value || !Array.isArray(this.officialSpecies)) return;
+        const needle = String(value).trim().toLowerCase();
+        if (!needle) return;
+
+        // Exact match or prefix match or search inside label/scientificName/genus
+        const matched = this.officialSpecies.find((s) => {
+            const label = String(s.label || '').toLowerCase();
+            const sci = String(s.scientificName || '').toLowerCase();
+            const full = `${label} (${sci})`.toLowerCase();
+            return full === needle ||
+                   label === needle ||
+                   full.startsWith(needle) ||
+                   label.startsWith(needle) ||
+                   full.includes(needle);
+        });
+
+        if (matched) {
+            if (this.elements.dslCreatorLabel) this.elements.dslCreatorLabel.value = matched.label;
+            if (this.elements.dslCreatorGenus) this.elements.dslCreatorGenus.value = matched.botanicalGenus || '';
+            if (this.elements.dslCreatorPacGroup) this.elements.dslCreatorPacGroup.value = matched.pacGroup || 'other';
+            if (this.elements.dslCreatorEco4Role) this.elements.dslCreatorEco4Role.value = matched.eco4Role || 'exempt';
+            if (this.elements.dslCreatorCycle) this.elements.dslCreatorCycle.value = matched.cycleType || 'annual';
+            if (this.elements.dslCreatorColor) this.elements.dslCreatorColor.value = matched.color || '#4caf50';
+        }
+    }
+
+    async saveNewCategoryFromCreator() {
+        const label = String(this.elements.dslCreatorLabel?.value || '').trim();
+        if (!label) {
+            this.setToolbarMessage(t('dsl.cropCreator.errorName'));
+            return;
+        }
+
+        const genus = String(this.elements.dslCreatorGenus?.value || '').trim();
+        const pacGroup = String(this.elements.dslCreatorPacGroup?.value || 'other').trim();
+        const eco4Role = String(this.elements.dslCreatorEco4Role?.value || 'exempt').trim();
+        const cycleType = String(this.elements.dslCreatorCycle?.value || 'annual').trim();
+        const color = String(this.elements.dslCreatorColor?.value || '#4caf50').trim();
+
+        // Generate slug
+        const slug = label.toLowerCase()
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9_]+/g, '_')
+            .replace(/^_+|_+$/g, '');
+
+        const newCat = {
+            id: slug || `crop_${Date.now()}`,
+            label,
+            color,
+            stroke: color,
+            botanicalGenus: genus || label,
+            pacGroup,
+            cycleType,
+            eco4Role,
+        };
+
+        await upsertCategoryToDomain('agriculture', newCat);
+
+        // Refresh UI options and select the newly created crop
+        this.updateDslAssignmentControls(true, newCat.id);
+        if (this.elements.dslCategorySelect) {
+            this.elements.dslCategorySelect.value = newCat.id;
+        }
+        this.closeCategoryCreator();
+        this.setToolbarMessage(t('dsl.cropCreator.success', { label: newCat.label }));
+    }
+
+    async updateVarietyAutocomplete(categoryId, query = '') {
+        const datalist = this.elements.dslVarietyAutocompleteList;
+        if (!datalist) return;
+
+        const resolution = this.resolveDomainForSelection(this.getSelectedAssignablePolygonFeatures());
+        const domain = resolution.domain ?? getDomain('agriculture');
+        const catProfile = domain?.categories?.find((c) => c.id === categoryId);
+        const genus = catProfile?.botanicalGenus || '';
+
+        try {
+            const url = `/agriculture-varieties-autocomplete?category_id=${encodeURIComponent(categoryId || '')}&genus=${encodeURIComponent(genus)}&q=${encodeURIComponent(query || '')}`;
+            const res = await fetch(url);
+            if (!res.ok) return;
+            const data = await res.json();
+            const items = data.items || [];
+
+            datalist.innerHTML = '';
+            for (const item of items) {
+                const opt = document.createElement('option');
+                opt.value = item.variety;
+                if (item.isPreset) {
+                    const extra = item.expectedYieldQHa ? ` (${item.expectedYieldQHa} q/ha)` : '';
+                    opt.label = `★ ${item.variety}${extra}`;
+                } else {
+                    opt.label = `🇪🇺 ${item.variety}`;
+                }
+                datalist.appendChild(opt);
+            }
+        } catch (e) {
+            console.warn('[Planimeter] variety autocomplete failed:', e);
+        }
     }
 
     async loadAgricultureCultivarCatalog() {
@@ -4553,7 +5090,7 @@ export default class Planimeter {
                 this.layers.vector.changed();
                 this.layers.pertenenza.changed();
                 this.updateSummary();
-                this.updateDslAssignmentControls();
+                this.updateDslAssignmentControls(false);
                 this.setToolbarMessage(t('alert.loadDomain.success', { id: parsed.id }));
             } catch (err) {
                 console.error('[DSL] load-domain failed:', err);
@@ -5356,12 +5893,13 @@ export default class Planimeter {
     }
 
     sanitizeSummaryColumns(value) {
-        const fallback = ['feature', 'area', 'percentSubject', 'crop'];
+        const fallback = ['feature', 'area', 'percentSubject', 'crop', 'prevCrop'];
         if (!Array.isArray(value)) return fallback;
         const allowed = new Set([
-            'feature', 'area', 'percentSubject', 'percentTarget', 'crop',
+            'feature', 'area', 'percentSubject', 'percentTarget', 'crop', 'prevCrop',
             'comune', 'foglio', 'particella', 'subalterno', 'inspireId', 'officialArea',
             'perimeter', 'vertices',
+            'possessionTitle', 'possessionHolder', 'possessionQuota', 'possessionExpiry',
         ]);
         const cleaned = value
             .filter((v) => typeof v === 'string' && allowed.has(v));

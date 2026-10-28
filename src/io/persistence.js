@@ -45,10 +45,182 @@ export function setLocalMirrorStatusListener(listener) {
  */
 
 /**
- * Schedule a debounced save of vector sources to localStorage.
- * @param {object} state             — mutable app state slice
- * @param {...import('ol/source/Vector').default} vectorSources
+ * Format standard agricultural season label: YYYY-1/YYYY (e.g. 2026 -> 2025/2026).
+ * @param {number} year
+ * @returns {string}
  */
+export function formatAgriculturalYearLabel(year) {
+    const y = Number.parseInt(String(year), 10);
+    if (!Number.isFinite(y)) return String(year || '');
+    return `${y - 1}/${y}`;
+}
+
+/**
+ * Return all available campaigns from localStorage.
+ * @returns {Array<CampaignSnapshot>}
+ */
+export function listCampaigns() {
+    const store = loadCampaignStore();
+    return [...(store.campaigns || [])].sort((a, b) => Number(a.year) - Number(b.year));
+}
+
+/**
+ * Return single campaign snapshot by id.
+ * @param {string} campaignId
+ * @returns {CampaignSnapshot|null}
+ */
+export function getCampaignById(campaignId) {
+    if (!campaignId) return null;
+    const store = loadCampaignStore();
+    const hit = (store.campaigns || []).find((c) => c.id === campaignId);
+    return hit ? JSON.parse(JSON.stringify(hit)) : null;
+}
+
+/**
+ * Switch active campaign, persisting current before loading next.
+ */
+export function switchActiveCampaign(campaignId, state, vectorSource, pertenenzaSource, onRestored = () => {}) {
+    if (!campaignId) return false;
+    const store = loadCampaignStore();
+    const target = (store.campaigns || []).find((c) => c.id === campaignId);
+    if (!target) return false;
+
+    // Persist current first if active
+    if (!state.persistenceMuted) {
+        persistFeatures(state, vectorSource, pertenenzaSource);
+    }
+
+    state.activeCampaignId = target.id;
+    state.activeCampaignYear = target.year;
+    state.activeCampaignSeason = target.season;
+    state.activeCampaignLabel = target.label;
+
+    // Update activeCampaignId in store
+    store.activeCampaignId = target.id;
+    window.localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(store));
+    scheduleLocalMirrorSave(store);
+
+    restoreFromCampaignStore(store, state, vectorSource, pertenenzaSource, onRestored);
+    return true;
+}
+
+/**
+ * Create a new agricultural season campaign by cloning bare area geometries and preserving pertenenze.
+ *
+ * @param {object} state
+ * @param {import('ol/source/Vector').default} vectorSource
+ * @param {import('ol/source/Vector').default} pertenenzaSource
+ * @param {{ keepMultiannual?: boolean, nextYear?: number, nextLabel?: string }} options
+ * @returns {object} { ok: boolean, newCampaignId: string, label: string }
+ */
+export function createNextSeasonCampaign(state, vectorSource, pertenenzaSource, options = {}) {
+    // 1. Immediately persist current campaign so history is fully locked & stored
+    persistFeatures(state, vectorSource, pertenenzaSource);
+
+    const store = loadCampaignStore();
+    const currentYear = Number.parseInt(String(state.activeCampaignYear), 10) || new Date().getFullYear();
+    const nextYear = options.nextYear || (currentYear + 1);
+    const nextSeason = 'annual';
+    const nextCampaignId = `${nextYear}-${nextSeason}`;
+    const nextLabel = options.nextLabel || formatAgriculturalYearLabel(nextYear);
+    const keepMultiannual = options.keepMultiannual !== false;
+
+    // 2. Clone features
+    const allFeatures = [
+        ...(vectorSource?.getFeatures?.() ?? []),
+        ...(pertenenzaSource?.getFeatures?.() ?? []),
+    ];
+
+    const clonedFeatures = allFeatures.map((f) => {
+        const overlayLayer = f.get('overlayLayer') === 'pertenenze' ? 'pertenenze' : 'user';
+        const rawGeom = geoJsonFormat.writeGeometryObject(f.getGeometry(), {
+            dataProjection: 'EPSG:4326',
+            featureProjection: 'EPSG:3857',
+            decimals: 6,
+        });
+
+        const props = {
+            featureId: f.get('featureId') || null,
+            featureName: f.get('featureName') || null,
+            overlayLayer,
+            uuid: crypto.randomUUID(),
+            originFeatureUuid: f.get('uuid') || null,
+            createdAt: new Date().toISOString(),
+            version: 1,
+            links: f.get('links') ? JSON.parse(JSON.stringify(f.get('links'))) : { cadastral: [] },
+        };
+
+        if (overlayLayer === 'pertenenze') {
+            // Keep cadastral pertinenze properties intact
+            props.parcelNumber = f.get('parcelNumber') || null;
+            props.parcel_id = f.get('parcel_id') || null;
+            props.inspire_local_id = f.get('inspire_local_id') || null;
+            props.parcel_local_id = f.get('parcel_local_id') || null;
+            props.parcel_label = f.get('parcel_label') || null;
+            props.dsl = f.get('dsl') ? JSON.parse(JSON.stringify(f.get('dsl'))) : null;
+        } else {
+            // Drawn area: check multiannual or clear DSL
+            const dsl = f.get('dsl');
+            const catId = dsl?.categoryId;
+            const isMultiannual = catId === 'prato' || catId === 'vigna' || catId === 'oliveto' || catId === 'frutteto';
+
+            if (keepMultiannual && isMultiannual && dsl) {
+                props.dsl = JSON.parse(JSON.stringify(dsl));
+            } else {
+                props.dsl = null; // Bare geometry ready for new season planning
+            }
+        }
+
+        return {
+            type: 'Feature',
+            geometry: rawGeom,
+            properties: props,
+        };
+    });
+
+    const newCampaign = {
+        id: nextCampaignId,
+        label: nextLabel,
+        year: nextYear,
+        season: nextSeason,
+        savedAt: new Date().toISOString(),
+        dslActiveDomainId: state.dslActiveDomainId || 'agriculture',
+        features: {
+            type: 'FeatureCollection',
+            features: clonedFeatures,
+        },
+    };
+
+    // Replace or add
+    const existingIdx = store.campaigns.findIndex((c) => c.id === newCampaign.id);
+    if (existingIdx >= 0) {
+        store.campaigns[existingIdx] = newCampaign;
+    } else {
+        store.campaigns.push(newCampaign);
+    }
+
+    // Set as active
+    store.activeCampaignId = newCampaign.id;
+    store.savedAt = newCampaign.savedAt;
+    window.localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(store));
+    scheduleLocalMirrorSave(store);
+
+    // Switch state and restore sources
+    state.activeCampaignId = newCampaign.id;
+    state.activeCampaignYear = newCampaign.year;
+    state.activeCampaignSeason = newCampaign.season;
+    state.activeCampaignLabel = newCampaign.label;
+
+    restoreFromCampaignStore(store, state, vectorSource, pertenenzaSource, () => {});
+
+    return {
+        ok: true,
+        newCampaignId: newCampaign.id,
+        label: newCampaign.label,
+        year: newCampaign.year,
+    };
+}
+
 export function schedulePersistenceSync(state, ...vectorSources) {
     if (state.persistenceMuted) return;
     if (state.persistenceSaveTimeoutId) {
@@ -131,22 +303,6 @@ export function restorePersistedFeatures(state, vectorSource, pertenenzaSource, 
 /**
  * Pull campaign store from backend local mirror.
  *
- * Behavior matrix (P2):
- * - local empty + mirror empty → no-op.
- * - local empty + mirror non-empty:
- *     - if `options.onPromptEmptyLocal` is provided, defer to UI prompt
- *       (modal: load backup / start fresh / cancel). The callback receives
- *       `{ apply, dismiss, incomingStore, incomingCount }`.
- *     - otherwise auto-apply (legacy behavior).
- * - local non-empty + mirror newer non-empty:
- *     - if `options.onBannerMirrorNewer` is provided, defer to UI banner
- *       (non-intrusive, default = ignore). Callback receives same shape.
- *     - otherwise auto-apply (legacy behavior).
- * - local non-empty + mirror older/same → no-op.
- *
- * Anti-wipe guard inside `isIncomingStoreNewer` still blocks empty-mirror
- * overwriting non-empty local in any path.
- *
  * @param {object} state
  * @param {import('ol/source/Vector').default} vectorSource
  * @param {import('ol/source/Vector').default} pertenenzaSource
@@ -195,8 +351,6 @@ export async function syncPersistenceFromLocalMirror(state, vectorSource, perten
             emitOk();
         };
 
-        // Manual restore command always reaches the prompt, even when local is
-        // already up-to-date — gives the user explicit agency.
         if (options.forcePrompt && incomingCount > 0 && typeof options.onPromptEmptyLocal === 'function') {
             emitOk();
             options.onPromptEmptyLocal({
@@ -213,7 +367,6 @@ export async function syncPersistenceFromLocalMirror(state, vectorSource, perten
             return false;
         }
 
-        // Empty local + non-empty mirror → prompt user when handler is wired.
         if (localCount === 0 && incomingCount > 0 && typeof options.onPromptEmptyLocal === 'function') {
             emitOk();
             options.onPromptEmptyLocal({
@@ -225,7 +378,6 @@ export async function syncPersistenceFromLocalMirror(state, vectorSource, perten
             return false;
         }
 
-        // Non-empty local + newer non-empty mirror → non-intrusive banner.
         if (localCount > 0 && incomingCount > 0 && typeof options.onBannerMirrorNewer === 'function') {
             emitOk();
             options.onBannerMirrorNewer({
@@ -322,7 +474,6 @@ function scheduleLocalMirrorSave(store) {
             lastLocalMirrorSavedAt = savedAt;
             emitLocalMirrorStatus('ok', { source: 'save', savedAt });
         } catch {
-            // Keep browser-local persistence functional even if local mirror fails.
             emitLocalMirrorStatus('degraded', { source: 'save' });
         }
     }, 180);
@@ -359,6 +510,7 @@ function restoreFromCampaignStore(store, state, vectorSource, pertenenzaSource, 
     state.activeCampaignId = activeCampaign.id;
     state.activeCampaignYear = activeCampaign.year;
     state.activeCampaignSeason = activeCampaign.season;
+    state.activeCampaignLabel = activeCampaign.label;
 
     const restored = geoJsonFormat
         .readFeatures(activeCampaign.features, {
@@ -401,9 +553,6 @@ function toEpochMs(value) {
 }
 
 function isIncomingStoreNewer(incomingStore, localStore) {
-    // Anti-wipe guard: never overwrite a non-empty local store with an empty
-    // incoming one, regardless of savedAt. Handles the race where a second
-    // tab cleared the mirror while the first tab still has data in memory.
     const incomingCount = countCampaignStoreFeatures(incomingStore);
     const localCount = countCampaignStoreFeatures(localStore);
     if (incomingCount === 0 && localCount > 0) return false;
@@ -490,9 +639,6 @@ function loadCampaignStore() {
 }
 
 function makeEmptyStore() {
-    // savedAt left empty on purpose: when localStorage has no real data we must
-    // not synthesise a "now" timestamp, otherwise `isIncomingStoreNewer` would
-    // see local newer than mirror and suppress the empty-local restore prompt.
     return {
         version: LOCAL_STORAGE_SCHEMA_VERSION,
         activeCampaignId: null,
@@ -509,7 +655,6 @@ function migrateLegacyPayload(payload) {
         return payload;
     }
 
-    // Legacy fallback: direct FeatureCollection payload (no wrapper/version).
     if (payload.type === 'FeatureCollection' && Array.isArray(payload.features)) {
         payload = {
             version: 1,
@@ -518,7 +663,6 @@ function migrateLegacyPayload(payload) {
         };
     }
 
-    // Legacy fallback: wrapped payload with features but without explicit version.
     if (payload.features && typeof payload.version !== 'number') {
         payload = {
             ...payload,
@@ -556,7 +700,10 @@ function sanitizeCampaign(campaign, index) {
     const year = Number.parseInt(String(campaign.year), 10) || new Date().getFullYear();
     const season = String(campaign.season || DEFAULT_CAMPAIGN_SEASON).trim() || DEFAULT_CAMPAIGN_SEASON;
     const id = String(campaign.id || `${year}-${season}-${index + 1}`);
-    const label = String(campaign.label || `${year} (${season})`);
+    const rawLabel = String(campaign.label || '').trim();
+    const label = (!rawLabel || /^\d{4}\s*\(annual\)$/i.test(rawLabel)) && season === 'annual'
+        ? formatAgriculturalYearLabel(year)
+        : (rawLabel || `${year} (${season})`);
 
     return {
         id,
@@ -564,6 +711,7 @@ function sanitizeCampaign(campaign, index) {
         year,
         season,
         savedAt: String(campaign.savedAt || new Date().toISOString()),
+        dslActiveDomainId: campaign.dslActiveDomainId ?? null,
         features: sanitizeFeatureCollection(campaign.features),
     };
 }
@@ -591,13 +739,18 @@ function buildActiveCampaign(state, featureCollection) {
     const id = String(state.activeCampaignId || `${year}-${season}`);
     const savedAt = new Date().toISOString();
 
+    const defaultLabel = season === 'annual' ? formatAgriculturalYearLabel(year) : `${year} (${season})`;
+    const rawStateLabel = String(state.activeCampaignLabel || '').trim();
+    const label = (rawStateLabel && !/^\d{4}\s*\(annual\)$/i.test(rawStateLabel)) ? rawStateLabel : defaultLabel;
+
     state.activeCampaignId = id;
     state.activeCampaignYear = year;
     state.activeCampaignSeason = season;
+    state.activeCampaignLabel = label;
 
     return {
         id,
-        label: `${year} (${season})`,
+        label,
         year,
         season,
         savedAt,
@@ -623,13 +776,6 @@ function hasCampaignFeatures(campaign) {
     return Array.isArray(campaign?.features?.features) && campaign.features.features.length > 0;
 }
 
-/**
- * Upgrade a raw GeoJSON FeatureCollection from any previous schema version
- * to the current one by back-filling missing fields on each feature.
- *
- * @param {object} featureCollection — raw GeoJSON object
- * @returns {object}                 — mutated featureCollection
- */
 function migrateFeatures(featureCollection) {
     const now = new Date().toISOString();
     for (const f of featureCollection?.features ?? []) {
