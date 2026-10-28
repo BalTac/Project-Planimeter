@@ -3970,6 +3970,13 @@ body[data-theme="daylight"] {
     font-size: 1rem;
     border-radius: 8px;
     z-index: 5;
+    transition: opacity 0.2s ease-out;
+}
+
+.print-preview-spinner[hidden] {
+    display: none !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
 }
 
 .print-preview-dialog__footer {

@@ -3,8 +3,9 @@
 Covers:
 - Presence and accessibility of #btn-print-view in the toolbar.
 - Opening #print-preview-modal dialog.
-- Default values (paper format A4 landscape, season title).
-- Interactive controls (paper format switcher, layer toggles, title editing).
+- Default values (paper format A4 landscape, season title, compact surface format).
+- Spinner hides cleanly after rendering without blocking preview.
+- Interactive controls (paper format switcher, oriented labels, merge contiguous, title editing).
 - Canvas composition and high-res rendering.
 - Triggering PNG download and Print sheet population.
 - Modal closure via Cancel and Close button.
@@ -71,16 +72,30 @@ class TestPrintableView:
         canvas = page.locator("#print-preview-canvas")
         expect(canvas).to_be_visible()
 
+        # Check spinner hides and does not block canvas
+        spinner = page.locator("#print-preview-spinner")
+        expect(spinner).to_be_hidden()
+
         # Check default format
         format_select = page.locator("#print-preview-format")
         expect(format_select).to_have_value("a4-landscape")
+
+        # Check surface format selector default (compact)
+        surface_select = page.locator("#print-preview-surface-format")
+        expect(surface_select).to_have_value("compact")
 
         # Check all default toggles
         expect(page.locator("#print-preview-opt-satellite-fade")).to_be_checked()
         expect(page.locator("#print-preview-opt-catasto")).to_be_checked()
         expect(page.locator("#print-preview-opt-labels")).to_be_checked()
+        expect(page.locator("#print-preview-opt-oriented")).to_be_checked()
+        expect(page.locator("#print-preview-opt-merge-contiguous")).to_be_checked()
         expect(page.locator("#print-preview-opt-pac")).to_be_checked()
         expect(page.locator("#print-preview-opt-legend")).to_be_checked()
+
+        # Switch surface format to unit (m²/ha)
+        surface_select.select_option("unit")
+        page.wait_for_timeout(300)
 
         # Switch format to A3 Landscape
         format_select.select_option("a3-landscape")
@@ -93,6 +108,17 @@ class TestPrintableView:
         # Edit title
         title_input = page.locator("#print-preview-title")
         title_input.fill("Azienda Agricola BalTac - Piano Colturale 2026")
+        page.wait_for_timeout(300)
+
+        # Toggle oriented and merge-contiguous off and on
+        page.uncheck("#print-preview-opt-merge-contiguous")
+        page.wait_for_timeout(300)
+        page.check("#print-preview-opt-merge-contiguous")
+        page.wait_for_timeout(300)
+
+        page.uncheck("#print-preview-opt-oriented")
+        page.wait_for_timeout(300)
+        page.check("#print-preview-opt-oriented")
         page.wait_for_timeout(300)
 
         # Toggle satellite fade off and on

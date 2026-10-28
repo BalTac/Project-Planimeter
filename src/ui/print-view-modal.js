@@ -71,6 +71,18 @@ function getFeatureInteriorCoordinate(feature) {
 }
 
 /**
+ * Normalize an angle in radians into the readable interval [-PI/2, +PI/2] so text is never upside-down.
+ * @param {number} rad
+ * @returns {number}
+ */
+function normalizeAngle(rad) {
+    let a = rad;
+    while (a > Math.PI / 2) a -= Math.PI;
+    while (a < -Math.PI / 2) a += Math.PI;
+    return a;
+}
+
+/**
  * Controller for the Printable View Modal and Canvas Composition.
  */
 export class PrintViewModalController {
@@ -90,10 +102,13 @@ export class PrintViewModalController {
 
         this.formatSelect = document.getElementById('print-preview-format');
         this.titleInput = document.getElementById('print-preview-title');
+        this.surfaceFormatSelect = document.getElementById('print-preview-surface-format');
 
         this.optSatFade = document.getElementById('print-preview-opt-satellite-fade');
         this.optCatasto = document.getElementById('print-preview-opt-catasto');
         this.optLabels = document.getElementById('print-preview-opt-labels');
+        this.optOriented = document.getElementById('print-preview-opt-oriented');
+        this.optMergeContiguous = document.getElementById('print-preview-opt-merge-contiguous');
         this.optPac = document.getElementById('print-preview-opt-pac');
         this.optLegend = document.getElementById('print-preview-opt-legend');
 
@@ -121,9 +136,12 @@ export class PrintViewModalController {
         const reRenderHandler = () => this.scheduleRender();
         this.formatSelect?.addEventListener('change', reRenderHandler);
         this.titleInput?.addEventListener('input', reRenderHandler);
+        this.surfaceFormatSelect?.addEventListener('change', reRenderHandler);
         this.optSatFade?.addEventListener('change', reRenderHandler);
         this.optCatasto?.addEventListener('change', reRenderHandler);
         this.optLabels?.addEventListener('change', reRenderHandler);
+        this.optOriented?.addEventListener('change', reRenderHandler);
+        this.optMergeContiguous?.addEventListener('change', reRenderHandler);
         this.optPac?.addEventListener('change', reRenderHandler);
         this.optLegend?.addEventListener('change', reRenderHandler);
 
@@ -182,7 +200,10 @@ export class PrintViewModalController {
      */
     renderPreview() {
         if (!this.canvas) return;
-        if (this.spinner) this.spinner.hidden = false;
+        if (this.spinner) {
+            this.spinner.hidden = false;
+            this.spinner.style.opacity = '1';
+        }
 
         try {
             const format = this.formatSelect?.value || 'a4-landscape';
@@ -190,6 +211,9 @@ export class PrintViewModalController {
             const doSatFade = Boolean(this.optSatFade?.checked);
             const doHighContrastCatasto = Boolean(this.optCatasto?.checked);
             const doLabels = Boolean(this.optLabels?.checked);
+            const doOriented = this.optOriented ? Boolean(this.optOriented.checked) : true;
+            const doMergeContiguous = this.optMergeContiguous ? Boolean(this.optMergeContiguous.checked) : true;
+            const surfaceFormat = this.surfaceFormatSelect?.value || 'compact';
             const doPac = Boolean(this.optPac?.checked);
             const doLegend = Boolean(this.optLegend?.checked);
 
@@ -198,7 +222,6 @@ export class PrintViewModalController {
             let targetHeight = 1754;
 
             const mapSize = this.planimeter.map.getSize() || [1200, 800];
-            const viewportRatio = mapSize[0] / mapSize[1];
 
             if (format === 'a3-landscape') {
                 targetWidth = 3508;
@@ -215,7 +238,7 @@ export class PrintViewModalController {
             });
 
             if (!composite || !composite.canvas) {
-                if (this.spinner) this.spinner.hidden = true;
+                this.hideSpinner();
                 return;
             }
 
@@ -257,7 +280,7 @@ export class PrintViewModalController {
             ctx.lineWidth = 2;
             ctx.strokeRect(1, 1, targetWidth - 2, targetHeight - 2);
 
-            // ── Vector Plot Labels ──────────────────────────────────────────────
+            // ── Vector Plot Labels (Oriented & Clustered) ─────────────────────────
             if (doLabels) {
                 this.renderPlotLabels(ctx, {
                     targetWidth,
@@ -269,6 +292,9 @@ export class PrintViewModalController {
                     srcW,
                     srcH,
                     sourceScale: composite.scale,
+                    doOriented,
+                    doMergeContiguous,
+                    surfaceFormat,
                 });
             }
 
@@ -294,77 +320,309 @@ export class PrintViewModalController {
         } catch (error) {
             console.error('Failed to render printable preview canvas:', error);
         } finally {
-            if (this.spinner) this.spinner.hidden = true;
+            this.hideSpinner();
         }
     }
 
+    hideSpinner() {
+        if (!this.spinner) return;
+        this.spinner.style.opacity = '0';
+        setTimeout(() => {
+            if (this.spinner) {
+                this.spinner.hidden = true;
+            }
+        }, 150);
+    }
+
     /**
-     * Render crop name and surface labels at the centroid of each field polygon.
+     * Convert map coordinates to canvas pixel coordinates.
+     */
+    mapCoordToCanvasPixel(coord, transformInfo) {
+        const mapPixel = this.planimeter.map.getPixelFromCoordinate(coord);
+        if (!mapPixel) return null;
+        const compX = mapPixel[0] * transformInfo.sourceScale;
+        const compY = mapPixel[1] * transformInfo.sourceScale;
+        const targetX = ((compX - transformInfo.srcX) / transformInfo.srcW) * transformInfo.targetWidth;
+        const targetY = ((compY - transformInfo.srcY) / transformInfo.srcH) * transformInfo.targetHeight;
+        return [targetX, targetY];
+    }
+
+    /**
+     * Compute geometric properties of a polygon in target canvas pixels:
+     * - Principal orientation angle
+     * - Longitudinal length
+     * - Perpendicular thickness
+     * - Centroid point
+     */
+    computeFeatureCanvasMetrics(feature, transformInfo) {
+        const geom = feature?.getGeometry?.();
+        if (!geom) return null;
+
+        let rings;
+        const type = geom.getType();
+        if (type === 'Polygon') {
+            rings = geom.getCoordinates();
+        } else if (type === 'MultiPolygon') {
+            rings = geom.getCoordinates()[0];
+        }
+        if (!rings || !rings.length || !rings[0].length) return null;
+
+        const exterior = rings[0];
+        const canvasPts = [];
+        for (let i = 0; i < exterior.length; i++) {
+            const pt = this.mapCoordToCanvasPixel(exterior[i], transformInfo);
+            if (pt) canvasPts.push(pt);
+        }
+        if (canvasPts.length < 3) return null;
+
+        // Find the longest edge vector to determine the strip angle
+        let maxLenSq = 0;
+        let dominantAngle = 0;
+        for (let i = 0; i < canvasPts.length - 1; i++) {
+            const dx = canvasPts[i + 1][0] - canvasPts[i][0];
+            const dy = canvasPts[i + 1][1] - canvasPts[i][1];
+            const lenSq = dx * dx + dy * dy;
+            if (lenSq > maxLenSq) {
+                maxLenSq = lenSq;
+                dominantAngle = Math.atan2(dy, dx);
+            }
+        }
+
+        const angle = normalizeAngle(dominantAngle);
+        const cosA = Math.cos(angle);
+        const sinA = Math.sin(angle);
+
+        let minPara = Infinity,
+            maxPara = -Infinity;
+        let minNorm = Infinity,
+            maxNorm = -Infinity;
+
+        for (let i = 0; i < canvasPts.length; i++) {
+            const x = canvasPts[i][0];
+            const y = canvasPts[i][1];
+            const para = x * cosA + y * sinA;
+            const norm = -x * sinA + y * cosA;
+            if (para < minPara) minPara = para;
+            if (para > maxPara) maxPara = para;
+            if (norm < minNorm) minNorm = norm;
+            if (norm > maxNorm) maxNorm = norm;
+        }
+
+        const length = maxPara - minPara;
+        const thickness = maxNorm - minNorm;
+
+        const interiorCoord = getFeatureInteriorCoordinate(feature);
+        const centroidPixel = interiorCoord ? this.mapCoordToCanvasPixel(interiorCoord, transformInfo) : null;
+        if (!centroidPixel) return null;
+
+        return {
+            canvasPts,
+            angle,
+            length,
+            thickness,
+            centroidPixel,
+        };
+    }
+
+    /**
+     * Group contiguous features that share the same crop category.
+     */
+    buildCropClusters(features, domain, proj) {
+        const assigned = [];
+        features.forEach((feature) => {
+            const dsl = feature.get('dsl');
+            const catId = dsl?.categoryId;
+            if (!catId) return;
+            const areaM2 = calculateArea(feature, proj);
+            const category = domain ? getCategoryById(domain, catId) : null;
+            const cropName = category?.label || feature.get('featureName') || feature.get('featureId') || 'Area';
+            const geom = feature.getGeometry();
+            if (!geom) return;
+
+            assigned.push({
+                feature,
+                catId,
+                cropName,
+                areaM2,
+                geom,
+                extent: geom.getExtent(),
+            });
+        });
+
+        // Union-Find data structure for connected components
+        const parent = assigned.map((_, i) => i);
+        function find(i) {
+            if (parent[i] === i) return i;
+            parent[i] = find(parent[i]);
+            return parent[i];
+        }
+        function union(i, j) {
+            const rI = find(i);
+            const rJ = find(j);
+            if (rI !== rJ) parent[rI] = rJ;
+        }
+
+        const bufferMeters = 30; // Cadastral ditch / road threshold between contiguous parcels
+        for (let i = 0; i < assigned.length; i++) {
+            for (let j = i + 1; j < assigned.length; j++) {
+                if (assigned[i].catId !== assigned[j].catId) continue;
+                const eA = assigned[i].extent;
+                const eB = assigned[j].extent;
+                if (
+                    eA[0] - bufferMeters <= eB[2] + bufferMeters &&
+                    eA[2] + bufferMeters >= eB[0] - bufferMeters &&
+                    eA[1] - bufferMeters <= eB[3] + bufferMeters &&
+                    eA[3] + bufferMeters >= eB[1] - bufferMeters
+                ) {
+                    union(i, j);
+                }
+            }
+        }
+
+        const clusterMap = new Map();
+        assigned.forEach((item, index) => {
+            const root = find(index);
+            if (!clusterMap.has(root)) {
+                clusterMap.set(root, []);
+            }
+            clusterMap.get(root).push(item);
+        });
+
+        return Array.from(clusterMap.values()).map((items) => {
+            // Sort descending by area: primary feature is the largest parcel in the contiguous cluster
+            items.sort((a, b) => b.areaM2 - a.areaM2);
+            return {
+                catId: items[0].catId,
+                cropName: items[0].cropName,
+                primary: items[0],
+                items,
+            };
+        });
+    }
+
+    /**
+     * Render crop name and surface labels oriented along field geometry.
      */
     renderPlotLabels(ctx, transformInfo) {
         const features = this.planimeter.vectorSource.getFeatures();
         if (!features.length) return;
 
-        const map = this.planimeter.map;
         const domain = getDomain(this.planimeter.state.dslActiveDomainId);
         const proj = this.planimeter.view?.getProjection();
+        const clusters = this.buildCropClusters(features, domain, proj);
+
+        // Precompute canvas geometry metrics for all assigned features
+        const metricsMap = new Map();
+        features.forEach((feature) => {
+            const metrics = this.computeFeatureCanvasMetrics(feature, transformInfo);
+            if (metrics) metricsMap.set(feature, metrics);
+        });
 
         ctx.save();
+
+        clusters.forEach((cluster) => {
+            const isContiguousCluster = transformInfo.doMergeContiguous && cluster.items.length > 1;
+
+            cluster.items.forEach((item) => {
+                const metrics = metricsMap.get(item.feature);
+                if (!metrics) return;
+
+                const isPrimary = item === cluster.primary;
+                const angle = transformInfo.doOriented ? metrics.angle : 0;
+                const [cx, cy] = metrics.centroidPixel;
+
+                // Format surface text based on chosen option
+                const surfaceText =
+                    transformInfo.surfaceFormat === 'compact'
+                        ? Math.round(item.areaM2).toString()
+                        : formatSquareMeters(item.areaM2);
+
+                if (isContiguousCluster) {
+                    // Contiguous cluster (Photoshop style):
+                    // Primary / central parcel displays prominent Crop Name
+                    if (isPrimary) {
+                        this.drawOrientedLabel(ctx, cx, cy, angle, [cluster.cropName, surfaceText], {
+                            maxFontSize: 26,
+                            minFontSize: 13,
+                            thickness: metrics.thickness,
+                            length: metrics.length,
+                            highlightCropName: true,
+                        });
+                    } else {
+                        // All neighboring strips in the cluster show ONLY their oriented surface number
+                        this.drawOrientedLabel(ctx, cx, cy, angle, [surfaceText], {
+                            maxFontSize: 21,
+                            minFontSize: 11,
+                            thickness: metrics.thickness,
+                            length: metrics.length,
+                            highlightCropName: false,
+                        });
+                    }
+                } else {
+                    // Standalone field: show both crop name and surface
+                    const lines = metrics.thickness > 38 ? [item.cropName, surfaceText] : [`${item.cropName} ${surfaceText}`];
+                    this.drawOrientedLabel(ctx, cx, cy, angle, lines, {
+                        maxFontSize: 22,
+                        minFontSize: 11,
+                        thickness: metrics.thickness,
+                        length: metrics.length,
+                        highlightCropName: true,
+                    });
+                }
+            });
+        });
+
+        ctx.restore();
+    }
+
+    /**
+     * Draw oriented text lines with adaptive font-scaling and crisp white halo.
+     */
+    drawOrientedLabel(ctx, x, y, angle, lines, options) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(angle);
+
+        // Adaptive font size: scale with strip thickness and fit along length
+        let fontSize = Math.max(
+            options.minFontSize,
+            Math.min(options.maxFontSize, Math.floor(options.thickness * 0.72)),
+        );
+
+        ctx.font = `bold ${fontSize}px "Segoe UI Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+        for (const line of lines) {
+            let textWidth = ctx.measureText(line).width;
+            while (textWidth > options.length * 0.90 && fontSize > options.minFontSize) {
+                fontSize -= 1;
+                ctx.font = `bold ${fontSize}px "Segoe UI Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+                textWidth = ctx.measureText(line).width;
+            }
+        }
+
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
 
-        features.forEach((feature) => {
-            const coord = getFeatureInteriorCoordinate(feature);
-            if (!coord) return;
+        const lineHeight = fontSize * 1.18;
+        const totalHeight = lines.length * lineHeight;
+        const startY = -(totalHeight / 2) + lineHeight / 2;
 
-            const mapPixel = map.getPixelFromCoordinate(coord);
-            if (!mapPixel) return;
+        lines.forEach((line, idx) => {
+            const lineY = startY + idx * lineHeight;
+            const isCropTitle = idx === 0 && options.highlightCropName && lines.length > 1;
 
-            // Map pixel to composite source canvas
-            const compX = mapPixel[0] * transformInfo.sourceScale;
-            const compY = mapPixel[1] * transformInfo.sourceScale;
+            ctx.font = isCropTitle
+                ? `bold ${Math.round(fontSize * 1.08)}px "Segoe UI Variable", sans-serif`
+                : `600 ${fontSize}px "Segoe UI Variable", sans-serif`;
 
-            // Check if within source crop window
-            if (
-                compX < transformInfo.srcX ||
-                compX > transformInfo.srcX + transformInfo.srcW ||
-                compY < transformInfo.srcY ||
-                compY > transformInfo.srcY + transformInfo.srcH
-            ) {
-                return;
-            }
-
-            // Map to target canvas coordinates
-            const targetX = ((compX - transformInfo.srcX) / transformInfo.srcW) * transformInfo.targetWidth;
-            const targetY = ((compY - transformInfo.srcY) / transformInfo.srcH) * transformInfo.targetHeight;
-
-            // Extract label info
-            const dsl = feature.get('dsl');
-            const category = domain && dsl?.categoryId ? getCategoryById(domain, dsl.categoryId) : null;
-            const cropName = category?.label || feature.get('featureName') || feature.get('featureId') || 'Area';
-            const areaM2 = calculateArea(feature, proj);
-            const areaText = `${Math.round(areaM2).toLocaleString('it-IT')} m²`;
-
-            // Draw crisp high-contrast label (double stroke for readability)
-            ctx.font = 'bold 22px "Segoe UI Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-
-            // Background text halo
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-            ctx.lineWidth = 6;
+            // White halo
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = Math.max(3.5, Math.round(fontSize * 0.24));
             ctx.lineJoin = 'round';
-            ctx.strokeText(cropName, targetX, targetY - 12);
-
-            ctx.font = '600 19px "Segoe UI Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-            ctx.strokeText(areaText, targetX, targetY + 14);
+            ctx.strokeText(line, 0, lineY);
 
             // Dark foreground text
-            ctx.font = 'bold 22px "Segoe UI Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-            ctx.fillStyle = '#0f172a';
-            ctx.fillText(cropName, targetX, targetY - 12);
-
-            ctx.font = '600 19px "Segoe UI Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-            ctx.fillStyle = '#1e293b';
-            ctx.fillText(areaText, targetX, targetY + 14);
+            ctx.fillStyle = isCropTitle ? '#091512' : '#1e293b';
+            ctx.fillText(line, 0, lineY);
         });
 
         ctx.restore();

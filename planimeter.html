@@ -769,6 +769,13 @@
                                 <span data-i18n="printView.mapTitle">Titolo cartiglio</span>
                                 <input id="print-preview-title" type="text" class="parameter-picker" placeholder="Es. Coltivazioni 2025-2026 (Aprile 2026)">
                             </label>
+                            <label class="settings-field" for="print-preview-surface-format">
+                                <span data-i18n="printView.surfaceFormat">Formato superfici</span>
+                                <select id="print-preview-surface-format" class="parameter-picker">
+                                    <option value="compact" data-i18n="printView.surfaceFormatCompact" selected>Solo numero (es. 11300)</option>
+                                    <option value="unit" data-i18n="printView.surfaceFormatUnit">Con unità (es. 11.300 m²)</option>
+                                </select>
+                            </label>
                         </div>
 
                         <div class="print-preview-options-grid">
@@ -782,7 +789,15 @@
                             </label>
                             <label class="settings-checkbox-field">
                                 <input type="checkbox" id="print-preview-opt-labels" checked>
-                                <span data-i18n="printView.optCropLabels">Etichette appezzamenti (Coltura + m²)</span>
+                                <span data-i18n="printView.optCropLabels">Etichette appezzamenti</span>
+                            </label>
+                            <label class="settings-checkbox-field" style="margin-left: 14px;">
+                                <input type="checkbox" id="print-preview-opt-oriented" checked>
+                                <span data-i18n="printView.optOriented">Orienta etichette lungo le sagome</span>
+                            </label>
+                            <label class="settings-checkbox-field" style="margin-left: 14px;">
+                                <input type="checkbox" id="print-preview-opt-merge-contiguous" checked>
+                                <span data-i18n="printView.optMergeContiguous">Accorpa colture contigue</span>
                             </label>
                             <label class="settings-checkbox-field">
                                 <input type="checkbox" id="print-preview-opt-pac" checked>
