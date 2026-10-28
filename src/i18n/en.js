@@ -629,6 +629,14 @@ export default {
     'pac.status.exempt_bio_sqnpi': 'Eligible with Organic/SQNPI exemption',
     'pac.status.warning_5yr': '5-Year Threshold',
     'summary.col.prevCrop': 'Prev year crop',
+    'summary.col.pacStatus':      'CAP Compliance',
+    'summary.col.pacStatus.help': 'Outcome of GAEC 7 and Eco-scheme 4 crop rotation over a 5-year rolling window',
+    'pac.scorecard.kicker':       'Farm CAP Compliance',
+    'pac.scorecard.plotsOk':      'Compliant plots',
+    'pac.chip.ok':                'Eligible',
+    'pac.chip.bcaa7':             'GAEC 7',
+    'pac.chip.eco4':              'Eco-scheme 4',
+    'pac.chip.exempt':            'Exemptions',
     'summary.col.prevCrop.help': 'Crop recorded in the previous season on the same plot',
 
     // Crop Creator & Official Catalog

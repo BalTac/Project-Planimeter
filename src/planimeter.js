@@ -2441,6 +2441,138 @@ export default class Planimeter {
      * Shows the section only when DSL is ready and there are polygon features.
      * @param {import('ol').Feature[]} [areaFeatures]
      */
+    /**
+     * Render company-wide PAC compliance scorecard (P3).
+     * @param {import('ol').Feature[]} features
+     * @param {object} domain
+     */
+    renderPacExecutiveScorecard(features, domain) {
+        const scorecard = document.getElementById('pac-executive-scorecard');
+        if (!scorecard) return;
+
+        const isAgriculture = domain?.id === 'agriculture' || domain?.categories?.some((c) => c.pacGroup || c.botanicalGenus);
+        if (!isAgriculture || !features || features.length === 0) {
+            scorecard.hidden = true;
+            return;
+        }
+
+        const campaigns = listCampaigns();
+        const currYear = Number(this.state.activeCampaignYear) || new Date().getFullYear();
+        const proj = this.view?.getProjection();
+
+        let totalAssigned = 0;
+        let compliantCount = 0;
+        let compliantAreaM2 = 0;
+        let totalAssignedAreaM2 = 0;
+
+        let bcaa7Count = 0;
+        let eco4Count = 0;
+        let exemptCount = 0;
+        let okCount = 0;
+        const advisoryItems = [];
+
+        features.forEach((feature) => {
+            const dsl = feature.get('dsl');
+            const catId = dsl?.categoryId;
+            if (!catId) return;
+
+            const areaM2 = calculateArea(feature, proj);
+            totalAssigned += 1;
+            totalAssignedAreaM2 += areaM2;
+
+            const fertilization = dsl?.values?.fertilization || '';
+            const historyChain = resolveFeatureHistoryChain(feature, currYear, campaigns, domain);
+            const res = evaluatePacRotation(catId, fertilization, historyChain, domain);
+            const featureName = feature.get('featureName') || feature.get('featureId') || `Plot #${totalAssigned}`;
+
+            if (res.status === 'ok') {
+                okCount += 1;
+                compliantCount += 1;
+                compliantAreaM2 += areaM2;
+            } else if (res.status === 'exempt_bio_sqnpi') {
+                exemptCount += 1;
+                compliantCount += 1;
+                compliantAreaM2 += areaM2;
+            } else if (res.status === 'forbidden_bcaa7') {
+                bcaa7Count += 1;
+                advisoryItems.push({
+                    type: 'danger',
+                    featureName,
+                    reason: res.shortReason,
+                    hint: 'Alternare con leguminose o coltura da rinnovo per non incorrere in tagli ai pagamenti PAC.',
+                });
+            } else if (res.status === 'warning_eco4') {
+                eco4Count += 1;
+                advisoryItems.push({
+                    type: 'warning',
+                    featureName,
+                    reason: res.shortReason,
+                    hint: 'Per il premio Eco-schema 4 alternare con leguminose miglioratrici o riposo nel biennio.',
+                });
+            } else {
+                advisoryItems.push({
+                    type: 'warning',
+                    featureName,
+                    reason: res.shortReason,
+                    hint: 'Attenzione alla soglia temporale massima consentita dalla PAC.',
+                });
+            }
+        });
+
+        if (totalAssigned === 0) {
+            scorecard.hidden = true;
+            return;
+        }
+
+        scorecard.hidden = false;
+
+        const ratioEl = document.getElementById('pac-scorecard-ratio');
+        const pctEl = document.getElementById('pac-scorecard-pct');
+        const countOkEl = document.getElementById('pac-count-ok');
+        const countBcaa7El = document.getElementById('pac-count-bcaa7');
+        const countEco4El = document.getElementById('pac-count-eco4');
+        const countExemptEl = document.getElementById('pac-count-exempt');
+        const chipBcaa7 = document.getElementById('pac-chip-bcaa7');
+        const chipEco4 = document.getElementById('pac-chip-eco4');
+        const chipExempt = document.getElementById('pac-chip-exempt');
+        const yearBadge = document.getElementById('pac-scorecard-campaign-badge');
+        const advisoryBanner = document.getElementById('pac-scorecard-advisory-banner');
+
+        if (yearBadge) yearBadge.textContent = String(currYear);
+
+        if (ratioEl) ratioEl.textContent = `${compliantCount} / ${totalAssigned}`;
+        const pct = totalAssigned > 0 ? ((compliantCount / totalAssigned) * 100).toFixed(0) : '0';
+        if (pctEl) {
+            pctEl.textContent = `${pct}%`;
+            pctEl.className = 'pac-scorecard__pct ' + (compliantCount === totalAssigned ? 'is-perfect' : (bcaa7Count > 0 ? 'is-danger' : 'is-warning'));
+        }
+
+        if (countOkEl) countOkEl.textContent = String(okCount);
+        if (countBcaa7El) countBcaa7El.textContent = String(bcaa7Count);
+        if (countEco4El) countEco4El.textContent = String(eco4Count);
+        if (countExemptEl) countExemptEl.textContent = String(exemptCount);
+
+        if (chipBcaa7) chipBcaa7.classList.toggle('has-items', bcaa7Count > 0);
+        if (chipEco4) chipEco4.classList.toggle('has-items', eco4Count > 0);
+        if (chipExempt) chipExempt.classList.toggle('has-items', exemptCount > 0);
+
+        if (advisoryBanner) {
+            if (advisoryItems.length > 0) {
+                advisoryBanner.hidden = false;
+                const top = advisoryItems[0];
+                advisoryBanner.className = `pac-scorecard__advisory pac-scorecard__advisory--${top.type}`;
+                advisoryBanner.innerHTML = `
+                    <div class="pac-advisory__title"><strong>${this.escapeHtml(top.featureName)}</strong>: ${this.escapeHtml(top.reason)}</div>
+                    <div class="pac-advisory__hint">💡 ${this.escapeHtml(top.hint)}</div>
+                `;
+            } else {
+                advisoryBanner.hidden = false;
+                advisoryBanner.className = 'pac-scorecard__advisory pac-scorecard__advisory--success';
+                advisoryBanner.innerHTML = `<div>✅ <strong>PAC ${currYear}</strong>: 100% appezzamenti conformi a BCAA 7 ed Eco-schema 4.</div>`;
+            }
+        }
+    }
+
     renderDslSummary(areaFeatures) {
         const section = this.elements.dslCategoriesSection;
         if (!section) return;
@@ -2470,6 +2602,7 @@ export default class Planimeter {
         const visibleCount = visibleRows.reduce((sum, row) => sum + row.count, 0);
 
         section.hidden = false;
+        this.renderPacExecutiveScorecard(features, domain);
 
         // ── Legend ────────────────────────────────────────────────────────────
         const legend = this.elements.dslLegend;
@@ -3247,6 +3380,16 @@ export default class Planimeter {
             getPropertyScopeLabel,
             getCategoryLabel,
             getPrevCropLabel,
+            getPacStatus: (feature) => {
+                const domain = getDomain(this.state.dslActiveDomainId);
+                const catId = feature?.get?.('dsl')?.categoryId;
+                if (!catId || !domain) return null;
+                const campaigns = listCampaigns();
+                const currYear = Number(this.state.activeCampaignYear) || new Date().getFullYear();
+                const fertilization = feature.get?.('dsl')?.values?.fertilization || '';
+                const chain = resolveFeatureHistoryChain(feature, currYear, campaigns, domain);
+                return evaluatePacRotation(catId, fertilization, chain, domain);
+            },
             projection,
             summaryMeta: {
                 layerLabel: measurementLayerLabel,
@@ -5971,7 +6114,7 @@ export default class Planimeter {
         const fallback = ['feature', 'area', 'percentSubject', 'crop', 'prevCrop'];
         if (!Array.isArray(value)) return fallback;
         const allowed = new Set([
-            'feature', 'area', 'percentSubject', 'percentTarget', 'crop', 'prevCrop',
+            'feature', 'area', 'percentSubject', 'percentTarget', 'crop', 'prevCrop', 'pacStatus',
             'comune', 'foglio', 'particella', 'subalterno', 'inspireId', 'officialArea',
             'perimeter', 'vertices',
             'possessionTitle', 'possessionHolder', 'possessionQuota', 'possessionExpiry',

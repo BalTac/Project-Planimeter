@@ -3456,3 +3456,180 @@ input[type="checkbox"] {
     color: #72f0bf;
     font-weight: 600;
 }
+
+
+/* ── PAC Executive Scorecard (P3) ─────────────────────────────────────────── */
+
+.pac-executive-scorecard {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--stroke);
+    border-radius: var(--radius-md);
+}
+
+.pac-scorecard__header {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.pac-scorecard__title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.pac-scorecard__kicker {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+}
+
+.pac-scorecard__campaign-badge {
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: rgba(115, 240, 191, 0.15);
+    border: 1px solid rgba(115, 240, 191, 0.35);
+    color: #72f0bf;
+}
+
+.pac-scorecard__stat-main {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.pac-scorecard__ratio {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #ffffff;
+    letter-spacing: -0.01em;
+}
+
+.pac-scorecard__ratio-label {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.pac-scorecard__pct {
+    margin-left: auto;
+    font-size: 0.82rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 6px;
+}
+
+.pac-scorecard__pct.is-perfect {
+    color: #72f0bf;
+    background: rgba(115, 240, 191, 0.12);
+}
+
+.pac-scorecard__pct.is-warning {
+    color: #f8d066;
+    background: rgba(248, 208, 102, 0.12);
+}
+
+.pac-scorecard__pct.is-danger {
+    color: #ff9898;
+    background: rgba(255, 114, 98, 0.12);
+}
+
+.pac-scorecard__chips {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    margin-top: 2px;
+}
+
+.pac-chip {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 5px 4px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    text-align: center;
+}
+
+.pac-chip__count {
+    font-size: 0.95rem;
+    font-weight: 700;
+    line-height: 1.1;
+    color: var(--text-main);
+}
+
+.pac-chip__label {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    margin-top: 2px;
+}
+
+.pac-chip--ok .pac-chip__count {
+    color: #72f0bf;
+}
+
+.pac-chip--danger.has-items {
+    background: rgba(255, 114, 98, 0.08);
+    border-color: rgba(255, 114, 98, 0.28);
+}
+.pac-chip--danger.has-items .pac-chip__count {
+    color: #ff9898;
+}
+
+.pac-chip--warning.has-items {
+    background: rgba(248, 208, 102, 0.08);
+    border-color: rgba(248, 208, 102, 0.28);
+}
+.pac-chip--warning.has-items .pac-chip__count {
+    color: #f8d066;
+}
+
+.pac-chip--info.has-items {
+    background: rgba(100, 180, 255, 0.08);
+    border-color: rgba(100, 180, 255, 0.28);
+}
+.pac-chip--info.has-items .pac-chip__count {
+    color: #90caf9;
+}
+
+.pac-scorecard__advisory {
+    font-size: 0.76rem;
+    padding: 8px 10px;
+    border-radius: 8px;
+    line-height: 1.35;
+}
+
+.pac-scorecard__advisory--success {
+    background: rgba(115, 240, 191, 0.08);
+    border: 1px solid rgba(115, 240, 191, 0.2);
+    color: #a7f3d0;
+}
+
+.pac-scorecard__advisory--warning {
+    background: rgba(248, 208, 102, 0.08);
+    border: 1px solid rgba(248, 208, 102, 0.25);
+    color: #ffe082;
+}
+
+.pac-scorecard__advisory--danger {
+    background: rgba(255, 114, 98, 0.08);
+    border: 1px solid rgba(255, 114, 98, 0.25);
+    color: #ffb8b0;
+}
+
+.pac-advisory__hint {
+    margin-top: 4px;
+    opacity: 0.9;
+    font-size: 0.72rem;
+}

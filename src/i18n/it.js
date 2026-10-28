@@ -631,6 +631,14 @@ export default {
     'pac.status.exempt_bio_sqnpi': 'Ammesso con deroga Bio/SQNPI',
     'pac.status.warning_5yr': 'Limite 5 anni',
     'summary.col.prevCrop': 'Coltura anno prec.',
+    'summary.col.pacStatus':      'Conformità PAC',
+    'summary.col.pacStatus.help': 'Esito della rotazione colturale BCAA 7 ed Eco-schema 4 su base quinquennale',
+    'pac.scorecard.kicker':       'Conformità PAC Aziendale',
+    'pac.scorecard.plotsOk':      'Appezzamenti conformi',
+    'pac.chip.ok':                'Ammessi',
+    'pac.chip.bcaa7':             'BCAA 7',
+    'pac.chip.eco4':              'Eco-schema 4',
+    'pac.chip.exempt':            'Deroghe',
     'summary.col.prevCrop.help': 'Coltura registrata nella stagione precedente sullo stesso appezzamento',
 
     // Form Nuova Coltura & Catalogo Ufficiale

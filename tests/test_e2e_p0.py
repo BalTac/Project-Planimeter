@@ -314,3 +314,17 @@ class TestSelectionButtonsAndToasts:
         # Useful zoom and coords must exist
         expect(page.locator("#pointer-coordinates-zoom")).to_have_count(1)
         expect(page.locator("#pointer-coordinates-value")).to_have_count(1)
+
+    def test_pac_executive_scorecard_and_summary_column(self, page: Page, planimeter_base_url: str):
+        page.goto(app_url(planimeter_base_url))
+        # Verify scorecard element exists in DOM
+        scorecard = page.locator("#pac-executive-scorecard")
+        expect(scorecard).to_have_count(1)
+
+        # Check ratio, percentage and chips exist
+        expect(page.locator("#pac-scorecard-ratio")).to_have_count(1)
+        expect(page.locator("#pac-scorecard-pct")).to_have_count(1)
+        expect(page.locator("#pac-chip-ok")).to_have_count(1)
+        expect(page.locator("#pac-chip-bcaa7")).to_have_count(1)
+        expect(page.locator("#pac-chip-eco4")).to_have_count(1)
+        expect(page.locator("#pac-chip-exempt")).to_have_count(1)

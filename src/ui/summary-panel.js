@@ -48,6 +48,13 @@ const COLUMN_DEFS = [
         render: (row) => escapeHtml(row.prevCropLabel || '—'),
     },
     {
+        id: 'pacStatus',
+        group: 'base',
+        labelKey: 'summary.col.pacStatus',
+        helpKey: 'summary.col.pacStatus.help',
+        render: (row) => row.pacBadge ? `${row.pacBadge} ${escapeHtml(row.pacShortReason || '')}` : '—',
+    },
+    {
         id: 'comune',
         group: 'cadastral',
         labelKey: 'summary.col.comune',
@@ -133,7 +140,7 @@ const COLUMN_DEFS = [
     },
 ];
 
-const DEFAULT_VISIBLE_COLUMNS = ['feature', 'area', 'percentSubject', 'crop', 'prevCrop'];
+const DEFAULT_VISIBLE_COLUMNS = ['feature', 'area', 'percentSubject', 'crop', 'prevCrop', 'pacStatus'];
 
 export function getDefaultSummaryColumns() {
     return [...DEFAULT_VISIBLE_COLUMNS];
@@ -319,6 +326,7 @@ export function openSummaryPanel(options) {
         getPropertyScopeLabel,
         getCategoryLabel = (categoryId) => categoryId || t('dsl.category.unassigned'),
         getPrevCropLabel = () => '—',
+        getPacStatus = () => null,
         getAreaLabel = (feature) => feature?.get?.('featureName') || feature?.get?.('featureId') || t('feature.area'),
         projection,
         summaryMeta = null,
@@ -346,6 +354,7 @@ export function openSummaryPanel(options) {
             targetLabel: getPropertyScopeLabel,
             targetCropLabel: () => '—',
             targetPrevCropLabel: (_target, subject) => getPrevCropLabel(subject) || '—',
+            targetPacStatus: (_target, subject) => getPacStatus(subject),
             sharedCountFor: (target) => parcelSharedCounts.get(target) ?? 0,
             projection,
             unitSystem,
@@ -367,6 +376,7 @@ export function openSummaryPanel(options) {
                 return dsl?.categoryId ? getCategoryLabel(dsl.categoryId, f) : t('dsl.category.unassigned');
             },
             targetPrevCropLabel: (target) => getPrevCropLabel(target) || '—',
+            targetPacStatus: (target) => getPacStatus(target),
             sharedCountFor: () => 0,
             projection,
             unitSystem,
@@ -471,6 +481,7 @@ function buildSection({
     targetLabel,
     targetCropLabel,
     targetPrevCropLabel = () => '—',
+    targetPacStatus = () => null,
     sharedCountFor,
     projection,
     unitSystem,
@@ -501,11 +512,14 @@ function buildSection({
 
             if (metrics.intersectionArea > 0.1) {
                 const perimeter = calculatePerimeter(target, projection);
+                const pac = targetPacStatus(target, subject);
                 rows.push({
                     targetFeature: target,
                     targetLabel: targetLabel(target),
                     cropLabel: targetCropLabel(target),
                     prevCropLabel: targetPrevCropLabel(target, subject),
+                    pacBadge: pac?.badge || '',
+                    pacShortReason: pac?.shortReason || '',
                     metrics,
                     intersectionAreaStr: unitSystem.formatArea(metrics.intersectionArea),
                     percentSubject: subjectArea > 0 ? (metrics.intersectionArea / subjectArea) * 100 : 0,

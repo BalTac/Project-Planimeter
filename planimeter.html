@@ -458,6 +458,38 @@
                     <div class="section-heading">
                         <h2 id="dsl-categories-title" data-i18n="section.dsl.categories">Colture</h2>
                     </div>
+                    <div id="pac-executive-scorecard" class="pac-executive-scorecard" hidden>
+                        <div class="pac-scorecard__header">
+                            <div class="pac-scorecard__title-row">
+                                <span class="pac-scorecard__kicker" data-i18n="pac.scorecard.kicker">Conformità PAC Aziendale</span>
+                                <span id="pac-scorecard-campaign-badge" class="pac-scorecard__campaign-badge">2026</span>
+                            </div>
+                            <div class="pac-scorecard__stat-main">
+                                <span id="pac-scorecard-ratio" class="pac-scorecard__ratio">-- / --</span>
+                                <span class="pac-scorecard__ratio-label" data-i18n="pac.scorecard.plotsOk">Appezzamenti conformi</span>
+                                <span id="pac-scorecard-pct" class="pac-scorecard__pct">--%</span>
+                            </div>
+                        </div>
+                        <div class="pac-scorecard__chips">
+                            <div id="pac-chip-ok" class="pac-chip pac-chip--ok" title="Rotazione conforme">
+                                <span class="pac-chip__count" id="pac-count-ok">0</span>
+                                <span class="pac-chip__label" data-i18n="pac.chip.ok">Ammessi</span>
+                            </div>
+                            <div id="pac-chip-bcaa7" class="pac-chip pac-chip--danger" title="Violazione BCAA 7 (Monosuccessione)">
+                                <span class="pac-chip__count" id="pac-count-bcaa7">0</span>
+                                <span class="pac-chip__label" data-i18n="pac.chip.bcaa7">BCAA 7</span>
+                            </div>
+                            <div id="pac-chip-eco4" class="pac-chip pac-chip--warning" title="Attenzione Eco-schema 4">
+                                <span class="pac-chip__count" id="pac-count-eco4">0</span>
+                                <span class="pac-chip__label" data-i18n="pac.chip.eco4">Eco-schema 4</span>
+                            </div>
+                            <div id="pac-chip-exempt" class="pac-chip pac-chip--info" title="Deroga Bio/SQNPI">
+                                <span class="pac-chip__count" id="pac-count-exempt">0</span>
+                                <span class="pac-chip__label" data-i18n="pac.chip.exempt">Deroghe</span>
+                            </div>
+                        </div>
+                        <div id="pac-scorecard-advisory-banner" class="pac-scorecard__advisory" hidden></div>
+                    </div>
                     <div class="dsl-category-filters-wrap">
                         <strong data-i18n="dsl.filters.title">Filtra visibilita categorie</strong>
                         <div id="dsl-category-filters" class="dsl-category-filters" role="group" aria-label="Filtri categorie DSL"></div>
