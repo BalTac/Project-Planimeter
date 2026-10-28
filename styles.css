@@ -3831,3 +3831,240 @@ body[data-theme="daylight"] {
     border-color: rgba(12, 26, 19, 0.28);
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
 }
+
+
+/* ── Printable View Modal & Print Styles ────────────────────────────────── */
+
+.print-preview-dialog {
+    border: 1px solid rgba(76, 175, 80, 0.45);
+    border-radius: var(--radius-md, 12px);
+    background: linear-gradient(180deg, rgba(20, 32, 24, 0.98) 0%, rgba(10, 18, 14, 0.99) 100%);
+    color: var(--text-primary, #e8efea);
+    padding: 0;
+    max-width: min(1200px, calc(100vw - 32px));
+    width: 1140px;
+    max-height: 92vh;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(76, 175, 80, 0.25);
+    z-index: 10050;
+    margin: auto;
+}
+
+.print-preview-dialog[hidden],
+.print-preview-dialog:not([open]) {
+    display: none !important;
+}
+
+.print-preview-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.70);
+    backdrop-filter: blur(4px);
+}
+
+.print-preview-dialog__window {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    max-height: 92vh;
+}
+
+.print-preview-dialog__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 14px 22px;
+}
+
+.print-preview-dialog__header-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #9af0c8;
+}
+
+.print-preview-dialog__body {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 16px;
+    padding: 16px 20px;
+    overflow: hidden;
+    min-height: 520px;
+    flex: 1 1 auto;
+}
+
+.print-preview-dialog__controls {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    background: rgba(0, 0, 0, 0.22);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    padding: 14px;
+    overflow-y: auto;
+}
+
+.print-preview-control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.print-preview-options-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    padding-top: 12px;
+}
+
+.settings-checkbox-field {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 0.88rem;
+    color: var(--text-primary, #e8efea);
+    cursor: pointer;
+    user-select: none;
+}
+
+.settings-checkbox-field input[type="checkbox"] {
+    accent-color: #2e7d32;
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.print-preview-dialog__canvas-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 12px;
+    overflow: auto;
+}
+
+.print-preview-canvas {
+    max-width: 100%;
+    max-height: calc(88vh - 170px);
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    box-shadow: 0 10px 32px rgba(0, 0, 0, 0.45);
+    border-radius: 4px;
+    background: #ffffff;
+}
+
+.print-preview-spinner {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+    color: #ffffff;
+    font-weight: 600;
+    font-size: 1rem;
+    border-radius: 8px;
+    z-index: 5;
+}
+
+.print-preview-dialog__footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 12px 20px;
+}
+
+.print-preview-dialog__footer-actions {
+    display: flex;
+    gap: 10px;
+}
+
+/* Daylight / Field Theme support for Print Preview Modal */
+[data-theme="daylight"] .print-preview-dialog {
+    background: #ffffff;
+    color: #0c1a13;
+    border-color: rgba(12, 26, 19, 0.28);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+}
+
+[data-theme="daylight"] .print-preview-dialog__header {
+    border-bottom-color: rgba(12, 26, 19, 0.12);
+}
+
+[data-theme="daylight"] .print-preview-dialog__header-title {
+    color: #1b5e20;
+}
+
+[data-theme="daylight"] .print-preview-dialog__controls {
+    background: #f8fafc;
+    border-color: rgba(12, 26, 19, 0.12);
+}
+
+[data-theme="daylight"] .print-preview-dialog__canvas-wrap {
+    background: #e2e8f0;
+    border-color: rgba(12, 26, 19, 0.15);
+}
+
+[data-theme="daylight"] .print-preview-options-grid {
+    border-top-color: rgba(12, 26, 19, 0.12);
+}
+
+[data-theme="daylight"] .settings-checkbox-field {
+    color: #0c1a13;
+}
+
+[data-theme="daylight"] .print-preview-dialog__footer {
+    border-top-color: rgba(12, 26, 19, 0.12);
+}
+
+/* ── Hidden Print Sheet & @media print ─────────────────────────────────── */
+
+.printable-print-sheet {
+    display: none;
+}
+
+@media print {
+    @page {
+        size: landscape;
+        margin: 4mm;
+    }
+
+    html, body {
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #ffffff !important;
+        overflow: visible !important;
+    }
+
+    body > *:not(#printable-print-sheet) {
+        display: none !important;
+    }
+
+    #printable-print-sheet {
+        display: flex !important;
+        position: fixed !important;
+        inset: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #ffffff !important;
+        align-items: center !important;
+        justify-content: center !important;
+        z-index: 999999 !important;
+    }
+
+    #printable-print-sheet img {
+        max-width: 100% !important;
+        max-height: 100% !important;
+        width: auto !important;
+        height: auto !important;
+        object-fit: contain !important;
+    }
+}

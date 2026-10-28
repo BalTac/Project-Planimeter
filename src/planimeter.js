@@ -53,6 +53,7 @@ import { initCommandPalette, initShortcutsOverlay } from './ui/command-palette.j
 import { aggregateByCategory, totalAggArea } from './dsl/aggregation.js';
 import { buildDslPayload } from './dsl/schema.js';
 import { openSummaryPanel, closeSummaryPanel } from './ui/summary-panel.js';
+import { PrintViewModalController } from './ui/print-view-modal.js';
 
 const BASE_LAYER_KEYS = ['sat', 'openTopoMap', 'esriTopo', 'esriRelief'];
 const ADMIN_LAYER_KEYS = ['osm', 'catasto'];
@@ -236,6 +237,8 @@ export default class Planimeter {
         });
 
         // ── Proxy health ──────────────────────────────────────────────────────
+        this.printViewModal = new PrintViewModalController(this);
+
         this.proxyHealth = new ProxyHealthMonitor({
             elements:       this.elements,
             onHealthChange: (status, msg) => {
@@ -4619,7 +4622,7 @@ export default class Planimeter {
         }
     }
 
-    buildViewportCompositeCanvas(scale = 1) {
+    buildViewportCompositeCanvas(scale = 1, options = {}) {
         const size = this.map.getSize();
         if (!size) return null;
 
@@ -4633,7 +4636,7 @@ export default class Planimeter {
 
         try {
             const canvases = this.map.getViewport().querySelectorAll('.ol-layer canvas, canvas.ol-layer');
-            canvases.forEach((canvas) => {
+            canvases.forEach((canvas, idx) => {
                 if (!canvas.width || !canvas.height) return;
                 if (!this.canUseCanvasForExport(canvas)) {
                     skippedCount += 1;
@@ -4642,7 +4645,11 @@ export default class Planimeter {
 
                 const parent = canvas.parentNode;
                 const opacity = parent?.style?.opacity;
-                context.globalAlpha = opacity === '' || opacity == null ? 1 : Number(opacity);
+                let alpha = opacity === '' || opacity == null ? 1 : Number(opacity);
+                if (options.highContrastCadastral && idx > 0 && alpha < 0.95) {
+                    alpha = 1.0;
+                }
+                context.globalAlpha = alpha;
 
                 const transform = canvas.style.transform;
                 let matrix = [1, 0, 0, 1, 0, 0];
@@ -4663,6 +4670,14 @@ export default class Planimeter {
                 );
                 context.drawImage(canvas, 0, 0);
                 drawnCount += 1;
+
+                if (options.attenuateSatellite && idx === 0) {
+                    context.save();
+                    context.setTransform(1, 0, 0, 1, 0, 0);
+                    context.fillStyle = 'rgba(255, 255, 255, 0.58)';
+                    context.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+                    context.restore();
+                }
             });
 
             if (drawnCount === 0) {

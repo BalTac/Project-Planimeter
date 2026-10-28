@@ -358,6 +358,8 @@
                             <button type="button" class="action-button icon-button" data-mode="measure-straight" aria-pressed="false" data-i18n="tool.measureStraight" data-i18n-title="hint.tool.measureStraight" data-icon="📏">Retta</button>
                             <button type="button" class="action-button icon-button" data-mode="measure-polyline" aria-pressed="false" data-i18n="tool.measurePolyline" data-i18n-title="hint.tool.measurePolyline" data-icon="📐">Polyline</button>
                             <button type="button" id="btn-export" class="action-button icon-button" data-i18n="action.export" data-i18n-title="hint.action.export" data-icon="⬆">Esporta</button>
+                            <button type="button" id="btn-print-view" class="action-button icon-button" data-i18n="action.printView" data-i18n-title="hint.action.printView" data-icon="🖨️">Vista stampabile</button>
+
                             <button type="button" id="btn-import" class="action-button icon-button" data-i18n="action.import" data-i18n-title="hint.action.import" data-icon="⬇">Importa</button>
                             <button type="button" id="btn-load-domain" class="action-button icon-button" data-i18n="action.loadDomain" data-i18n-title="hint.action.loadDomain" data-icon="📖">Carica dominio</button>
                         </div>
@@ -742,6 +744,77 @@
                 </footer>
             </div>
         </dialog>
+
+        <dialog id="print-preview-modal" class="print-preview-dialog modal-dialog" hidden>
+            <div class="print-preview-dialog__window">
+                <header class="print-preview-dialog__header">
+                    <div class="print-preview-dialog__header-title">
+                        <span class="print-preview-dialog__icon" aria-hidden="true">🖨️</span>
+                        <strong data-i18n="printView.dialogTitle">Esporta Vista Stampabile</strong>
+                    </div>
+                    <button type="button" id="btn-print-preview-close" class="icon-button close-button" aria-label="Chiudi">×</button>
+                </header>
+                <div class="print-preview-dialog__body">
+                    <aside class="print-preview-dialog__controls">
+                        <div class="print-preview-control-group">
+                            <label class="settings-field" for="print-preview-format">
+                                <span data-i18n="printView.paperFormat">Formato carta</span>
+                                <select id="print-preview-format" class="parameter-picker">
+                                    <option value="a4-landscape" data-i18n="printView.formatA4" selected>A4 Orizzontale</option>
+                                    <option value="a3-landscape" data-i18n="printView.formatA3">A3 Orizzontale</option>
+                                    <option value="viewport" data-i18n="printView.formatViewport">Proporzioni schermo</option>
+                                </select>
+                            </label>
+                            <label class="settings-field" for="print-preview-title">
+                                <span data-i18n="printView.mapTitle">Titolo cartiglio</span>
+                                <input id="print-preview-title" type="text" class="parameter-picker" placeholder="Es. Coltivazioni 2025-2026 (Aprile 2026)">
+                            </label>
+                        </div>
+
+                        <div class="print-preview-options-grid">
+                            <label class="settings-checkbox-field">
+                                <input type="checkbox" id="print-preview-opt-satellite-fade" checked>
+                                <span data-i18n="printView.optSatelliteFade">Attenua sfondo satellite</span>
+                            </label>
+                            <label class="settings-checkbox-field">
+                                <input type="checkbox" id="print-preview-opt-catasto" checked>
+                                <span data-i18n="printView.optHighContrastCadastral">Evidenzia particelle catasto</span>
+                            </label>
+                            <label class="settings-checkbox-field">
+                                <input type="checkbox" id="print-preview-opt-labels" checked>
+                                <span data-i18n="printView.optCropLabels">Etichette appezzamenti (Coltura + m²)</span>
+                            </label>
+                            <label class="settings-checkbox-field">
+                                <input type="checkbox" id="print-preview-opt-pac" checked>
+                                <span data-i18n="printView.optPacSummary">Cartiglio Superfici & Conformità PAC</span>
+                            </label>
+                            <label class="settings-checkbox-field">
+                                <input type="checkbox" id="print-preview-opt-legend" checked>
+                                <span data-i18n="printView.optLegend">Cartiglio Legenda colori</span>
+                            </label>
+                        </div>
+                    </aside>
+                    <main class="print-preview-dialog__canvas-wrap" id="print-preview-canvas-wrap">
+                        <div id="print-preview-spinner" class="print-preview-spinner" hidden>
+                            <span data-i18n="printView.generating">Composizione anteprima...</span>
+                        </div>
+                        <canvas id="print-preview-canvas" class="print-preview-canvas"></canvas>
+                    </main>
+                </div>
+                <footer class="print-preview-dialog__footer">
+                    <button type="button" id="btn-print-preview-cancel" class="action-button action-button-subtle icon-button" data-icon="✕" data-i18n="printView.close">Chiudi</button>
+                    <div class="print-preview-dialog__footer-actions">
+                        <button type="button" id="btn-print-preview-download" class="action-button icon-button" data-icon="⬇" data-i18n="printView.btnDownloadPng">Scarica PNG</button>
+                        <button type="button" id="btn-print-preview-print" class="action-button action-button-primary icon-button" data-icon="🖨️" data-i18n="printView.btnPrint">Stampa / Salva PDF</button>
+                    </div>
+                </footer>
+            </div>
+        </dialog>
+
+        <!-- Hidden printable sheet container for clean print output -->
+        <div id="printable-print-sheet" class="printable-print-sheet" aria-hidden="true" hidden>
+            <img id="printable-print-img" alt="Mappa stampabile" />
+        </div>
 
         <section id="m3-refine-report" class="m3-refine-report" hidden aria-live="polite">
             <header class="m3-refine-report__header">
