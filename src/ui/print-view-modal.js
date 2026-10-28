@@ -113,6 +113,8 @@ export class PrintViewModalController {
         this.optLegend = document.getElementById('print-preview-opt-legend');
 
         this.canvas = document.getElementById('print-preview-canvas');
+        this.canvasWrap = document.getElementById('print-preview-canvas-wrap');
+        this.btnFullscreen = document.getElementById('btn-print-preview-fullscreen');
         this.spinner = document.getElementById('print-preview-spinner');
         this.printSheet = document.getElementById('printable-print-sheet');
         this.printImg = document.getElementById('printable-print-img');
@@ -144,6 +146,10 @@ export class PrintViewModalController {
         this.optMergeContiguous?.addEventListener('change', reRenderHandler);
         this.optPac?.addEventListener('change', reRenderHandler);
         this.optLegend?.addEventListener('change', reRenderHandler);
+
+        this.btnFullscreen?.addEventListener('click', () => this.toggleFullscreen());
+        document.addEventListener('fullscreenchange', () => this.onFullscreenChange());
+        document.addEventListener('webkitfullscreenchange', () => this.onFullscreenChange());
 
         this.btnDownload?.addEventListener('click', () => this.downloadPng());
         this.btnPrint?.addEventListener('click', () => this.print());
@@ -180,10 +186,59 @@ export class PrintViewModalController {
 
     close() {
         if (!this.dialog) return;
+        if (document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {});
+        }
+        this.canvasWrap?.classList.remove('is-fullscreen');
+        this.updateFullscreenButtonState(false);
         if (typeof this.dialog.close === 'function') {
             this.dialog.close();
         }
         this.dialog.hidden = true;
+    }
+
+    toggleFullscreen() {
+        if (!this.canvasWrap) return;
+
+        if (document.fullscreenElement || this.canvasWrap.classList.contains('is-fullscreen')) {
+            if (document.fullscreenElement) {
+                document.exitFullscreen().catch(() => {});
+            }
+            this.canvasWrap.classList.remove('is-fullscreen');
+            this.updateFullscreenButtonState(false);
+        } else {
+            if (typeof this.canvasWrap.requestFullscreen === 'function') {
+                this.canvasWrap.requestFullscreen().catch(() => {
+                    this.canvasWrap.classList.add('is-fullscreen');
+                    this.updateFullscreenButtonState(true);
+                });
+            } else {
+                this.canvasWrap.classList.add('is-fullscreen');
+                this.updateFullscreenButtonState(true);
+            }
+        }
+    }
+
+    onFullscreenChange() {
+        const isFs = document.fullscreenElement === this.canvasWrap;
+        this.updateFullscreenButtonState(isFs);
+        if (!isFs) {
+            this.canvasWrap?.classList.remove('is-fullscreen');
+        }
+    }
+
+    updateFullscreenButtonState(isFullscreen) {
+        if (!this.btnFullscreen) return;
+        const icon = this.btnFullscreen.querySelector('.fullscreen-icon');
+        const titleText = isFullscreen
+            ? (t('printView.exitFullscreen') || 'Esci da tutto schermo')
+            : (t('printView.fullscreen') || 'A tutto schermo');
+
+        this.btnFullscreen.title = titleText;
+        this.btnFullscreen.setAttribute('aria-label', titleText);
+        if (icon) {
+            icon.textContent = isFullscreen ? '🗗' : '⛶';
+        }
     }
 
     scheduleRender() {

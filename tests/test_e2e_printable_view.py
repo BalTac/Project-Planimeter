@@ -8,6 +8,7 @@ Covers:
 - Interactive controls (paper format switcher, oriented labels, merge contiguous, title editing).
 - Canvas composition and high-res rendering.
 - Suppression of web labels during printable composition so only printable labels appear.
+- Fullscreen overlay button (YouTube-style) toggle and exit.
 - Triggering PNG download and Print sheet population.
 - Modal closure via Cancel and Close button.
 """
@@ -159,6 +160,31 @@ class TestPrintableView:
         """)
         assert res["hasLabelNormal"] is True, "Normal vector style should render text label"
         assert res["hasLabelSuppressed"] is False, "Suppressed vector style must not render text label"
+
+    def test_fullscreen_overlay_toggle(self, page: Page, planimeter_base_url: str):
+        page.goto(app_url(planimeter_base_url))
+        page.click("#btn-print-view")
+        page.wait_for_timeout(400)
+
+        fs_btn = page.locator("#btn-print-preview-fullscreen")
+        expect(fs_btn).to_be_visible()
+        expect(fs_btn).to_have_attribute("title", "A tutto schermo")
+        expect(fs_btn.locator(".fullscreen-icon")).to_have_text("⛶")
+
+        # Click to toggle fullscreen
+        fs_btn.click()
+        page.wait_for_timeout(300)
+
+        # Check title and icon toggled to exit fullscreen
+        expect(fs_btn).to_have_attribute("title", "Esci da tutto schermo")
+        expect(fs_btn.locator(".fullscreen-icon")).to_have_text("🗗")
+
+        # Click again to exit
+        fs_btn.click()
+        page.wait_for_timeout(300)
+
+        expect(fs_btn).to_have_attribute("title", "A tutto schermo")
+        expect(fs_btn.locator(".fullscreen-icon")).to_have_text("⛶")
 
     def test_download_png_trigger(self, page: Page, planimeter_base_url: str):
         page.goto(app_url(planimeter_base_url))

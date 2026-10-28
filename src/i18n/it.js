@@ -146,6 +146,8 @@ export default {
     'action.printView':      'Vista stampabile',
     'hint.action.printView': 'Esporta vista stampabile ad alta risoluzione con cartigli, conformità PAC e catasto.',
     'printView.dialogTitle': 'Esporta Vista Stampabile',
+    'printView.fullscreen': 'A tutto schermo',
+    'printView.exitFullscreen': 'Esci da tutto schermo',
     'printView.surfaceFormat': 'Formato superfici',
     'printView.surfaceFormatCompact': 'Solo numero (es. 11300)',
     'printView.surfaceFormatUnit': 'Con unità (es. 11.300 m²)',

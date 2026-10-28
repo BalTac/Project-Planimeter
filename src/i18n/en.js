@@ -145,6 +145,8 @@ export default {
     'action.printView':      'Printable view',
     'hint.action.printView': 'Export high-resolution printable view with cartouches, PAC compliance and cadastral parcels.',
     'printView.dialogTitle': 'Export Printable View',
+    'printView.fullscreen': 'Full screen',
+    'printView.exitFullscreen': 'Exit full screen',
     'printView.surfaceFormat': 'Surface format',
     'printView.surfaceFormatCompact': 'Number only (e.g. 11300)',
     'printView.surfaceFormatUnit': 'With unit (e.g. 11,300 m²)',
